@@ -57,13 +57,32 @@ void flashLed()
   delay(50);
 }
 
+bool flash = false;
+
+void strobe() {
+  while (flash)
+  {
+    flashLed();
+  }
+}
+
 void setUpRoutes()
 {
+  server.on("/hello", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+        Serial.println("/hello");
+        request->send(200, "text/plain", "Hello, world"); });
+  
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
             {
-        Serial.println("/");
-        request->send(200, "text/plain", "Hello, world"); });
-
+        const String url = request->host();              
+        Serial.println(url);
+        String redir = "http://everlastengineering.com/retroroom?host="+ url;
+        Serial.println("Redir to " + redir);
+        AsyncWebServerResponse *response = request->beginResponse(302, "text/plain", "");
+        response->addHeader("Location", redir);
+        request->send (response);
+            });
   // Send a GET request to <IP>/get?message=<message>
   server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
             {
@@ -82,8 +101,14 @@ void setUpRoutes()
         digitalWrite(LED_BUILTIN, LOW);
         request->send(200, "text/plain", "on"); });
 
+  server.on("/flash", HTTP_GET, [](AsyncWebServerRequest *request)
+            {
+        flash = true;
+        request->send(200, "text/plain", "flash"); });
+
   server.on("/off", HTTP_GET, [](AsyncWebServerRequest *request)
             {
+        flash = false;
         ledOff();
         request->send(200, "text/plain", "off"); });
 
@@ -132,6 +157,8 @@ void setup()
   flashLed();
   Serial.println("connecting");
   flashLed();
+  const char *hostname = "RetroRoom";
+  WiFi.hostname(hostname);
   wifiManager.autoConnect("RetroRoom");
   flashLed();
   Serial.println("connected...yeey :)");
@@ -147,4 +174,8 @@ void setup()
 
 void loop()
 {
+  if (flash)
+  {
+    flashLed();
+  }
 }
