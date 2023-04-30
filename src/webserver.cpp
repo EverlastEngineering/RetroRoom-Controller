@@ -1,0 +1,4 @@
+class WebServer {
+  public:
+	// asd
+};
