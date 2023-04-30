@@ -21,161 +21,118 @@
 
 // #define HARD_RESET
 
-const char *PARAM_MESSAGE = "message";
+bool flash = false;
 
 AsyncWebServer server(80);
 DNSServer dns;
 CRGB leds[NUM_LEDS];
 int statusLedActive = 0x0;
 
+/**
+ * html
+ */
+
+const String html_index_html = {
+#include "html/index.html"
+};
+
+
+const String html_script_js = {
+#include "html/script.js"
+};
+
 void notFound(AsyncWebServerRequest *request)
 {
-  request->send(404, "text/plain", "Not found");
+	request->send(404, "text/plain", "Not found");
 }
 
 void setLed(int state)
 {
-  digitalWrite(LED_BUILTIN, state);
-  statusLedActive = state;
+	digitalWrite(LED_BUILTIN, state);
+	statusLedActive = state;
 }
 
 void ledOff()
 {
-  setLed(0x1);
+	setLed(0x1);
 }
 
 void ledOn()
 {
-  setLed(0x0);
+	setLed(0x0);
 }
 
 void flashLed()
 {
-  ledOn();
-  delay(20);
-  ledOff();
-  delay(50);
-}
-
-bool flash = false;
-
-void strobe() {
-  while (flash)
-  {
-    flashLed();
-  }
+	ledOn();
+	delay(20);
+	ledOff();
+	delay(50);
 }
 
 void setUpRoutes()
 {
-  server.on("/hello", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-        Serial.println("/hello");
-        request->send(200, "text/plain", "Hello, world"); });
-  
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-        const String url = request->host();              
-        Serial.println(url);
-        String redir = "http://everlastengineering.com/retroroom?host="+ url;
-        Serial.println("Redir to " + redir);
-        AsyncWebServerResponse *response = request->beginResponse(302, "text/plain", "");
-        response->addHeader("Location", redir);
-        request->send (response);
-            });
-  // Send a GET request to <IP>/get?message=<message>
-  server.on("/get", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
-        Serial.println("/get");
-        String message;
-        if (request->hasParam(PARAM_MESSAGE)) {
-            message = request->getParam(PARAM_MESSAGE)->value();
-        } else {
-            message = "No message sent";
-        }
-        request->send(200, "text/plain", "Hello, GET: " + message); });
+	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
+        Serial.println("/");
+        request->send(200, "text/html", html_index_html); });
 
-  server.on("/on", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
+	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
+        Serial.println("/script");
+        request->send(200, "application/javascript", html_script_js); });
+
+	server.on("/ledOn", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
         ledOn();
         digitalWrite(LED_BUILTIN, LOW);
         request->send(200, "text/plain", "on"); });
 
-  server.on("/flash", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
+	server.on("/flash", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
         flash = true;
         request->send(200, "text/plain", "flash"); });
 
-  server.on("/off", HTTP_GET, [](AsyncWebServerRequest *request)
-            {
+	server.on("/ledOff", HTTP_GET, [](AsyncWebServerRequest *request)
+			  {
         flash = false;
         ledOff();
         request->send(200, "text/plain", "off"); });
 
-  // Send a POST request to <IP>/post with a form field message set to <message>
-  server.on("/post", HTTP_POST, [](AsyncWebServerRequest *request)
-            {
-        Serial.println("/post");
-        String message;
-        if (request->hasParam(PARAM_MESSAGE, true)) {
-            message = request->getParam(PARAM_MESSAGE, true)->value();
-        } else {
-            message = "No message sent";
-        }
-        request->send(200, "text/plain", "Hello, POST: " + message); });
-
-  server.onNotFound(notFound);
+	server.onNotFound(notFound);
 }
 
 void setup()
 {
-  Serial.begin(76800); // native esp8266 speed.
-  // I can upload at 6 times this rate, 460800
+	Serial.begin(76800); // native esp8266 speed.
+						 // I can upload at 6 times this rate, 460800
 
 #ifdef HARD_RESET // force reset code, set to true to nuke eeprom saved wifi info
-  Serial.println("Resetting");
-  delay(1000);
-  WiFi.disconnect();
-  ESP.eraseConfig();
-  delay(1000);
-  *((int *)0) = 0; // boom
-  return;
+	Serial.println("Resetting");
+	delay(1000);
+	WiFi.disconnect();
+	ESP.eraseConfig();
+	delay(1000);
+	*((int *)0) = 0; // boom
+	return;
 #endif // end force reset
 
-  flashLed();
-  Serial.println("Hello");
-  flashLed();
-  pinMode(LED_BUILTIN, OUTPUT);
-  flashLed();
-  Serial.println("FastLED");
-  flashLed();
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
-  flashLed();
-  Serial.println("wifiManager");
-  flashLed();
-  AsyncWiFiManager wifiManager(&server, &dns);
-  flashLed();
-  Serial.println("connecting");
-  flashLed();
-  const char *hostname = "RetroRoom";
-  WiFi.hostname(hostname);
-  wifiManager.autoConnect("RetroRoom");
-  flashLed();
-  Serial.println("connected...yeey :)");
-  flashLed();
-  Serial.println("server:)");
-  setUpRoutes();
-  flashLed();
-  Serial.println("/server handlers set up");
-  flashLed();
-  server.begin();
-  Serial.println("Running!");
+	pinMode(LED_BUILTIN, OUTPUT);
+	FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+	AsyncWiFiManager wifiManager(&server, &dns);
+	const char *hostname = "RetroRoom";
+	WiFi.hostname(hostname);
+	wifiManager.autoConnect(hostname);
+	setUpRoutes();
+	server.begin();
+	Serial.println("Running!");
+	flashLed();
 }
 
 void loop()
 {
-  if (flash)
-  {
-    flashLed();
-  }
+	if (flash)
+	{
+		flashLed();
+	}
 }
