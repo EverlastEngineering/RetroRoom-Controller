@@ -36,7 +36,6 @@ const String html_index_html = {
 #include "html/index.html"
 };
 
-
 const String html_script_js = {
 #include "html/script.js"
 };
@@ -73,14 +72,10 @@ void flashLed()
 void setUpRoutes()
 {
 	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
-			  {
-        Serial.println("/");
-        request->send(200, "text/html", html_index_html); });
+			  { request->send(200, "text/html", html_index_html); });
 
 	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request)
-			  {
-        Serial.println("/script");
-        request->send(200, "application/javascript", html_script_js); });
+			  { request->send(200, "application/javascript", html_script_js); });
 
 	server.on("/ledOn", HTTP_GET, [](AsyncWebServerRequest *request)
 			  {
