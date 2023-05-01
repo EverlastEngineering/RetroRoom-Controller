@@ -1,11 +1,5 @@
-#ifndef HTML_H
-#define HTML_H
-
-/**
- * html
- */
-
-#include "main.h"
+#ifndef RR_HTML_H
+#define RR_HTML_H
 
 const String html_index_html = {
 #include "html/index.html"

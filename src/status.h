@@ -1,7 +1,5 @@
-#ifndef STATUS_H
-#define STATUS_H
-
-#include "main.h"
+#ifndef RR_STATUS_H
+#define RR_STATUS_H
 
 extern bool flash;
 extern int statusLedActive;

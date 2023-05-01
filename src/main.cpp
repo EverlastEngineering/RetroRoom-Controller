@@ -1,46 +1,27 @@
-#include "main.h"
+
+#include <FS.h>
+
+#if defined(ESP8266)
+#include <ESP8266WiFi.h> //https://github.com/esp8266/Arduino
+#else
+#include <WiFi.h>
+#endif
+
+#include <ESP8266mDNS.h>
+#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWiFiManager.h> //https://github.com/tzapu/WiFiManager
+
+#include <FastLED.h>
+
+#include "status.h"
+#include "webserver.h"
 
 #define NUM_LEDS 10
 #define DATA_PIN 2
 
 // #define HARD_RESET
 
-AsyncWebServer server(80);
-DNSServer dns;
 CRGB leds[NUM_LEDS];
-
-void notFound(AsyncWebServerRequest *request) {
-	request->send(404, "text/plain", "Not found");
-}
-
-void setUpRoutes() {
-	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send(200, "text/html", html_index_html);
-	});
-
-	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send(200, "application/javascript", html_script_js);
-	});
-
-	server.on("/ledOn", HTTP_GET, [](AsyncWebServerRequest *request) {
-		ledOn();
-		digitalWrite(LED_BUILTIN, LOW);
-		request->send(200, "text/plain", "on");
-	});
-
-	server.on("/flash", HTTP_GET, [](AsyncWebServerRequest *request) {
-		flash = true;
-		request->send(200, "text/plain", "flash");
-	});
-
-	server.on("/ledOff", HTTP_GET, [](AsyncWebServerRequest *request) {
-		flash = false;
-		ledOff();
-		request->send(200, "text/plain", "off");
-	});
-
-	server.onNotFound(notFound);
-}
 
 void setup() {
 	Serial.begin(76800); // native esp8266 speed.
@@ -64,7 +45,6 @@ void setup() {
 	WiFi.hostname(hostname);
 	wifiManager.autoConnect(hostname);
 	setUpRoutes();
-	server.begin();
 	Serial.println("Running!");
 	flashLed();
 }

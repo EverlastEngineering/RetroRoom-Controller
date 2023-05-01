@@ -1,4 +1,5 @@
 #include "status.h"
+#include <FS.h>
 
 bool flash = false;
 int statusLedActive = 0x0;
