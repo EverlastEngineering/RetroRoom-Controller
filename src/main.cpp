@@ -1,9 +1,10 @@
 
-
+#define FASTLED_INTERNAL //to get rid of the pragma messages from FastLED
 #include <FastLED.h>
 
 #include "status.h"
 #include "network.h"
+#include "Consoles.h"
 
 #define NUM_LEDS 10
 #define DATA_PIN 2
@@ -29,6 +30,14 @@ void setup() {
 	initializeNetwork();
 	Serial.println("Running!");
 	flashLed();
+
+	Consoles consoles;
+	int cc = consoles.getCurrentConsole();
+	Serial.print("Current Console: ");
+	Serial.println(cc);
+	cc = consoles.setCurrentConsole(2);
+	Serial.print("Current Console: ");
+	Serial.println(cc);
 }
 
 void loop() {
