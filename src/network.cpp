@@ -1,9 +1,31 @@
 #include "network.h"
 #include "html.h"
 #include "status.h"
+#include <iostream>
 
 AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
 DNSServer dns;
+
+
+
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+ void *arg, uint8_t *data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      break;
+    case WS_EVT_DATA:
+      handleWebSocketMessage(arg, data, len);
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+  }
+}
 
 void initializeNetwork() {
 	routes();
@@ -12,6 +34,33 @@ void initializeNetwork() {
 	WiFi.hostname(hostname);
 	wifiManager.autoConnect(hostname);
 	server.begin();
+	ws.onEvent(onEvent);
+  	server.addHandler(&ws);
+}
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+  AwsFrameInfo *info = (AwsFrameInfo*)arg;
+  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+	if (messageIs(data, len, "ledOn")) ledOn();
+	else if (messageIs(data, len, "ledOff")) { flash = false; ledOff(); }
+	else if (messageIs(data, len, "flash")) flash = !flash;
+  }
+}
+
+bool messageIs( uint8_t *data, size_t len, std::string message) {
+	data[len] = 0;
+	Serial.printf("Websocket message received. Data: ");
+	Serial.println((char*)data);
+    if (strcmp((char*)data, message.c_str()) == 0) {
+      return true;
+    }
+	return false;
+}
+
+void broadcastSocketMessage(std::string message) {
+	Serial.printf("Sending message: '");
+	Serial.println(message.c_str());
+	ws.textAll(message.c_str());
 }
 
 void notFound(AsyncWebServerRequest *request) {
@@ -25,23 +74,6 @@ void routes() {
 
 	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request) {
 		request->send(200, "application/javascript", html_script_js);
-	});
-
-	server.on("/ledOn", HTTP_GET, [](AsyncWebServerRequest *request) {
-		ledOn();
-		digitalWrite(LED_BUILTIN, LOW);
-		request->send(200, "text/plain", "on");
-	});
-
-	server.on("/flash", HTTP_GET, [](AsyncWebServerRequest *request) {
-		flash = true;
-		request->send(200, "text/plain", "flash");
-	});
-
-	server.on("/ledOff", HTTP_GET, [](AsyncWebServerRequest *request) {
-		flash = false;
-		ledOff();
-		request->send(200, "text/plain", "off");
 	});
 
 	server.onNotFound(notFound);

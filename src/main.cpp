@@ -47,6 +47,8 @@ void buttonPressed()
   Serial.println("Button pressed");
 }
 
+
+
 void sequenceEllapsed()
 {
   Serial.println("Double click");
@@ -86,6 +88,11 @@ void touchSensorISR()
  * 
 */
 
+void sensorSensed()
+{
+  Serial.println("Sensor sensed");
+  broadcastSocketMessage("Sensor sensed");
+}
 
 
 void setup() {
@@ -124,7 +131,7 @@ void setup() {
 
 	// touch sensor
 	touch_sensor.begin();
-	touch_sensor.onPressed(buttonPressed);
+	touch_sensor.onPressed(sensorSensed);
 	touch_sensor.onSequence(2, 1500, sequenceEllapsed);
 	if (touch_sensor.supportsInterrupt())
 	{
