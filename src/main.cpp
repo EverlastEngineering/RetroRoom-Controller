@@ -3,7 +3,7 @@
 #define FASTLED_INTERNAL //to get rid of the pragma messages from FastLED
 #include <FastLED.h>
 #define NUM_LEDS 10
-#define DATA_PIN D4 
+#define DATA_PIN D6 
 CRGB leds[NUM_LEDS];
 
 /* Rotary Encoder Library */
@@ -14,8 +14,28 @@ CRGB leds[NUM_LEDS];
 	#define PIN_IN1 A2
 	#define PIN_IN2 A3
 #elif defined(ESP8266)
-	#define PIN_IN1 D5
-	#define PIN_IN2 D6
+	#define PIN_IN1 D1
+	#define PIN_IN2 D2
+#endif
+
+RotaryEncoder *encoder = nullptr;
+
+#if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
+// This interrupt routine will be called on any change of one of the input signals
+void checkPosition()
+{
+  encoder->tick(); // just call tick() to check the state.
+}
+
+#elif defined(ESP8266)
+/**
+ * @brief The interrupt service routine will be called on any change of one of the input signals.
+ */
+IRAM_ATTR void checkPosition()
+{
+  encoder->tick(); // just call tick() to check the state.
+}
+
 #endif
 
 /* Our own headers */
@@ -34,6 +54,8 @@ CRGB leds[NUM_LEDS];
  * 
 */
 
+
+
 void setup() {
 #ifdef HARD_RESET // force reset code, set to true to nuke eeprom saved wifi
 				  // info
@@ -46,12 +68,17 @@ void setup() {
 	return;
 #endif // end force reset
 	Serial.begin(76800); // native esp8266 speed. Also, upload is possible at 6 times this rate, 460800.
+	while (!Serial)
+    ;
 	pinMode(LED_BUILTIN, OUTPUT);
 	FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 	initializeNetwork();
 	Serial.println("Running!");
 	flashLed();
 	
+	encoder = new RotaryEncoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
+	attachInterrupt(digitalPinToInterrupt(PIN_IN1), checkPosition, CHANGE);
+  	attachInterrupt(digitalPinToInterrupt(PIN_IN2), checkPosition, CHANGE);
 	/**
 	 * Console takes:
 	 * led_position: the position of the first led on the rgb string for this console
@@ -69,4 +96,16 @@ void loop() {
 	if (flash) {
 		flashLed();
 	}
+	static int pos = 0;
+
+	encoder->tick(); // just call tick() to check the state.
+
+	int newPos = encoder->getPosition();
+	if (pos != newPos) {
+		Serial.print("pos:");
+		Serial.print(newPos);
+		Serial.print(" dir:");
+		Serial.println((int)(encoder->getDirection()));
+		pos = newPos;
+	} // if
 }
