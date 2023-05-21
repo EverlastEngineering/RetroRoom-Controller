@@ -38,6 +38,38 @@ IRAM_ATTR void checkPosition()
 
 #endif
 
+#include <EasyButton.h>
+EasyButton rotary_selector(D3);
+EasyButton touch_sensor(D5);
+
+void buttonPressed()
+{
+  Serial.println("Button pressed");
+}
+
+void sequenceEllapsed()
+{
+  Serial.println("Double click");
+}
+
+void rotarySelectorISR()
+{
+  /*
+    When button is being used through external interrupts, 
+    parameter INTERRUPT must be passed to read() function
+   */
+  rotary_selector.read();
+}
+
+void touchSensorISR()
+{
+  /*
+    When button is being used through external interrupts, 
+    parameter INTERRUPT must be passed to read() function
+   */
+  touch_sensor.read();
+}
+
 /* Our own headers */
 #include "status.h"
 #include "network.h"
@@ -79,6 +111,27 @@ void setup() {
 	encoder = new RotaryEncoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
 	attachInterrupt(digitalPinToInterrupt(PIN_IN1), checkPosition, CHANGE);
   	attachInterrupt(digitalPinToInterrupt(PIN_IN2), checkPosition, CHANGE);
+
+	//rotary clicker
+	rotary_selector.begin();
+	rotary_selector.onPressed(buttonPressed);
+	rotary_selector.onSequence(2, 1500, sequenceEllapsed);
+	if (rotary_selector.supportsInterrupt())
+	{
+		rotary_selector.enableInterrupt(rotarySelectorISR);
+		Serial.println("Button will be used through interrupts");
+	}
+
+	// touch sensor
+	touch_sensor.begin();
+	touch_sensor.onPressed(buttonPressed);
+	touch_sensor.onSequence(2, 1500, sequenceEllapsed);
+	if (touch_sensor.supportsInterrupt())
+	{
+		touch_sensor.enableInterrupt(touchSensorISR);
+		Serial.println("Button will be used through interrupts");
+	}
+
 	/**
 	 * Console takes:
 	 * led_position: the position of the first led on the rgb string for this console
