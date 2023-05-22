@@ -41,16 +41,17 @@ void initializeNetwork() {
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-	if (messageIs(data, len, "ledOn")) ledOn();
-	else if (messageIs(data, len, "ledOff")) { flash = false; ledOff(); }
-	else if (messageIs(data, len, "flash")) flash = !flash;
-  }
-}
-
-bool messageIs( uint8_t *data, size_t len, std::string message) {
 	data[len] = 0;
 	Serial.printf("Websocket message received. Data: ");
 	Serial.println((char*)data);
+	if (messageIs(data, "ledOn")) ledOn();
+	else if (messageIs(data, "ledOff")) { flash = false; ledOff(); }
+	else if (messageIs(data, "flash")) flash = !flash;
+	else if (messageIs(data, "healthcheck")) broadcastSocketMessage("thumpthump");
+  }
+}
+
+bool messageIs( uint8_t *data, std::string message) {
     if (strcmp((char*)data, message.c_str()) == 0) {
       return true;
     }
@@ -58,7 +59,7 @@ bool messageIs( uint8_t *data, size_t len, std::string message) {
 }
 
 void broadcastSocketMessage(std::string message) {
-	Serial.printf("Sending message: '");
+	Serial.printf("Sending message: ");
 	Serial.println(message.c_str());
 	ws.textAll(message.c_str());
 }

@@ -21,6 +21,6 @@ void routes();
 void notFound(AsyncWebServerRequest *request);
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void initWebSocket();
-bool messageIs( uint8_t *data, size_t len, std::string message);
+bool messageIs( uint8_t *data, std::string message);
 
 #endif
