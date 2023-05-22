@@ -7,26 +7,6 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
-
-
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
- void *arg, uint8_t *data, size_t len) {
-  switch (type) {
-    case WS_EVT_CONNECT:
-      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-      break;
-    case WS_EVT_DISCONNECT:
-      Serial.printf("WebSocket client #%u disconnected\n", client->id());
-      break;
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
-      break;
-    case WS_EVT_PONG:
-    case WS_EVT_ERROR:
-      break;
-  }
-}
-
 void initializeNetwork() {
 	routes();
 	AsyncWiFiManager wifiManager(&server, &dns);
@@ -44,6 +24,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
 	data[len] = 0;
 	Serial.printf("Websocket message received. Data: ");
 	Serial.println((char*)data);
+
+	// Responses
 	if (messageIs(data, "ledOn")) ledOn();
 	else if (messageIs(data, "ledOff")) { flash = false; ledOff(); }
 	else if (messageIs(data, "flash")) flash = !flash;
@@ -80,3 +62,19 @@ void routes() {
 	server.onNotFound(notFound);
 }
 
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      break;
+    case WS_EVT_DATA:
+      handleWebSocketMessage(arg, data, len);
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+  }
+}
