@@ -1,4 +1,15 @@
-
+/**
+ * RetroRoom for ESP8266
+ * Author: Jason Copp
+ * Contact: jason@everlastengineering.com
+ * License: no public license yet
+ * 
+ * To Do
+ * - make the list of consoles editable from the web UI <- ooo
+ * - make the console class settings save to whatever it is the wifi saves to, so it remembers your console selection
+ * - add a secret mode using the easybutton onSequence for a light show
+ * - see if we can remove the encoder tick call from the loop to purely use interupts
+*/
 
 /* Our own headers */
 #include "main.h"
@@ -10,15 +21,6 @@
 
 /* HARD_RESET is a hack to completely nuke the onboard PRAM (or is it SRAM or..) that contains the saved wifi settings */
 // #define HARD_RESET
-
-/**
- * To Do
- * 
- * - make the list of consoles editable from the web UI <- ooo
- * - make the console class settings save to whatever it is the wifi saves to, so it remembers your console selection
- * - add a secret mode using the easybutton onSequence for a light show
- * - see if we can remove the encoder tick call from the loop to purely use interupts
-*/
 
 void setup() {
 	#ifdef HARD_RESET // force reset code, set to true to nuke eeprom saved wifi info
