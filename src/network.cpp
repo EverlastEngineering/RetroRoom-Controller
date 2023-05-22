@@ -1,13 +1,13 @@
-#include "network.h"
-#include "html.h"
-#include "status.h"
 #include <iostream>
+#include "network.h"
+#include "status.h"
+#include "html.h"
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
-void initializeNetwork() {
+void network_init() {
 	routes();
 	AsyncWiFiManager wifiManager(&server, &dns);
 	const char *hostname = "RetroRoom";

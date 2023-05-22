@@ -1,3 +1,6 @@
+#ifndef CONSOLE_H
+#define CONSOLE_H
+
 #include <iostream>
 using namespace std;
 
@@ -10,3 +13,5 @@ class Console
 	int selector_position;
 	string name;
 };
+
+#endif

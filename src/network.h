@@ -15,7 +15,7 @@
 extern AsyncWebServer server;
 extern DNSServer dns;
 
-extern void initializeNetwork();
+extern void network_init();
 extern void broadcastSocketMessage(std::string message);
 void routes();
 void notFound(AsyncWebServerRequest *request);
