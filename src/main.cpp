@@ -9,6 +9,7 @@
  * - make the console class settings save to whatever it is the wifi saves to, so it remembers your console selection
  * - add a secret mode using the easybutton onSequence for a light show
  * - see if we can remove the encoder tick call from the loop to purely use interupts
+ * - add favicon.ico
 */
 
 /* Our own headers */
