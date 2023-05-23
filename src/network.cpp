@@ -18,18 +18,38 @@ void network_init() {
   	server.addHandler(&ws);
 }
 
+void routes() {
+	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+		request->send(200, "text/html", html_index_html);
+	});
+
+	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+		request->send(200, "application/javascript", html_script_js);
+	});
+
+	server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+		AsyncWebServerResponse *response = request->beginResponse(302, "text/plain", "Redirect");
+		response->addHeader("Location", "https://everlastengineering.com/favicon.ico");
+		request->send(response);
+	});
+
+	server.onNotFound(notFound);
+}
+
+void websocketRoutes(uint8_t *message) {
+	if (messageIs(message, "ledOn")) ledOn();
+	else if (messageIs(message, "ledOff")) { flash = false; ledOff(); }
+	else if (messageIs(message, "flash")) flash = !flash;
+	else if (messageIs(message, "healthcheck")) broadcastSocketMessage("thumpthump");
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
 	data[len] = 0;
 	Serial.printf("Websocket message received. Data: ");
 	Serial.println((char*)data);
-
-	// Responses
-	if (messageIs(data, "ledOn")) ledOn();
-	else if (messageIs(data, "ledOff")) { flash = false; ledOff(); }
-	else if (messageIs(data, "flash")) flash = !flash;
-	else if (messageIs(data, "healthcheck")) broadcastSocketMessage("thumpthump");
+	websocketRoutes(data);
   }
 }
 
@@ -48,24 +68,6 @@ void broadcastSocketMessage(std::string message) {
 
 void notFound(AsyncWebServerRequest *request) {
 	request->send(404, "text/plain", "Not found");
-}
-
-void routes() {
-	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send(200, "text/html", html_index_html);
-	});
-
-	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-		request->send(200, "application/javascript", html_script_js);
-	});
-
-	server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
-		AsyncWebServerResponse *response = request->beginResponse(302, "text/plain", "Redirect");
-		response->addHeader("Location", "https://everlastengineering.com/favicon.ico");
-		request->send(response);
-	});
-
-	server.onNotFound(notFound);
 }
 
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
