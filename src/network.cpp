@@ -1,6 +1,6 @@
 #include <iostream>
 #include "network.h"
-#include "status.h"
+#include "state.h"
 #include "html.h"
 
 AsyncWebServer server(80);
@@ -57,6 +57,12 @@ void routes() {
 
 	server.on("/script.js", HTTP_GET, [](AsyncWebServerRequest *request) {
 		request->send(200, "application/javascript", html_script_js);
+	});
+
+	server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+		AsyncWebServerResponse *response = request->beginResponse(302, "text/plain", "Redirect");
+		response->addHeader("Location", "https://everlastengineering.com/favicon.ico");
+		request->send(response);
 	});
 
 	server.onNotFound(notFound);

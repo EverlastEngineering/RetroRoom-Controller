@@ -3,19 +3,12 @@
  * Author: Jason Copp
  * Contact: jason@everlastengineering.com
  * License: no public license yet
- * 
- * To Do
- * - make the list of consoles editable from the web UI <- ooo
- * - make the console class settings save to whatever it is the wifi saves to, so it remembers your console selection
- * - add a secret mode using the easybutton onSequence for a light show
- * - see if we can remove the encoder tick call from the loop to purely use interupts
- * - add favicon.ico
-*/
+ */
 
 /* Our own headers */
 #include "main.h"
 #include "controls.h"
-#include "status.h"
+#include "state.h"
 #include "network.h"
 #include "lighting.h"
 #include "Console.h"
