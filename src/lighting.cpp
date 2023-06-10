@@ -1,7 +1,7 @@
 #include "lighting.h"
 
 #define NUM_LEDS 10
-#define DATA_PIN D6 
+#define DATA_PIN D7
 
 CRGB leds[NUM_LEDS];
 
