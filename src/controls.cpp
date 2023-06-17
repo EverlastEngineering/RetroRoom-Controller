@@ -3,16 +3,9 @@
 #include "network.h"
 
 RotaryEncoder *encoder = nullptr;
-EasyButton rotarySelector(D3);
-EasyButton touchSensor(D5);
+EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
+EasyButton touchSensor(TOUCH_SENSOR_PIN);
 
-#if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
-#define PIN_IN1 A2
-#define PIN_IN2 A3
-#elif defined(ESP8266)
-#define PIN_IN1 D1
-#define PIN_IN2 D2
-#endif
 
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
 // This interrupt routine will be called on any change of one of the input
@@ -30,9 +23,9 @@ IRAM_ATTR void checkPosition() {
 
 void controls_init() {
 	encoder =
-		new RotaryEncoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
-	attachInterrupt(digitalPinToInterrupt(PIN_IN1), checkPosition, CHANGE);
-	attachInterrupt(digitalPinToInterrupt(PIN_IN2), checkPosition, CHANGE);
+		new RotaryEncoder(ROTARY_PIN_IN1, ROTARY_PIN_IN2, RotaryEncoder::LatchMode::TWO03);
+	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN1), checkPosition, CHANGE);
+	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN2), checkPosition, CHANGE);
 
 	// rotary clicker
 	rotarySelector.begin();
@@ -54,7 +47,7 @@ void controls_init() {
 
 void rotarySelectorPressed() {
 	sendSonyPower();
-	Serial.println("Button pressed");
+	Serial.println(SNES);
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }

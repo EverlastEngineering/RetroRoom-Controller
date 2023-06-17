@@ -1,6 +1,6 @@
 #include "ircontrol.h"
 
-const uint16_t kIrLed = D6;
+const uint16_t kIrLed = IR_CONTROL_PIN;
 IRsend irsend(kIrLed);
 
 void ir_control_init() { irsend.begin(); }

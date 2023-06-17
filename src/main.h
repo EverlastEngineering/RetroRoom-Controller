@@ -2,5 +2,5 @@
 #define MAIN_H
 
 #include <iostream>
-
+void consoleDefinitions();
 #endif

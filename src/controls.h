@@ -4,6 +4,7 @@
 /* Rotary Encoder Library */
 #include <Arduino.h>
 #include <RotaryEncoder.h>
+#include "configuration.h"
 
 /* EasyButton Libary used for rotary encoder selector and capacitive touch sensor in digital mode */
 #include <EasyButton.h>
