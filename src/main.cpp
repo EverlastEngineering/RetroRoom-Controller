@@ -9,18 +9,8 @@
 
 /* Our own headers */
 #include "main.h"
-#include "configuration.h"
-#include "controls.h"
-#include "state.h"
-#include "network.h"
-#include "lighting.h"
-#include "Console.h"
-#include "ircontrol.h"
 
 
-#include <map>
-#include <string>
-using namespace std;
 
 void consoleDefinitions() {
 	/**
@@ -32,13 +22,13 @@ void consoleDefinitions() {
 	 * name: The friendly name of the console.
 	 */
 
-	Console consoles[5] = {
-		Console(NES, Composite, 1, 5, 1),
-		Console(SNES, SCART, 5, 10, 5),
-		Console(N64, SVideo, 2, 15, 5),
-		Console(Gamecube, SVideo, 3, 15, 5),
-		Console(Wii, Component, 4, 15, 5)
-	};
+	addConsole(Console(NES, Composite, 1, 5, 1));
+	addConsole(Console(SNES, SCART, 5, 10, 5));
+	addConsole(Console(N64, SVideo, 2, 15, 5));
+	addConsole(Console(Gamecube, SVideo, 3, 15, 5));
+	addConsole(Console(Wii, Component, 4, 15, 5));
+
+	Serial.println(HowManyConsoles());
 }
 
 /* HARD_RESET is a hack to completely nuke the onboard PRAM (or is it SRAM or..) that contains the saved wifi settings */

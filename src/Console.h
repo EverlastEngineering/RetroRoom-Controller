@@ -6,6 +6,7 @@
 class Console
 {
   public:
+  	Console();
     Console(const std::string& _name, const std::string& tvinput, const int selector_position, const int led_position, const int led_width);
 	int led_position;
 	int led_width;
@@ -13,5 +14,6 @@ class Console
 	 std::string tvinput;
 	 std::string name;
 };
+
 
 #endif

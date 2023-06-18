@@ -1,6 +1,8 @@
 #include "controls.h"
 #include "ircontrol.h"
 #include "network.h"
+#include "Console.h"
+#include "main.h"
 
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
@@ -21,11 +23,14 @@ IRAM_ATTR void checkPosition() {
 }
 #endif
 
+int currentConsoleIndex = 0;
+std::vector <Console> consoles; 
+
 void controls_init() {
 	encoder =
-		new RotaryEncoder(ROTARY_PIN_IN1, ROTARY_PIN_IN2, RotaryEncoder::LatchMode::TWO03);
-	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN1), checkPosition, CHANGE);
+		new RotaryEncoder(ROTARY_PIN_IN2, ROTARY_PIN_IN1, RotaryEncoder::LatchMode::TWO03);
 	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN2), checkPosition, CHANGE);
+	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN1), checkPosition, CHANGE);
 
 	// rotary clicker
 	rotarySelector.begin();
@@ -43,11 +48,28 @@ void controls_init() {
 		touchSensor.enableInterrupt(touchSensorISR);
 		Serial.println("Button will be used through interrupts");
 	}
+	
+	
+	
+	currentConsoleIndex = 0;
+}
+
+void addConsole(Console console) {
+	consoles.push_back(console);
+}
+
+int HowManyConsoles(){
+	return consoles.size();
+}
+Console CurrentConsole(){
+	return consoles[currentConsoleIndex];
 }
 
 void rotarySelectorPressed() {
-	sendSonyPower();
-	Serial.println(SNES);
+	// sendSonyPower();
+	// Serial.println(SNES);
+			Serial.print("Select Console: ");
+		Serial.println( CurrentConsole().name.c_str());
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }
@@ -69,7 +91,7 @@ void touchSensorISR() {
 }
 
 void touchDetected() {
-	Serial.println("Sensor sensed");
+	Serial.println("Illuminate");
 	broadcastSocketMessage("Sensor sensed");
 }
 
@@ -80,10 +102,41 @@ void rotaryEncoderTick() {
 
 	int newPos = encoder->getPosition();
 	if (pos != newPos) {
-		Serial.print("pos:");
-		Serial.print(newPos);
-		Serial.print(" dir:");
-		Serial.println((int)(encoder->getDirection()));
+		// Serial.print("Console Index:");
+		// Serial.println(currentConsoleIndex);
+		// Serial.print("pos:");
+		// Serial.print(newPos);
+		// Serial.print(" dir:");
+		// Serial.println((int)(encoder->getDirection()));
 		pos = newPos;
+
+		int direction = ((int)(encoder->getDirection())); // this "consumes" the last direction given by the encoder
+		// Serial.print(" direction:");
+		// Serial.println(direction);
+		int num_consoles = (int)HowManyConsoles();
+		// Serial.print(" num_consoles:");
+		// Serial.println(num_consoles);
+
+		if (direction == -1) {
+			// Serial.println("ccw");
+			if (currentConsoleIndex == 0) {
+				return;
+			}
+			// Serial.println("subtracting one");
+			currentConsoleIndex--;
+		}
+		else if (direction == 1) {
+			// Serial.println("cw");
+			if (currentConsoleIndex == (num_consoles-1)) {
+				return;
+			}
+			// Serial.println("adding one");
+			currentConsoleIndex++;
+		}
+		// Serial.print(" currentConsoleIndex:");
+		// Serial.println(currentConsoleIndex);
+		Serial.print("Highlight Console: ");
+		Serial.println( CurrentConsole().name.c_str());
+
 	}
 }
