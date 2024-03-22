@@ -19,7 +19,7 @@ extern void rotaryEncoderTick();
 extern int currentConsoleIndex;
 
 void rotarySelectorPressed();
-void sequenceEllapsed();
+void sequenceElapsed();
 void rotarySelectorISR();
 void touchSensorISR();
 void touchDetected();
