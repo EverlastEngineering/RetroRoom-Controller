@@ -9,8 +9,10 @@
 
 // define the output pins for control of the RetroSelector
 #define ARM_PIN D0 //HIGH at boot
-#define CYCLE_PIN D4 // HIGH at boot, connected to on-board LED, boot fails if pulled LOW
-#define ENABLE_PIN D8 //boot fails if pulled HIGH
+// #define CYCLE_PIN D4 // HIGH at boot, connected to on-board LED, boot fails if pulled LOW
+#define CYCLE_PIN D8 
+// #define ENABLE_PIN D8 //boot fails if pulled HIGH
+#define ENABLE_PIN D9
 
 #define IR_CONTROL_PIN D7
 

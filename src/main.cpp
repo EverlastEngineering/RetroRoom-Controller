@@ -15,18 +15,18 @@
 void consoleDefinitions() {
 	/**
 	 * Console takes:
-	 * led_position: The position of the first led on the rgb string for this
-	 * console. led_width: How many leds in the strip are lit when this console
-	 * is selected. selector_position: The position in the StackSelector system.
-	 * enum of the Inputs on the television
 	 * name: The friendly name of the console.
+	 * enum of the Inputs on the television
+	 * selector_position: The position in the StackSelector system.
+	 * led_position: The position of the first led on the rgb string for this console.
+	 * led_width: How many leds in the strip are lit when this console is selected.
 	 */
 
-	addConsole(Console(NES, Composite, 1, 5, 1));
-	addConsole(Console(SNES, SCART, 5, 10, 5));
-	addConsole(Console(N64, SVideo, 2, 15, 5));
-	addConsole(Console(Gamecube, SVideo, 3, 15, 5));
-	addConsole(Console(Wii, Component, 4, 15, 5));
+	addConsole(Console(NES, Composite,		1, 5, 1));
+	addConsole(Console(N64, SVideo, 		2, 15, 5));
+	addConsole(Console(Gamecube, SVideo,	3, 15, 5));
+	addConsole(Console(Wii, Component,		4, 15, 5));
+	addConsole(Console(SNES, SCART,			5, 10, 5));
 
 	Serial.println(HowManyConsoles());
 }
@@ -52,6 +52,7 @@ void setup() {
 	controls_init();
 	ir_control_init();
 	consoleDefinitions();
+	selectStack_init();
 	Serial.println("Setup Complete.");
 }
 

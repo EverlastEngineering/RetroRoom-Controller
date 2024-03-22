@@ -8,6 +8,7 @@
 #include "lighting.h"
 #include "Console.h"
 #include "ircontrol.h"
+#include "stackselector.h"
 
 
 #include <map>

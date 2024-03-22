@@ -10,7 +10,7 @@ DNSServer dns;
 void network_init() {
 	routes();
 	AsyncWiFiManager wifiManager(&server, &dns);
-	const char *hostname = "RetroRoom";
+	const char *hostname = "retroroom.local";
 	WiFi.hostname(hostname);
 	wifiManager.autoConnect(hostname);
 	server.begin();
