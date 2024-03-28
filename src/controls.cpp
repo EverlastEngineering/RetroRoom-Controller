@@ -4,6 +4,7 @@
 #include "main.h"
 #include "network.h"
 #include "stackselector.h"
+#include "consoles.h"
 
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
@@ -22,9 +23,6 @@ IRAM_ATTR void checkPosition() {
 	encoder->tick(); // just call tick() to check the state.
 }
 #endif
-
-int currentConsoleIndex = 0;
-std::vector<Console> consoles;
 
 void controls_init() {
 	encoder = new RotaryEncoder(ROTARY_PIN_IN2, ROTARY_PIN_IN1,
@@ -50,21 +48,17 @@ void controls_init() {
 		touchSensor.enableInterrupt(touchSensorISR);
 		Serial.println("Button will be used through interrupts");
 	}
-
-	currentConsoleIndex = 0;
 }
 
-void addConsole(Console console) { consoles.push_back(console); }
 
-int HowManyConsoles() { return consoles.size(); }
-Console CurrentConsole() { return consoles[currentConsoleIndex]; }
 
 void rotarySelectorPressed() {
 	// sendSonyPower();
 	// Serial.println(SNES);
-	Serial.print("Select Console: ");
-	Serial.println(CurrentConsole().name.c_str());
-	selectStack(CurrentConsole().selector_position);
+	// Serial.print("Select Console: ");
+	// Serial.println(CurrentConsole().name.c_str());
+	// selectStack(CurrentConsole().selector_position);
+	CurrentConsole().selectConsole();
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }

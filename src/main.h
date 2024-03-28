@@ -9,6 +9,7 @@
 #include "Console.h"
 #include "ircontrol.h"
 #include "stackselector.h"
+#include "consoles.h"
 
 
 #include <map>

@@ -8,5 +8,8 @@
 
 extern void ir_control_init();
 extern void sendSonyPower();
+extern void setInput(int inputHexCode);
+void discretePowerOn();
+void sendHexCode(int inputHexCode);
 
 #endif

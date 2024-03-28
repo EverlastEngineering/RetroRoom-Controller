@@ -30,12 +30,6 @@
 #define TOUCH_SENSOR_PIN D5
 #define ROTARY_SELECTOR_PIN D6
 
-// Define the input # on the televsion
-
-#define COMPOSITE_INPUT 3
-#define COMPONENT_INPUT 5
-#define SVIDEO_INPUT 4 
-
 /** Consoles */
 #define NES "Nintendo Entertainment System"
 #define SNES "Super Nintendo Entertainment System"
@@ -50,10 +44,13 @@
 #define Dreamcast "Sega Dreamcast"
 #define Xbox "Microsoft Xbox"
 
-/** Inputs */
-#define Composite "Composite"
-#define SVideo "SVideo"
-#define Component "Component"
-#define SCART "SCART"
+/** The Hex Code for the Ir Control For Video Input */
+#define Composite 0x430
+/** The Hex Code for the Ir Control For SVideo Input */
+#define SVideo 0xE30
+/** The Hex Code for the Ir Control For Component Input */
+#define Component 0x130
+/** The Hex Code for the Ir Control For SCART Input, which comes into the televsion on component after being converted. */
+#define SCART Component
 
 #endif

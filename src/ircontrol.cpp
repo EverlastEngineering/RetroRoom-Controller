@@ -1,9 +1,14 @@
 #include "ircontrol.h"
+#include <iostream>
 
 const uint16_t kIrLed = IR_CONTROL_PIN;
 IRsend irsend(kIrLed);
 
-void ir_control_init() { irsend.begin(); }
+void ir_control_init() { 
+	irsend.begin();
+	// perhaps something like delay(200) would be sane?
+	discretePowerOn();
+}
 
 void sendSonyPower() {
 	/**
@@ -49,4 +54,18 @@ void sendSonyPower() {
 	*/
 	irsend.sendSony(0xa90, 12, 2); // 12 bits & 2 repeats
 	Serial.print("Sony Power Cycle IR Sent");
+}
+
+void setInput(int inputHexCode) {
+	sendHexCode(inputHexCode); 
+}
+
+void discretePowerOn() {
+	sendHexCode(0x750);
+}
+
+void sendHexCode(int inputHexCode) {
+	irsend.sendSony(inputHexCode, 12, 2);
+	Serial.print("Sent hex to ir controls: 0x");
+	Serial.println(inputHexCode, HEX);
 }
