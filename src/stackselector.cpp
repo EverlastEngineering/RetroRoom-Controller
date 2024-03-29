@@ -16,8 +16,8 @@ void selectStack_init() {
 }
 
 void selectStack(int position) {
-	Serial.print("Position: ");
-	Serial.println(position);
+	// Serial.print("Position: ");
+	// Serial.println(position);
 	// if (position == 1) {
 	// 	armStack();
 	// 	disarmStack();
@@ -39,11 +39,11 @@ void selectStack(int position) {
 	for (int i = 0; i < HowManyConsoles()-position; i++) {
 		clockCycle();
 	}
-	Serial.println("Stack Selection Complete");
+	// Serial.println("Stack Selection Complete");
 }
 
 void enableStack() {
-	Serial.println("enableStack");
+	// Serial.println("enableStack");
 	digitalWrite(ENABLE_PIN, HIGH);
 	delay(stackDelay);
 	digitalWrite(ENABLE_PIN, LOW);
@@ -51,18 +51,18 @@ void enableStack() {
 }
 
 void armStack() {
-	Serial.println("armStack");
+	// Serial.println("armStack");
 	digitalWrite(ARM_PIN, HIGH);
 	delay(stackDelay);
 }
 
 void disarmStack() {
-	Serial.println("disarmStack");
+	// Serial.println("disarmStack");
 	digitalWrite(ARM_PIN, LOW);
 	delay(stackDelay);
 }
 void clockCycle() {
-	Serial.println("clockCycle");
+	// Serial.println("clockCycle");
 	digitalWrite(CYCLE_PIN, HIGH);
 	delay(stackDelay);
 	digitalWrite(CYCLE_PIN, LOW);

@@ -7,5 +7,7 @@
 #include "configuration.h"
 
 extern void lighting_init();
-
+extern void lightSingle (int led);
+extern void ringLEDNext();
+extern void ringLEDPrevious();
 #endif

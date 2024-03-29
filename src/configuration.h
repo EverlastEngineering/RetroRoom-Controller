@@ -2,7 +2,7 @@
 #define RRCONFIGURATION_H
 
 // lighting
-#define NUM_LEDS 10
+#define NUM_LEDS 8
 #define DATA_PIN D3 // connected to FLASH button, boot fails if pulled LOW
 
 // outputs

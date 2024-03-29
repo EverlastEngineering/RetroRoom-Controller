@@ -17,7 +17,7 @@ Console::Console(const std::string& _name, const int _tvinput, const int _select
 }
 
 void Console::selectConsole() {
-	// huh, these are all the same.
+	// huh, these are all the same?
 	// int currentconsole = (*this).selector_position;
 	// int currentconsole = this->selector_position;
 	// int currentconsole = selector_position;

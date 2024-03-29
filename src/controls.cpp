@@ -5,6 +5,7 @@
 #include "network.h"
 #include "stackselector.h"
 #include "consoles.h"
+#include "lighting.h"
 
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
@@ -109,6 +110,7 @@ void rotaryEncoderTick() {
 		// Serial.println(num_consoles);
 
 		if (direction == -1) {
+			ringLEDPrevious();
 			// Serial.println("ccw");
 			if (currentConsoleIndex == 0) {
 				return;
@@ -116,6 +118,7 @@ void rotaryEncoderTick() {
 			// Serial.println("subtracting one");
 			currentConsoleIndex--;
 		} else if (direction == 1) {
+			ringLEDNext();
 			// Serial.println("cw");
 			if (currentConsoleIndex == (num_consoles - 1)) {
 				return;
