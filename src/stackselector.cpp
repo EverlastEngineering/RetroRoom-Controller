@@ -10,9 +10,7 @@ void selectStack_init() {
 	digitalWrite(ARM_PIN, LOW);
 	digitalWrite(CYCLE_PIN, LOW);
 	digitalWrite(ENABLE_PIN, LOW);
-	for (int i = 0; i < HowManyConsoles(); i++) {
-		clockCycle();
-	}
+	selectStack(HowManyConsoles()+1);
 }
 
 void selectStack(int position) {

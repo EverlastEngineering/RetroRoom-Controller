@@ -61,8 +61,8 @@ bool messageIs( uint8_t *data, std::string message) {
 }
 
 void broadcastSocketMessage(std::string message) {
-	Serial.printf("											Sending message: ");
-	Serial.println(message.c_str());
+	// Serial.printf("											Sending message: ");
+	// Serial.println(message.c_str());
 	ws.textAll(message.c_str());
 }
 

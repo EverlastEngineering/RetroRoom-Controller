@@ -9,7 +9,10 @@
 
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
-EasyButton touchSensor(TOUCH_SENSOR_PIN);
+EasyButton touchSensor(TOUCH_SENSOR_PIN,35,true,false);
+
+bool isTouched = false;
+volatile bool hasTouchInterruptFired = false;
 
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
 // This interrupt routine will be called on any change of one of the input
@@ -45,8 +48,9 @@ void controls_init() {
 	// touch sensor
 	touchSensor.begin();
 	touchSensor.onPressed(touchDetected);
+	touchSensor.onPressedFor(100, touchReleaseDetected);
 	if (touchSensor.supportsInterrupt()) {
-		touchSensor.enableInterrupt(touchSensorISR);
+		attachInterrupt(digitalPinToInterrupt(TOUCH_SENSOR_PIN), touchSensorISR, CHANGE);
 		Serial.println("Button will be used through interrupts");
 	}
 }
@@ -66,26 +70,45 @@ void sequenceElapsed() { Serial.println("Double click"); }
 
 void rotarySelectorISR() {
 	/*
-	  When button is being used through external interrupts,
-	  parameter INTERRUPT must be passed to read() function
+	  Remove this as I don't think this is safe.
 	 */
 	rotarySelector.read();
 }
 
-void touchSensorISR() {
-	/*
-	  When button is being used through external interrupts,
-	  parameter INTERRUPT must be passed to read() function
-	 */
-	touchSensor.read();
+void IRAM_ATTR touchSensorISR() {
+	hasTouchInterruptFired = true;
 }
 
 void touchDetected() {
-	Serial.println("Illuminate");
-	broadcastSocketMessage("Sensor sensed");
+	// Serial.println("Illuminate");
+	lightRing(true);
+	if (!isTouched) {
+		isTouched = true;
+		broadcastSocketMessage("touch: touched");
+	}
 }
 
+void touchReleaseDetected() {
+	lightRing(false);
+	if (isTouched) {
+		broadcastSocketMessage("touch: released");
+		isTouched = false;
+	}
+}
+
+
 void rotaryEncoderTick() {
+	if (hasTouchInterruptFired) {
+		touchSensor.read(); 
+		hasTouchInterruptFired = false;
+	}  
+	if (touchSensor.isPressed()) {
+		touchDetected();
+	}
+	else {
+		touchReleaseDetected();
+	}
+	
 	static int pos = 0;
 
 	encoder->tick(); // just call tick() to check the state.

@@ -18,5 +18,6 @@ void sequenceElapsed();
 void rotarySelectorISR();
 void touchSensorISR();
 void touchDetected();
+void touchReleaseDetected();
 
 #endif
