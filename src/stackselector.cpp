@@ -1,7 +1,7 @@
 #include "main.h"
 #include "stackselector.h"
 
-int stackDelay = 10;
+int stackDelay = 1;
 
 void selectStack_init() {
 	pinMode(ARM_PIN, OUTPUT);

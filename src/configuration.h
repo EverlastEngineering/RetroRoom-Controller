@@ -44,13 +44,16 @@
 #define Dreamcast "Sega Dreamcast"
 #define Xbox "Microsoft Xbox"
 
-/** The Hex Code for the Ir Control For Video Input */
+/** VIDEO 1: The Hex Code for the Ir Control For SVideo Input */
+#define SVideo 0x030
+/** VIDEO 2: The Hex Code for the Ir Control For Front Panel Video Input */
+#define FrontPanelComposite 0x830
+/** VIDEO 3: The Hex Code for the Ir Control For Video Input */
 #define Composite 0x430
-/** The Hex Code for the Ir Control For SVideo Input */
-#define SVideo 0xE30
-/** The Hex Code for the Ir Control For Component Input */
-#define Component 0x130
-/** The Hex Code for the Ir Control For SCART Input, which comes into the televsion on component after being converted. */
+/** VIDEO 4: The Hex Code for the Ir Control For Component Input */
+#define Component 0xE30
+/** The Hex Code for the Ir Control For SCART Input, which comes 
+ * into the televsion on component after being converted. */
 #define SCART Component
 
 #endif
