@@ -3,6 +3,7 @@
 
 const uint16_t kIrLed = IR_CONTROL_PIN;
 IRsend irsend(kIrLed);
+int currentHexCode = 0;
 
 void ir_control_init() { 
 	irsend.begin();
@@ -65,7 +66,9 @@ void discretePowerOn() {
 }
 
 void sendHexCode(int inputHexCode) {
+	if (currentHexCode == inputHexCode) return;
 	irsend.sendSony(inputHexCode, 12, 2);
+	currentHexCode = inputHexCode;
 	Serial.print("Sent hex to ir controls: 0x");
 	Serial.println(inputHexCode, HEX);
 }

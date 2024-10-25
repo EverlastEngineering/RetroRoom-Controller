@@ -45,6 +45,8 @@ void setup() {
 	Serial.begin(76800); // native esp8266 speed. Also, upload is possible at 6 times this rate, 460800.
 	while (!Serial) {};
 	pinMode(LED_BUILTIN, OUTPUT);
+	pinMode(MANUAL_OE_PIN, OUTPUT);
+	analogWriteFreq(40000);
 	lighting_init();
 	network_init();
 	controls_init();

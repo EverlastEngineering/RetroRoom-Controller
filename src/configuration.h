@@ -3,32 +3,22 @@
 
 // lighting
 #define NUM_LEDS 8
-#define DATA_PIN D3 // connected to FLASH button, boot fails if pulled LOW
 
-// outputs
-
-// define the output pins for control of the RetroSelector
-#define ARM_PIN D0 //HIGH at boot
-// #define CYCLE_PIN D4 // HIGH at boot, connected to on-board LED, boot fails if pulled LOW
-#define CYCLE_PIN D8 
-// #define ENABLE_PIN D8 //boot fails if pulled HIGH
-#define ENABLE_PIN D9
-
-#define IR_CONTROL_PIN D7
-
-//inputs
-
-// rotary controls
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
-#define ROTARY_PIN_IN1 A2
-#define ROTARY_PIN_IN2 A3
+	#define ROTARY_PIN_IN1 A2
+	#define ROTARY_PIN_IN2 A3
 #elif defined(ESP8266)
-#define ROTARY_PIN_IN1 D1
-#define ROTARY_PIN_IN2 D2
+	#define ARM_PIN D0 // Selector ARM pin,  **HIGH at boot**
+	#define ROTARY_PIN_IN1 D1
+	#define ROTARY_PIN_IN2 D2
+	#define DATA_PIN D3 // connected to FLASH button, boot fails if pulled LOW
+	#define TOUCH_SENSOR_PIN D5
+	#define ROTARY_SELECTOR_PIN D6
+	#define IR_CONTROL_PIN D7
+	#define CYCLE_PIN D8 // Selector CYCLE pin, boot fails if pulled HIGH
+	#define ENABLE_PIN D9
+	#define MANUAL_OE_PIN D10
 #endif
-
-#define TOUCH_SENSOR_PIN D5
-#define ROTARY_SELECTOR_PIN D6
 
 /** Consoles */
 #define NES "Nintendo Entertainment System"
