@@ -1,0 +1,14 @@
+{
+  "name": "retroroom-agent-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Markdown and process-management tooling for RetroRoom-Controller agent workflows.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "log:add": "node log-add.mjs",
+    "log:read": "node log-read.mjs"
+  }
+}
