@@ -14,6 +14,13 @@
   "scripts": {
     "log:add": "node log-add.mjs",
     "log:read": "node log-read.mjs",
-    "mcp": "node mcp-server.mjs"
+    "mcp": "node mcp-server.mjs",
+    "pio:run": "./pio.sh run",
+    "pio:upload": "./pio.sh run --target upload",
+    "pio:port": "./pio.sh device list",
+    "pio:monitor:bg": "./pio-monitor.sh bg",
+    "pio:monitor:fg": "./pio-monitor.sh fg",
+    "pio:monitor:list": "./pio-monitor.sh list",
+    "pio:monitor:stop": "./pio-monitor.sh stop"
   }
 }
