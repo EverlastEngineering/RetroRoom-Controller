@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "retroroom-agent-scripts": {
+      "type": "stdio",
+      "command": "npm",
+      "args": ["--prefix", "agent-script", "run", "--", "mcp"]
+    }
+  }
+}

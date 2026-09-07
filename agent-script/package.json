@@ -1,0 +1,26 @@
+{
+  "name": "retroroom-agent-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Markdown and process-management tooling for RetroRoom-Controller agent workflows.",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "scripts": {
+    "log:add": "node log-add.mjs",
+    "log:read": "node log-read.mjs",
+    "mcp": "node mcp-server.mjs",
+    "pio:run": "./pio.sh run",
+    "pio:upload": "./pio.sh run --target upload",
+    "pio:port": "./pio.sh device list",
+    "pio:monitor:bg": "./pio-monitor.sh bg",
+    "pio:monitor:fg": "./pio-monitor.sh fg",
+    "pio:monitor:list": "./pio-monitor.sh list",
+    "pio:monitor:stop": "./pio-monitor.sh stop"
+  }
+}

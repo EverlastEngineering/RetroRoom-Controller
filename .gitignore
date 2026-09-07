@@ -3,3 +3,11 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# agent-script/ Node.js dependencies
+agent-script/node_modules/
+
+# agent-script/ generated logs and runtime state (append-only; do not commit)
+pio-log.txt
+serial-log-*.txt
+agent-script/.pio-monitors.state
