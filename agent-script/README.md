@@ -1,15 +1,27 @@
 # agent-script/
 
-Node.js tooling for managing `LOG.md`, `TODO.md`, and other process artifacts in RetroRoom-Controller.
+Tooling for managing `LOG.md`, `TODO.md`, PlatformIO builds/uploads, and serial-monitor capture in RetroRoom-Controller. Includes a stdio MCP server (`mcp-server.mjs`) so the agent can call these scripts natively from Copilot Chat.
 
 ## Prerequisites
 
 - Node.js 18+ (see `.nvmrc`)
-- No external dependencies — these scripts use only Node built-ins
+- `pio` (PlatformIO Core) — install via the official script, or use the homebrew venv at `~/.platformio/penv/bin/pio` if present
+- `bash` 3.2+ (already on macOS)
 
 ## Install
 
-Nothing to install. `cd` into this folder before invoking scripts, or invoke with explicit paths.
+```bash
+cd agent-script
+npm install
+```
+
+Then add `pio` to your PATH so the wrappers can find it:
+
+```bash
+echo 'export PATH="$HOME/.platformio/penv/bin:$PATH"' >> ~/.zshrc
+```
+
+The MCP server is started by VS Code from `.vscode/mcp.json` (`npm --prefix agent-script run mcp`); you don't need to launch it manually.
 
 ## Scripts
 
@@ -111,13 +123,68 @@ Entries use [MADR](https://adr.github.io/madr/) format with three kinds:
 
 A marker comment `<!-- insert-below -->` in `LOG.md` tells the script where to place new entries. The script inserts immediately after this marker.
 
+## MCP server (`mcp-server.mjs`)
+
+A stdio MCP server that exposes the LOG scripts and the PlatformIO wrappers as Copilot Chat tools. Configure in `.vscode/mcp.json`; the server auto-starts when VS Code opens the workspace.
+
+### Log tools
+
+| Tool | Purpose |
+|---|---|
+| `log_add(title, kind?, ...kind-specific args, dryRun?)` | Append a `decision` / `note` / `test` entry. See `log-add.mjs` for argument shapes. |
+| `log_read(n?, since?, kind?)` | Read entries; slice / date-filter / kind-filter. |
+
+### PlatformIO tools
+
+All wrap `agent-script/pio.sh` and `agent-script/pio-monitor.sh` so humans and the agent hit the same logging convention.
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| `pio_port()` | List connected serial devices via `pio device list`. | Read-only; safe. Call first to discover ports. |
+| `pio_compile(env?, clean?)` | `pio run` (no hardware). | Full output appended to `pio-log.txt`. |
+| `pio_upload(env?, port)` | `pio run --target upload`. | **Destructive — only when user explicitly asks.** |
+| `pio_monitor(port, baud?, env?, logPath?)` | Start `pio device monitor` in background; output captured to a per-session log file. | **Destructive — only when user explicitly asks.** |
+| `pio_monitor_stop(pid?)` | Stop one or all running monitors. | Default stops all. |
+
+The MCP tools return only the wrapper's one-line summary (`OK ...` or `ERR(N) ...`). Full output is in `pio-log.txt` for build/upload runs, and in the per-session `serial-log-<port>-<ts>.txt` for monitor runs. Use `read_file` or `grep_search` on those files; the agent does **not** read them itself.
+
+## PlatformIO wrappers
+
+These thin bash wrappers give humans and the agent one consistent logging convention. Every `pio` invocation (whether from a terminal or via MCP) lands in `<repo>/pio-log.txt` (or a per-session `serial-log-*.txt`).
+
+### `pio.sh` — invoke `pio` with logging
+
+```bash
+./pio.sh device list
+./pio.sh run --target upload --upload-port /dev/cu.usbserial-11330
+./pio.sh run --target clean
+```
+
+Appends a timestamped header + `pio` invocation to `pio-log.txt`, then prints a one-line summary (`OK`/`ERR(N)`) to your terminal. Exit code reflects `pio`'s.
+
+### `pio-monitor.sh` — capture serial monitor output to a file
+
+```bash
+./pio-monitor.sh bg --port /dev/cu.usbserial-11330               # detached; PID + log path printed
+./pio-monitor.sh fg --port /dev/cu.usbserial-11330 --baud 115200 # foreground, also captures to a log
+./pio-monitor.sh list                                             # show active background monitors
+./pio-monitor.sh stop                                             # stop all
+./pio-monitor.sh stop --pid 12345                                 # stop one
+```
+
+Background monitors detach via `nohup` and survive MCP tool return. Active PIDs persist to `agent-script/.pio-monitors.state` (gitignored). Default baud is 76800 (from `platformio.ini`); env defaults to `nodemcuv2`.
+
 ## File layout
 
 ```
 agent-script/
-├── README.md       this file
-├── package.json    scripts metadata, declares ES module type
-├── .nvmrc          Node.js version pin
-├── log-add.mjs     append entry to LOG.md
-└── log-read.mjs    read recent entries from LOG.md
+├── README.md             this file
+├── package.json          scripts metadata, declares ES module type, npm deps
+├── package-lock.json     reproducible installs (committed)
+├── .nvmrc                Node.js version pin
+├── log-add.mjs           append entry to LOG.md (decision | note | test)
+├── log-read.mjs          read recent entries from LOG.md
+├── mcp-server.mjs        stdio MCP server (log_add, log_read, pio_*)
+├── pio.sh                PlatformIO wrapper (logs to <repo>/pio-log.txt)
+└── pio-monitor.sh        serial-monitor wrapper (logs to per-session file)
 ```
