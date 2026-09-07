@@ -7,8 +7,13 @@
   "engines": {
     "node": ">=18"
   },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
   "scripts": {
     "log:add": "node log-add.mjs",
-    "log:read": "node log-read.mjs"
+    "log:read": "node log-read.mjs",
+    "mcp": "node mcp-server.mjs"
   }
 }
