@@ -32,6 +32,21 @@ function runScript(script, args) {
   });
 }
 
+// Run an arbitrary command and return { stdout, stderr, exit } so tools can
+// decide what to surface. Used by the pio_* tools which shell out to bash
+// wrappers (pio.sh, pio-monitor.sh) that handle their own logging conventions.
+function runCapture(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    proc.stdout.on("data", (b) => (out += b.toString()));
+    proc.stderr.on("data", (b) => (err += b.toString()));
+    proc.on("close", (code) => resolve({ stdout: out, stderr: err, exit: code ?? -1 }));
+    proc.on("error", reject);
+  });
+}
+
 const server = new McpServer({
   name: "retroroom-agent-scripts",
   version: "1.0.0",
@@ -116,6 +131,119 @@ server.tool(
     if (kind) args.push("--kind", kind);
     const text = await runScript("log-read.mjs", args);
     return { content: [{ type: "text", text: text.trim() }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// PlatformIO tools (port / compile / upload / monitor). All shell out to the
+// agent-script/pio.sh and agent-script/pio-monitor.sh wrappers so that humans,
+// the agent, and CI hit the same logging convention. The wrappers are also
+// invokable from any terminal — see agent-script/README.md.
+// ---------------------------------------------------------------------------
+
+const PIO_SH = path.join(HERE, "pio.sh");
+const PIO_MONITOR_SH = path.join(HERE, "pio-monitor.sh");
+
+server.tool(
+  "pio_port",
+  "List connected serial devices (via `pio device list`). Call this first if you don't know which /dev/cu.* path to use.",
+  {},
+  async () => {
+    const { stdout, stderr, exit } = await runCapture("bash", [PIO_SH, "device", "list"]);
+    return {
+      content: [{ type: "text", text: stdout || stderr || `(exit ${exit}; no output)` }],
+    };
+  }
+);
+
+server.tool(
+  "pio_compile",
+  "Compile firmware via `pio run` (no hardware interaction). Full output is appended to <repo>/pio-log.txt; the wrapper's summary line is returned here.",
+  {
+    env: z.string().optional().describe("PlatformIO environment name (default from platformio.ini)."),
+    clean: z.boolean().optional().describe("Run `pio run --target clean` first to wipe the build cache."),
+  },
+  async ({ env, clean }) => {
+    const args = ["run"];
+    if (clean) args.push("--target", "clean");
+    if (env) args.push("--environment", env);
+    const { stdout, stderr, exit } = await runCapture("bash", [PIO_SH, ...args]);
+    return {
+      content: [{
+        type: "text",
+        text: stdout || stderr || `(exit ${exit}; no output)`,
+      }],
+    };
+  }
+);
+
+server.tool(
+  "pio_upload",
+  "Build and flash firmware via `pio run --target upload`. **Only call when the user has explicitly asked you to flash hardware.** Full output is appended to <repo>/pio-log.txt.",
+  {
+    env: z.string().optional().describe("PlatformIO environment name (default from platformio.ini)."),
+    port: z.string().describe("Serial device path, e.g. /dev/cu.usbserial-11330. Use pio_port to discover connected devices."),
+  },
+  async ({ env, port }) => {
+    if (!port) {
+      return {
+        content: [{
+          type: "text",
+          text: "port is required. Call pio_port first to discover connected devices.",
+        }],
+      };
+    }
+    const args = ["run", "--target", "upload", "--upload-port", port];
+    if (env) args.push("--environment", env);
+    const { stdout, stderr, exit } = await runCapture("bash", [PIO_SH, ...args]);
+    return {
+      content: [{
+        type: "text",
+        text: stdout || stderr || `(exit ${exit}; no output)`,
+      }],
+    };
+  }
+);
+
+server.tool(
+  "pio_monitor",
+  "Start `pio device monitor` in the background. Output is captured to a per-session log file (path returned). Use pio_monitor_stop to end. **Only call when the user has explicitly asked you to attach a serial monitor.**",
+  {
+    port: z.string().describe("Serial device path, e.g. /dev/cu.usbserial-11330."),
+    baud: z.number().int().positive().optional().describe("Baud rate (default 76800, from platformio.ini)."),
+    env: z.string().optional().describe("PlatformIO environment name (default 'nodemcuv2')."),
+    logPath: z.string().optional().describe("Override the capture file path. Default: serial-log-<port>-<ts>.txt in repo root."),
+  },
+  async ({ port, baud = 76800, env, logPath }) => {
+    const args = ["bg", "--port", port, "--baud", String(baud)];
+    if (env) args.push("--env", env);
+    if (logPath) args.push("--log", logPath);
+    const { stdout, stderr, exit } = await runCapture("bash", [PIO_MONITOR_SH, ...args]);
+    return {
+      content: [{
+        type: "text",
+        text: stdout || stderr || `(exit ${exit}; no output)`,
+      }],
+    };
+  }
+);
+
+server.tool(
+  "pio_monitor_stop",
+  "Stop one or all serial monitors started via pio_monitor.",
+  {
+    pid: z.number().int().positive().optional().describe("Specific monitor PID to stop. Omit to stop all."),
+  },
+  async ({ pid }) => {
+    const args = ["stop"];
+    if (pid !== undefined) args.push("--pid", String(pid));
+    const { stdout, stderr, exit } = await runCapture("bash", [PIO_MONITOR_SH, ...args]);
+    return {
+      content: [{
+        type: "text",
+        text: stdout || stderr || `(exit ${exit}; no output)`,
+      }],
+    };
   }
 );
 
