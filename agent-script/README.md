@@ -18,29 +18,41 @@ Nothing to install. `cd` into this folder before invoking scripts, or invoke wit
 Usage:
 
 ```bash
+# decision (default)
 node log-add.mjs --title "Short title here" --context "What situation." --decision "What we chose." --consequences "Tradeoffs / followups."
+
+# note (no decision frame needed)
+node log-add.mjs --kind note --title "Observation" --note "Free-form note text."
+
+# test (records a run + result)
+node log-add.mjs --kind test --title "What was tested" --run "What was executed" --result "What was observed"
 ```
 
-If invoked with no arguments, prints usage instructions and exits with code 1.
+If `--kind` is omitted, the entry is treated as a `decision`.
 
 Arguments:
 
-| Flag | Required | Description |
-|---|---|---|
-| `--title` | yes | Short title shown in the entry heading |
-| `--context` | yes | What situation prompted the decision |
-| `--decision` | yes | What was chosen |
-| `--consequences` | no | Tradeoffs, followups, or "revisit if X" |
-| `--dry-run` | no | Print the entry that would be written, do not modify any file |
+| Flag | Required | Required for kind | Description |
+|---|---|---|---|
+| `--title` | yes | all | Short title shown in the entry heading |
+| `--kind` | no | n/a | One of `decision`, `note`, `test`. Default `decision`. |
+| `--context` | yes | decision | What situation prompted the decision |
+| `--decision` | yes | decision | What was chosen |
+| `--consequences` | no | decision, test | Tradeoffs, followups, or "revisit if X" |
+| `--note` | yes | note | The note text |
+| `--run` | yes | test | What was executed |
+| `--result` | yes | test | What was observed |
+| `--dry-run` | no | n/a | Print the entry that would be written, do not modify any file |
 
 ### `log-read.mjs` — read recent LOG.md entries
 
 Usage:
 
 ```bash
-node log-read.mjs                # read all entries
-node log-read.mjs --n 5          # read the 5 most recent
-node log-read.mjs --since 2026-09-01   # entries on or after a date
+node log-read.mjs                                  # read all entries
+node log-read.mjs --n 5                            # read the 5 most recent
+node log-read.mjs --since 2026-09-01               # entries on or after a date
+node log-read.mjs --kind decision|note|test        # filter by entry kind
 ```
 
 If invoked with no arguments, reads all entries.
@@ -51,10 +63,13 @@ Arguments:
 |---|---|---|
 | `--n` | no | Number of most-recent entries to print (default: all) |
 | `--since` | no | ISO date `YYYY-MM-DD`; only entries on or after this date |
+| `--kind` | no | One of `decision`, `note`, `test`. Entries without an explicit kind default to `decision`. |
 
 ## How entries are formatted
 
-Entries use [MADR](https://adr.github.io/madr/) format. The script writes:
+Entries use [MADR](https://adr.github.io/madr/) format with three kinds:
+
+**`decision` (default)** — for choices worth recording:
 
 ```markdown
 ## <ISO-8601 UTC timestamp> — <title>
@@ -62,6 +77,32 @@ Entries use [MADR](https://adr.github.io/madr/) format. The script writes:
 **Context:** <text>
 
 **Decision:** <text>
+
+**Consequences:** <text>
+
+---
+```
+
+**`note`** — for observations, reminders, or non-decision content:
+
+```markdown
+## <ISO-8601 UTC timestamp> — <title>
+
+**Kind:** note
+**Note:** <text>
+
+---
+```
+
+**`test`** — for recording the result of a run (smoke test, build, flash, etc.):
+
+```markdown
+## <ISO-8601 UTC timestamp> — <title>
+
+**Kind:** test
+**Run:** <text>
+
+**Result:** <text>
 
 **Consequences:** <text>
 
