@@ -61,9 +61,9 @@ void rotarySelectorPressed() {
 	// sendSonyPower();
 	// Serial.println(SNES);
 	// Serial.print("Select Console: ");
-	// Serial.println(CurrentConsole().name.c_str());
-	// selectStack(CurrentConsole().selector_position);
-	CurrentConsole().selectConsole();
+	// Serial.println(currentConsole().name.c_str());
+	// selectStack(currentConsole().selector_position);
+	currentConsole().selectConsole();
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }
@@ -128,7 +128,7 @@ void rotaryEncoderTick() {
 											  // direction given by the encoder
 		// Serial.print(" direction:");
 		// Serial.println(direction);
-		int num_consoles = (int)HowManyConsoles();
+		int num_consoles = (int)howManyConsoles();
 		// Serial.print(" num_consoles:");
 		// Serial.println(num_consoles);
 
@@ -152,6 +152,6 @@ void rotaryEncoderTick() {
 		// Serial.print(" currentConsoleIndex:");
 		// Serial.println(currentConsoleIndex);
 		Serial.print("Highlight Console: ");
-		Serial.println(CurrentConsole().name.c_str());
+		Serial.println(currentConsole().name.c_str());
 	}
 }

@@ -10,7 +10,7 @@ void selectStack_init() {
 	digitalWrite(ARM_PIN, LOW);
 	digitalWrite(CYCLE_PIN, LOW);
 	digitalWrite(ENABLE_PIN, LOW);
-	selectStack(HowManyConsoles()+1);
+	selectStack(howManyConsoles()+1);
 }
 
 void selectStack(int position) {
@@ -34,7 +34,7 @@ void selectStack(int position) {
 		clockCycle();
 	}
 	enableStack();
-	for (int i = 0; i < HowManyConsoles()-position; i++) {
+	for (int i = 0; i < howManyConsoles()-position; i++) {
 		clockCycle();
 	}
 	// Serial.println("Stack Selection Complete");
