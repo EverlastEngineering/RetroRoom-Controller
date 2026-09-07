@@ -11,18 +11,22 @@ const LOG_PATH = path.resolve(__dirname, '..', 'LOG.md');
 const INSERT_MARKER = '<!-- insert-below -->';
 
 const USAGE = `Usage:
-  node log-read.mjs                # read all entries
-  node log-read.mjs --n N          # read the N most recent
-  node log-read.mjs --since YYYY-MM-DD   # entries on or after the date
+  node log-read.mjs                            # read all entries
+  node log-read.mjs --n N                      # read the N most recent
+  node log-read.mjs --since YYYY-MM-DD         # entries on or after the date
+  node log-read.mjs --kind decision|note|test  # filter by entry kind
 `;
 
+const VALID_KINDS = ['decision', 'note', 'test'];
+
 const args = process.argv.slice(2);
-const opts = { n: Infinity, since: null };
+const opts = { n: Infinity, since: null, kind: null };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   switch (a) {
     case '--n':     opts.n = parseInt(args[++i], 10); break;
     case '--since': opts.since = args[++i]; break;
+    case '--kind':  opts.kind = args[++i]; break;
     case '-h':
     case '--help':
       console.log(USAGE);
@@ -32,6 +36,12 @@ for (let i = 0; i < args.length; i++) {
       console.error(USAGE);
       process.exit(1);
   }
+}
+
+if (opts.kind && !VALID_KINDS.includes(opts.kind)) {
+  console.error(`--kind must be one of: ${VALID_KINDS.join(', ')}\n`);
+  console.error(USAGE);
+  process.exit(1);
 }
 
 let content;
@@ -57,12 +67,20 @@ const entries = entriesRegion
   .map(s => s.trim())
   .filter(s => s.length > 0);
 
+function entryKind(entry) {
+  const m = entry.match(/^\*\*Kind:\*\*\s*(\w+)/m);
+  return m ? m[1] : 'decision'; // entries without explicit Kind default to decision
+}
+
 let filtered = entries;
 if (opts.since) {
-  filtered = entries.filter(e => {
+  filtered = filtered.filter(e => {
     const m = e.match(/^## (\d{4}-\d{2}-\d{2})/);
     return m && m[1] >= opts.since;
   });
+}
+if (opts.kind) {
+  filtered = filtered.filter(e => entryKind(e) === opts.kind);
 }
 
 const slice = filtered.slice(0, opts.n);

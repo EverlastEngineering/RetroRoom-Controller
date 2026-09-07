@@ -11,16 +11,27 @@ const LOG_PATH = path.resolve(__dirname, '..', 'LOG.md');
 const INSERT_MARKER = '<!-- insert-below -->';
 
 const USAGE = `Usage:
-  node log-add.mjs --title "..." --context "..." --decision "..." [--consequences "..."] [--dry-run]
+  node log-add.mjs --title "..." [--kind decision|note|test] [kind-specific args] [--dry-run]
 
-Required:
-  --title         Short title for the entry heading
-  --context       What situation prompted the decision
-  --decision      What was chosen
+Kind=decision (default):
+  --title          Short title for the entry heading
+  --context        What situation prompted the decision
+  --decision       What was chosen
+  [--consequences  Tradeoffs, followups, or "revisit if X"]
 
-Optional:
-  --consequences  Tradeoffs, followups, or "revisit if X"
-  --dry-run       Print the entry that would be written, do not modify any file
+Kind=note:
+  --title          Short title for the entry heading
+  --note           The note text
+
+Kind=test:
+  --title          Short title for the entry heading
+  --run            What was executed
+  --result         What was observed
+  [--consequences  Tradeoffs, followups, or "revisit if X"]
+
+Global:
+  --kind           decision | note | test   (default: decision)
+  --dry-run        Print the entry that would be written, do not modify any file
 `;
 
 const args = process.argv.slice(2);
@@ -29,9 +40,13 @@ for (let i = 0; i < args.length; i++) {
   const a = args[i];
   switch (a) {
     case '--title':        opts.title = args[++i]; break;
+    case '--kind':         opts.kind = args[++i]; break;
     case '--context':      opts.context = args[++i]; break;
     case '--decision':     opts.decision = args[++i]; break;
     case '--consequences': opts.consequences = args[++i]; break;
+    case '--note':         opts.note = args[++i]; break;
+    case '--run':          opts.run = args[++i]; break;
+    case '--result':       opts.result = args[++i]; break;
     case '--dry-run':      opts.dryRun = true; break;
     case '-h':
     case '--help':
@@ -44,20 +59,65 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (!opts.title || !opts.context || !opts.decision) {
-  console.error('Missing required arguments.\n');
+const VALID_KINDS = ['decision', 'note', 'test'];
+const kind = opts.kind || 'decision';
+if (!VALID_KINDS.includes(kind)) {
+  console.error(`--kind must be one of: ${VALID_KINDS.join(', ')}\n`);
+  console.error(USAGE);
+  process.exit(1);
+}
+
+if (!opts.title) {
+  console.error('Missing required argument: --title\n');
+  console.error(USAGE);
+  process.exit(1);
+}
+
+const missing = [];
+if (kind === 'decision') {
+  if (!opts.context)  missing.push('--context');
+  if (!opts.decision) missing.push('--decision');
+} else if (kind === 'note') {
+  if (!opts.note)     missing.push('--note');
+} else if (kind === 'test') {
+  if (!opts.run)      missing.push('--run');
+  if (!opts.result)   missing.push('--result');
+}
+if (missing.length > 0) {
+  console.error(`Missing required argument(s) for kind=${kind}: ${missing.join(', ')}\n`);
   console.error(USAGE);
   process.exit(1);
 }
 
 const timestamp = new Date().toISOString();
+const bodyLines = [];
+if (kind === 'note') {
+  bodyLines.push(`**Kind:** ${kind}`);
+  bodyLines.push(`**Note:** ${opts.note}`);
+} else if (kind === 'test') {
+  bodyLines.push(`**Kind:** ${kind}`);
+  bodyLines.push(`**Run:** ${opts.run}`);
+  bodyLines.push('');
+  bodyLines.push(`**Result:** ${opts.result}`);
+  if (opts.consequences) {
+    bodyLines.push('');
+    bodyLines.push(`**Consequences:** ${opts.consequences}`);
+  }
+} else {
+  // decision (default)
+  bodyLines.push(`**Context:** ${opts.context}`);
+  bodyLines.push('');
+  bodyLines.push(`**Decision:** ${opts.decision}`);
+  if (opts.consequences) {
+    bodyLines.push('');
+    bodyLines.push(`**Consequences:** ${opts.consequences}`);
+  }
+}
+
 const entry = [
   `## ${timestamp} — ${opts.title}`,
   '',
-  `**Context:** ${opts.context}`,
-  '',
-  `**Decision:** ${opts.decision}`,
-  ...(opts.consequences ? ['', `**Consequences:** ${opts.consequences}`] : []),
+  ...bodyLines,
   '',
   '---',
   '',
