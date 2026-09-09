@@ -36,7 +36,7 @@ void checkPosition() {
 IRAM_ATTR void checkPosition() {
 	encoder->tick(); // just call tick() to check the state.
 }
-#elif defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
+#elif defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W) || defined(ARDUINO_YD_RP2040)
 // RP2040: no attribute needed; the function lives in normal flash and is
 // jumpable from the vector table.
 void checkPosition() {
