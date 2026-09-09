@@ -129,17 +129,12 @@ void touchReleaseDetected() {
 
 
 void rotaryEncoderTick() {
-	if (hasTouchInterruptFired) {
-		touchSensor.read(); 
-		hasTouchInterruptFired = false;
-	}  
-	if (touchSensor.isPressed()) {
-		touchDetected();
-	}
-	else {
-		touchReleaseDetected();
-	}
-	
+	// Note: the touch sensor is now polled from loop() via touchSensor.update()
+	// (which fires onPressed / wasReleased handlers correctly under EasyButton's
+	// debounce). The previous "isPressed() ? touchDetected() : touchReleaseDetected()"
+	// poll here caused touchDetected() to fire on every loop iteration while the
+	// USR button on the YD-RP2040 was held, which painted a white pixel via
+	// lightSingle() and overrode the smoke-test WS2812 cycle. Removing that poll.
 	static int pos = 0;
 
 	encoder->tick(); // just call tick() to check the state.
