@@ -1,5 +1,11 @@
+// IR blaster implementation. Currently ESP-only because the existing
+// crankyoldgit/IRremoteESP8266 + <IRsend.h> stack is tied to the ESP build.
+// On any other board the file compiles to nothing. The z3t0/IRremote@^4.x
+// migration (replacing crankyoldgit for Pico support) lands in a follow-up
+// commit and the guard will move to `#ifdef HAS_IR`.
 #include "ircontrol.h"
-#include <iostream>
+
+#if defined(ESP8266)
 
 const uint16_t kIrLed = IR_CONTROL_PIN;
 IRsend irsend(kIrLed);
@@ -72,3 +78,5 @@ void sendHexCode(int inputHexCode) {
 	Serial.print("Sent hex to ir controls: 0x");
 	Serial.println(inputHexCode, HEX);
 }
+
+#endif // ESP8266

@@ -1,9 +1,9 @@
 #include "Console.h"
 #include "stackselector.h"
 #include "main.h"
-#include "ircontrol.h"
-
-// Name(string fName, string lName):fName(std::move(fName)), lName(std::move(lName))
+#if defined(ESP8266)
+#include "ircontrol.h"   // for setInput() -- only present when the IR blaster is built
+#endif
 
 Console::Console() {}
 
@@ -17,13 +17,10 @@ Console::Console(const std::string& _name, const int _tvinput, const int _select
 }
 
 void Console::selectConsole() {
-	// huh, these are all the same?
-	// int currentconsole = (*this).selector_position;
-	// int currentconsole = this->selector_position;
-	// int currentconsole = selector_position;
-
 	Serial.print("Select Console: ");
 	Serial.println(name.c_str());
 	selectStack(selector_position);
+#if defined(ESP8266)
 	setInput(tvinput);
+#endif
 }

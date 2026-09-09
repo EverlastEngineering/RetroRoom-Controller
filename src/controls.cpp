@@ -7,6 +7,13 @@
 #include "consoles.h"
 #include "lighting.h"
 
+// IRAM_ATTR is an ESP-specific macro that maps to an isr-aligned attribute.
+// On RP2040 (Earle Philhower core) ISR handlers don't need any attribute --
+// the PIO / vector system handles alignment -- so define it to nothing.
+#ifndef IRAM_ATTR
+#define IRAM_ATTR
+#endif
+
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
 EasyButton touchSensor(TOUCH_SENSOR_PIN,35,true,false);
@@ -14,6 +21,9 @@ EasyButton touchSensor(TOUCH_SENSOR_PIN,35,true,false);
 bool isTouched = false;
 volatile bool hasTouchInterruptFired = false;
 
+// checkPosition() ISR for the rotary encoder. Must be a real function on every
+// board that compiles controls_init(); the conditional definitions below keep
+// ESP's IRAM_ATTR optimization without breaking RP2040 / AVR.
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
 // This interrupt routine will be called on any change of one of the input
 // signals
@@ -24,6 +34,12 @@ void checkPosition() {
 // @brief The interrupt service routine will be called on any change of one of
 // the input signals.
 IRAM_ATTR void checkPosition() {
+	encoder->tick(); // just call tick() to check the state.
+}
+#elif defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
+// RP2040: no attribute needed; the function lives in normal flash and is
+// jumpable from the vector table.
+void checkPosition() {
 	encoder->tick(); // just call tick() to check the state.
 }
 #endif
@@ -81,17 +97,25 @@ void IRAM_ATTR touchSensorISR() {
 
 void touchDetected() {
 	// Serial.println("Illuminate");
+#if defined(HAS_LEDS)
 	lightRing(true);
+#endif
 	if (!isTouched) {
 		isTouched = true;
+#if defined(HAS_WIFI)
 		broadcastSocketMessage("touch: touched");
+#endif
 	}
 }
 
 void touchReleaseDetected() {
+#if defined(HAS_LEDS)
 	lightRing(false);
+#endif
 	if (isTouched) {
+#if defined(HAS_WIFI)
 		broadcastSocketMessage("touch: released");
+#endif
 		isTouched = false;
 	}
 }
@@ -133,7 +157,9 @@ void rotaryEncoderTick() {
 		// Serial.println(num_consoles);
 
 		if (direction == -1) {
+#if defined(HAS_LEDS)
 			ringLEDPrevious();
+#endif
 			// Serial.println("ccw");
 			if (currentConsoleIndex == 0) {
 				return;
@@ -141,7 +167,9 @@ void rotaryEncoderTick() {
 			// Serial.println("subtracting one");
 			currentConsoleIndex--;
 		} else if (direction == 1) {
+#if defined(HAS_LEDS)
 			ringLEDNext();
+#endif
 			// Serial.println("cw");
 			if (currentConsoleIndex == (num_consoles - 1)) {
 				return;

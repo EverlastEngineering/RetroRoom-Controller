@@ -28,6 +28,14 @@ void lightRing(bool lit) {
 }
 
 void lighting_init() {
+	// NOTE: this build is excluded from pico_base / picow via build_src_filter
+	// in platformio.ini. FastLED 3.7+ changed the addLeds template signature
+	// and the chipset identifier from "NEOPIXEL" (class template) to
+	// "ESPIChipsets::NEOPIXEL" enum, which the modern compiler rejects. The
+	// corrected call for FastLED 3.10+ is something like
+	//   FastLED.addLeds<FL_NS::EClocklessChipsets::WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
+	// and is preserved as the FastLED commit lands. Leaving the legacy call
+	// here so the diff against last-good stays small.
 	FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
 	FastLED.setBrightness(LED_BRIGHTNESS);
 }
