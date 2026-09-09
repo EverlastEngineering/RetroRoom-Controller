@@ -11,13 +11,6 @@
 #include "stackselector.h"
 #include "consoles.h"
 
-
-#include <map>
-#include <string>
-#include <iostream>
-using namespace std;
-
 void consoleDefinitions();
-
 
 #endif
