@@ -64,6 +64,12 @@ void controls_init() {
 	// touch sensor
 	touchSensor.begin();
 	touchSensor.onPressed(touchDetected);
+	// Smoke-test toggle: on the YD-RP2040 dev board TOUCH_SENSOR_PIN is GP24
+	// (the USR button). Each press flips the red/green/blue cycle on/off so
+	// we can confirm the FastLED PIO path is alive without holding a serial
+	// monitor open. EasyButton fires all onPressed handlers in registration
+	// order, so this doesn't disturb the existing touchDetected() behavior.
+	touchSensor.onPressed(lightCycleToggle);
 	touchSensor.onPressedFor(100, touchReleaseDetected);
 	if (touchSensor.supportsInterrupt()) {
 		attachInterrupt(digitalPinToInterrupt(TOUCH_SENSOR_PIN), touchSensorISR, CHANGE);

@@ -38,10 +38,14 @@ extern void lightSingle(int led);
 extern void ringLEDNext();
 extern void ringLEDPrevious();
 extern void lightRing(bool lit);
-// Continuous smoke-test cycle (red -> white -> blue). Used by loop() on
+// Continuous smoke-test cycle (red -> green -> blue). Used by loop() on
 // the pico_yd env to exercise the FastLED PIO driver after lighting_init().
 // Returns immediately if the cycle period hasn't elapsed.
 extern void lightCycleTick();
+// Query / toggle the cycle. Bound to the USR button (touchSensor) in
+// controls_init() so pressing the button disables / re-enables the cycle.
+extern bool lightCycleIsEnabled();
+extern void lightCycleToggle();
 #endif
 
 #endif

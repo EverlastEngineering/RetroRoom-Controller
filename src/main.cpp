@@ -80,13 +80,22 @@ void loop() {
 	}
 	rotaryEncoderTick();
 
-	// Smoke-test: drive the WS2812 ring with red -> white -> blue at 1Hz
+	// Poll the touch sensor (YD-RP2040 USR button on GP24 is mapped to
+	// TOUCH_SENSOR_PIN). EasyButton's onPressed handlers only fire when
+	// update() / read() is called periodically. Existing touchSensorISR
+	// sets hasTouchInterruptFired but nothing in the loop services it,
+	// so we have to poll explicitly. update() is cheap (no-op when idle).
+	touchSensor.update();
+
+	// Smoke-test: drive the WS2812 ring with red -> green -> blue at 1Hz
 	// so we can confirm the FastLED PIO path is continuously outputting
 	// valid frames. Cheap (FastLED.show() returns immediately when no
 	// pixels changed); only meaningful on envs that actually have a
 	// WS2812 chain wired up (pico_yd uses the onboard GP23 WS2812; the
 	// generic pico_base / picow envs will silently drive an empty
-	// buffer if no ring is connected).
+	// buffer if no ring is connected). The USR button toggles this cycle
+	// on/off via lightCycleToggle (registered as a touchSensor.onPressed
+	// handler in controls_init()).
 	#if defined(HAS_LEDS)
 	lightCycleTick();
 	#endif
