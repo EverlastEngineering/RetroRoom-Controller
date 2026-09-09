@@ -5,6 +5,38 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-09T14:30:00.000Z — Pico port: FastLED 3.10+ PIO backend + YD-RP2040 dev board env
+
+**Context:** Earlier work pinned FastLED to 3.6.0 on the Pico envs and patched around an upstream bug (3.6.0's `clockless_arm_rp2040.h` unconditionally `#include`s `../common/m0clockless.h`, which references `SysTick->VAL` — RP2040 has no SysTick). The user surfaced that FastLED 3.10+ ships a complete PIO-based RP2040 clockless backend at `src/platforms/arm/rp2040/` (default `FASTLED_RP2040_CLOCKLESS_PIO=1`, `FASTLED_RP2040_CLOCKLESS_M0_FALLBACK=0`), gated by two macros in `led_sysdefs_arm_rp2040.h`. This drops the patch script + patch file entirely and is the upstream-recommended path. Separately, the dev board on the desk is a VCC-GND Studio YD-RP2040 (pinout-compatible with the standard Pico but with an onboard WS2812 on GP23, USR button on GP24, blue LED on GP25) — useful for smoke-testing the FastLED PIO path without a separate WS2812 ring wired up.
+
+**Decision:** Two commits on `session/pico-migration`, branched off `4966a40`:
+
+1. `65fd602` — port: FastLED 3.10+ RP2040 PIO backend (drop 3.6.0 + patch script)
+   - `platformio.ini`: pin `fastled/FastLED@^3.10.0` for `[env:pico_base]` and `[env:picow]`. Add `FASTLED_RP2040_CLOCKLESS_PIO=1` and `FASTLED_RP2040_CLOCKLESS_M0_FALLBACK=0` to build_flags (explicit, not relying on defaults).
+   - Delete `apply_fastled_patch.py` and `patches/1-fastled-rp2040-clockless-pio-only.patch` — 3.10+ doesn't need them.
+   - `src/lighting.cpp`: migrate `addLeds<NEOPIXEL, DATA_PIN>(...)` → `addLeds<WS2812B, RR_FASTLED_DATA_PIN, GRB>(...)`. `WS2812B` is the explicit clockless chipset class with `<DataPin, RGBOrder>` template signature that 3.10+'s addLeds helper expects.
+   - `src/lighting.h`: tighten the `#pragma push_macro`/`pop_macro` save+undef dance — save under `RR_FASTLED_DATA_PIN`/`RR_FASTLED_RGB_ORDER` and restore `DATA_PIN`/`RGB_ORDER` after FastLED.
+   - `src/controls.cpp::checkPosition()` `#elif` gate extended to include `ARDUINO_YD_RP2040` (needed for the YD env).
+
+2. `72be849` — port: add YD-RP2040 dev board env + smoke-test WS2812 heartbeat
+   - `platformio.ini`: new `[env:pico_yd]` with `board = vccgnd_yd_rp2040`. Auto-defines `ARDUINO_YD_RP2040`. Same FastLED backend as `pico_base`/`picow`.
+   - `src/configuration.h`: add `#elif defined(ARDUINO_YD_RP2040)` pin block. `DATA_PIN=23` (onboard WS2812), `TOUCH_SENSOR_PIN=24` (USR button), other pins keep the generic Pico numeric values as placeholders.
+   - `src/main.cpp`: 1Hz heartbeat blink on the onboard blue LED via existing `setLed()`/`statusLedActive`/`flash` gate. Runtime signal that `lighting_init()` (FastLED PIO bring-up) succeeded.
+   - `src/lighting.cpp::lighting_init()`: at end of init, flash red → green → blue → black once on the WS2812 chain. On YD-RP2040 this lights the onboard LED; on perfboard build (DATA_PIN=4) it lights the external ring.
+
+**Consequences:** All five envs green after this commit set:
+- `nodemcuv2` (ESP, legacy FastLED ^3.5.0): SUCCESS, 55.9% RAM, 49.8% Flash
+- `pico_base` (Raspberry Pi Pico, FastLED 3.10.3): SUCCESS, 3.7% RAM, 2.7% Flash
+- `picow` (Raspberry Pi Pico-W, FastLED 3.10.3): SUCCESS, 26.6% RAM, 15.0% Flash
+- `pico_yd` (VCC-GND YD-RP2040, FastLED 3.10.3): SUCCESS, 3.7% RAM, 0.3% Flash (16MB YD flash). Flashed to `/dev/cu.usbmodem11101` — `setup()` completed past `lighting_init()` (PIO program upload + DMA channel claim + DMA IRQ install) without crash; USB-CDC re-enumerated after the FastLED bring-up.
+- `test_native`: 24/24 Unity tests pass.
+
+Deferred work unchanged from the previous Pico port commit set:
+- z3t0/IRremote@^4.x swap replacing `crankyoldgit/IRremoteESP8266`. The IR send path with raw 12-bit codes will likely move to `IrSender.sendPulseDistanceWidthRaw()`.
+- CYW43 (Pico-W WiFi) driver on the `picow` env.
+- Persistence (was ESP EEPROM; Pico is flash-backed — needs different lib).
+- StackSelector perfboard wiring — once landed, the `pico_yd` env's placeholder pins should be revisited (the YD's GP23/GP24 are already used; the rest of the perfboard pins will need real YD-specific values).
+
 ## 2026-09-09T00:00:00.000Z — Pico port: nodemcuv2 / pico_base / picow all build green
 
 **Context:** Earlier sessions chased a boot-loop on ESP8266, then switched hardware to ESP32-C3 (abandoned for pin-count reasons), then to a real Raspberry Pi Pico (`session/picotest` was the toolchain-validation scaffold; verified live on `/dev/cu.usbmodem11101`). The user wants to abandon the `session/json-config-cleanup` branch entirely and port the existing ESP-era firmware to Pico from the `c6e7037` "last-good" snapshot. The Pico + Earle Philhower core does not provide ESP-only headers (AsyncWebServer, ESP8266mDNS, IRremoteESP8266), nor the `IRAM_ATTR` macro, nor the ESP-only WiFi APIs. A clean port needs #ifdef guards throughout src/. The user gave blanket permission to flash the device.
