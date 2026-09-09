@@ -10,26 +10,11 @@
 /* Our own headers */
 #include "main.h"
 
+// consoleDefinitions() is defined in src/consoles.cpp and reads the embedded
+// JSON via the functional core (lib/ConsoleConfig). The old hand-rolled
+// addConsole(...) sequence that used to live here is gone.
 
-
-void consoleDefinitions() {
-	/**
-	 * Console takes:
-	 * name: The friendly name of the console.
-	 * enum of the Inputs on the television
-	 * selector_position: The position in the StackSelector system.
-	 * led_position: The position of the first led on the rgb string for this console.
-	 * led_width: How many leds in the strip are lit when this console is selected.
-	 */
-
-	addConsole(Console(NES, Composite,		1, 5, 	1));
-	addConsole(Console(SNES, SCART,			2, 15,	5));
-	addConsole(Console(Genesis, SCART,		3, 15,	5));
-
-	Serial.println(HowManyConsoles());
-}
-
-/* HARD_RESET is a hack to completely nuke the onboard PRAM (or is it SRAM or..) that contains the saved wifi settings */
+// HARD_RESET is a hack to completely nuke the onboard PRAM (or is it SRAM or..) that contains the saved wifi settings
 // #define HARD_RESET
 
 void setup() {
