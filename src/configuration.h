@@ -18,6 +18,28 @@
 	#define CYCLE_PIN D8 // Selector CYCLE pin, boot fails if pulled HIGH
 	#define ENABLE_PIN D9
 	#define MANUAL_OE_PIN D10
+#elif defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
+	// Bare Raspberry Pi Pico / Pico-W pin map. The Pico-W variant
+	// (ARDUINO_RASPBERRY_PI_PICO_W) is currently used the same way as plain Pico
+	// since the CYW43 WiFi stack has not been wired in yet (network.{h,cpp} is
+	// gated on HAS_WIFI; HAS_WIFI is intentionally NOT set on picow env for now).
+	//
+	// Override once wiring is known; this is a reasonable starting point that
+	// avoids strapping pins (GP25 is the on-board LED, GP0-GP7 are safe on the
+	// standard header).
+	// MANUAL_OE_PIN deliberately left undefined: a perfboard revision is needed
+	// before driving that line; for now, use FastLED.setBrightness(0) for the
+	// "off" path.
+	#define ROTARY_PIN_IN1    2
+	#define ROTARY_PIN_IN2    3
+	#define DATA_PIN          4   // FastLED ring on GP4
+	#define TOUCH_SENSOR_PIN  5
+	#define ROTARY_SELECTOR_PIN 6
+	#define IR_CONTROL_PIN    7
+	#define ARM_PIN           8
+	#define CYCLE_PIN         9
+	#define ENABLE_PIN        10  // StackSelector ENABLE on GP10; revise on perfboard
+	// MANUAL_OE_PIN intentionally left undefined; see top of branch.
 #endif
 
 /** Consoles */
