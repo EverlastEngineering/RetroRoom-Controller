@@ -63,14 +63,32 @@ void controls_init() {
 
 	// touch sensor
 	touchSensor.begin();
+	// ESP only: the legacy capacitive touch-sensor handler. On Pico envs
+	// (including the YD-RP2040 dev board) TOUCH_SENSOR_PIN is repurposed
+	// as a regular button input (YD: GP24 USR button) and the touchDetected
+	// behavior would paint a white pixel via lightRing -> lightSingle and
+	// override the smoke-test WS2812 cycle. Skip on non-ESP.
+#if defined(ESP8266)
 	touchSensor.onPressed(touchDetected);
+#endif
 	// Smoke-test toggle: on the YD-RP2040 dev board TOUCH_SENSOR_PIN is GP24
 	// (the USR button). Each press flips the red/green/blue cycle on/off so
 	// we can confirm the FastLED PIO path is alive without holding a serial
-	// monitor open. EasyButton fires all onPressed handlers in registration
-	// order, so this doesn't disturb the existing touchDetected() behavior.
+	// monitor open.
+	//
+	// IMPORTANT: register via onPressed() only -- do NOT register onPressedFor.
+	// EasyButton's wasReleased() fires _pressed_callback() only when
+	// _was_btn_held is false. _was_btn_held is set inside _checkPressedTime()
+	// gated on _pressed_for_callback being non-null; if we don't register
+	// onPressedFor at all, _was_btn_held stays false and _pressed_callback
+	// fires on every release. Registering onPressedFor(100, ...) would set
+	// _was_btn_held = true on any press >100ms and silently swallow the
+	// toggle. (Which is exactly the bug we just hit.) So: skip onPressedFor
+	// on the YD env, accept the loss of the legacy touchReleaseDetected
+	// behavior on this board. touchDetected() is also gated out below on
+	// non-ESP envs to keep the WS2812 ring clear of the white-pixel-paint
+	// bug from commit a38f4a0.
 	touchSensor.onPressed(lightCycleToggle);
-	touchSensor.onPressedFor(100, touchReleaseDetected);
 	if (touchSensor.supportsInterrupt()) {
 		attachInterrupt(digitalPinToInterrupt(TOUCH_SENSOR_PIN), touchSensorISR, CHANGE);
 		Serial.println("Button will be used through interrupts");

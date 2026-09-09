@@ -87,8 +87,12 @@ static bool lightCycleNeedsBlack = false;
 
 bool lightCycleIsEnabled() { return lightCycleEnabled; }
 void lightCycleToggle() {
+	// Called from touchSensor.onPressed() in controls_init() on every USR
+	// button release. EasyButton fires this on the release edge when no
+	// onPressedFor callback is registered (which would otherwise set
+	// _was_btn_held and silently swallow this callback for >100ms presses).
 	lightCycleEnabled = !lightCycleEnabled;
-	Serial.print("lightCycle: toggled -> ");
+	Serial.print("USR toggle -> lightCycle ");
 	Serial.println(lightCycleEnabled ? "ON" : "OFF");
 	if (!lightCycleEnabled) {
 		// Force the strip to black on the next tick and reset the phase
