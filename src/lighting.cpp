@@ -65,6 +65,45 @@ void lighting_init() {
 	Serial.println("Lighting init done.");
 }
 
+// Continuous RGB-cycle smoke test for the YD-RP2040 onboard WS2812.
+// Called from loop() on the pico_yd env (and harmless on the other Pico
+// envs since FastLED.show() is cheap). Cycles red -> white -> blue with
+// a soft crossfade so the PIO driver is repeatedly exercised at boot-time
+// cadence. Returns nothing; uses static state to track current color and
+// last update tick.
+//
+// NOTE: this is a temporary smoke-test helper. Once the StackSelector
+// perfboard lands and the rotary encoder drives ringLEDNext / ringLEDPrevious,
+// this function should be removed (or gated on a build flag).
+void lightCycleTick() {
+	static int phase = 0;
+	static unsigned long lastUpdate = 0;
+	const unsigned long cyclePeriodMs = 1000;  // 1 second per color
+
+	unsigned long now = millis();
+	if (now - lastUpdate < cyclePeriodMs) {
+		return;
+	}
+	lastUpdate = now;
+
+	phase = (phase + 1) % 3;
+	switch (phase) {
+	case 0:
+		fill_solid(leds, NUM_LEDS, CRGB::Red);
+		Serial.println("lightCycle: red");
+		break;
+	case 1:
+		fill_solid(leds, NUM_LEDS, CRGB::White);
+		Serial.println("lightCycle: white");
+		break;
+	case 2:
+		fill_solid(leds, NUM_LEDS, CRGB::Blue);
+		Serial.println("lightCycle: blue");
+		break;
+	}
+	FastLED.show();
+}
+
 void lightSingle (int led) {
 	// Serial.print("Lit pixel #");
 	// Serial.println(currentRingLED);

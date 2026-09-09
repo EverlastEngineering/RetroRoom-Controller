@@ -80,6 +80,17 @@ void loop() {
 	}
 	rotaryEncoderTick();
 
+	// Smoke-test: drive the WS2812 ring with red -> white -> blue at 1Hz
+	// so we can confirm the FastLED PIO path is continuously outputting
+	// valid frames. Cheap (FastLED.show() returns immediately when no
+	// pixels changed); only meaningful on envs that actually have a
+	// WS2812 chain wired up (pico_yd uses the onboard GP23 WS2812; the
+	// generic pico_base / picow envs will silently drive an empty
+	// buffer if no ring is connected).
+	#if defined(HAS_LEDS)
+	lightCycleTick();
+	#endif
+
 	// Smoke-test heartbeat: blink the onboard LED once per second so we
 	// can confirm at a glance that the firmware booted cleanly through
 	// lighting_init() (which exercises the FastLED PIO bring-up on
