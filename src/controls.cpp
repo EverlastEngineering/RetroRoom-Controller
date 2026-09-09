@@ -76,10 +76,11 @@ void controls_init() {
 void rotarySelectorPressed() {
 	// sendSonyPower();
 	// Serial.println(SNES);
-	// Serial.print("Select Console: ");
-	// Serial.println(CurrentConsole().name.c_str());
-	// selectStack(CurrentConsole().selector_position);
-	CurrentConsole().selectConsole();
+	// selectConsole() is now a free function in src/consoles.cpp; previously
+	// it was a method on the legacy Console class. The legacy class has been
+	// removed (now an alias for retroroom_core::Console from lib/ConsoleConfig),
+	// and the core type is pure -- no I/O, no Serial, no selectStack.
+	selectConsole(CurrentConsole());
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }
