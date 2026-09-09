@@ -79,4 +79,23 @@ void loop() {
 		flashLed();
 	}
 	rotaryEncoderTick();
+
+	// Smoke-test heartbeat: blink the onboard LED once per second so we
+	// can confirm at a glance that the firmware booted cleanly through
+	// lighting_init() (which exercises the FastLED PIO bring-up on
+	// RP2040) and the loop is running. The toggle is gated on the current
+	// statusLedActive so it doesn't fight flashLed() / setLed() if the
+	// WebSocket-driven `flash` mode is active on the ESP build. On the
+	// Pico envs flash is never set true (no network), so this is the only
+	// LED activity in loop().
+	static unsigned long lastBlink = 0;
+	if (millis() - lastBlink >= 500) {
+		lastBlink = millis();
+		// Only blink if no other LED state is being driven (i.e. flash
+		// mode is off and the WebSocket-driven ledOn/ledOff hasn't been
+		// called recently). Cheap gate: skip while flash is on.
+		if (!flash) {
+			setLed(statusLedActive ? 0x0 : 0x1);
+		}
+	}
 }

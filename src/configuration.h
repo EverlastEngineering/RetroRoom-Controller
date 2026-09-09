@@ -40,6 +40,35 @@
 	#define CYCLE_PIN         9
 	#define ENABLE_PIN        10  // StackSelector ENABLE on GP10; revise on perfboard
 	// MANUAL_OE_PIN intentionally left undefined; see top of branch.
+#elif defined(ARDUINO_YD_RP2040)
+	// VCC-GND Studio YD-RP2040 (dev board currently on the desk). Distinct
+	// from the standard Pico block above because:
+	//   - Onboard WS2812 RGB LED is on GP23, not GP4 (no external ring yet)
+	//   - User button USR is on GP24 (not exposed by the Earle Philhower
+	//     Pico variant; we'd have to wire a button to use TOUCH_SENSOR_PIN
+	//     or ROTARY_SELECTOR_PIN on a different pin)
+	//   - Onboard blue LED is on GP25 (same as Pico's green LED)
+	//
+	// This block is selected by setting -DARDUINO_YD_RP2040 in build_flags
+	// (the platform-arduino vccgnd_yd_rp2040 board target defines this
+	// automatically). Used for smoke-testing FastLED 3.10+ PIO output
+	// without a separate WS2812 ring wired up.
+	//
+	// Other pins (rotary, stackselector, IR) keep the same numeric values
+	// as the generic Pico block above -- this is a smoke-test env, not a
+	// production pin map. The YD's GP23 and GP24 are physically distinct
+	// from anything else; the rest of the GPIO assignments are placeholders
+	// that compile but don't connect to anything real until a perfboard
+	// revision lands.
+	#define ROTARY_PIN_IN1    2
+	#define ROTARY_PIN_IN2    3
+	#define DATA_PIN          23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
+	#define TOUCH_SENSOR_PIN  24  // YD-RP2040 USR button (PIN_USRKEY)
+	#define ROTARY_SELECTOR_PIN 6
+	#define IR_CONTROL_PIN    7
+	#define ARM_PIN           8
+	#define CYCLE_PIN         9
+	#define ENABLE_PIN        10
 #endif
 
 /** Consoles */
