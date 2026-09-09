@@ -81,11 +81,27 @@ void loop() {
 	rotaryEncoderTick();
 
 	// Poll the touch sensor (YD-RP2040 USR button on GP24 is mapped to
-	// TOUCH_SENSOR_PIN). EasyButton's onPressed handlers only fire when
-	// update() / read() is called periodically. Existing touchSensorISR
-	// sets hasTouchInterruptFired but nothing in the loop services it,
-	// so we have to poll explicitly. update() is cheap (no-op when idle).
-	touchSensor.update();
+	// TOUCH_SENSOR_PIN). EasyButton in POLL mode requires touchSensor.read()
+	// to be called periodically -- that's what reads the pin and fires
+	// onPressed/wasReleased callbacks. EasyButton::update() is for time
+	// tracking only (used by interrupt-driven onPressedFor handlers); it
+	// does NOT read the pin. Calling update() instead of read() was the
+	// silent-toggle bug -- the pin state was never actually polled.
+	touchSensor.read();
+
+	// Diagnostic: print TOUCH_SENSOR_PIN state every 500ms. Useful when
+	// debugging button wiring (the EasyButton's internal pin-tracking is
+	// black-box; raw pin state is easier to reason about).
+#if defined(ARDUINO_ARCH_RP2040)
+	static unsigned long lastPinPrint = 0;
+	if (millis() - lastPinPrint >= 500) {
+		lastPinPrint = millis();
+		Serial.print("pin=");
+		Serial.print(digitalRead(TOUCH_SENSOR_PIN));
+		Serial.print(" enabled=");
+		Serial.println(lightCycleIsEnabled() ? "ON" : "OFF");
+	}
+#endif
 
 	// Smoke-test: drive the WS2812 ring with red -> green -> blue at 1Hz
 	// so we can confirm the FastLED PIO path is continuously outputting
