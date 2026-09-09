@@ -1,5 +1,9 @@
-#include <iostream>
+// Whole file body is WiFi-coupled. Gate on HAS_WIFI so the pico_base build
+// doesn't try to drag in AsyncWebServer / AsyncWebSocket / AsyncWiFiManager.
+// See src/network.h for the same guard and the rationale.
 #include "network.h"
+
+#if defined(HAS_WIFI)
 #include "state.h"
 #include "html.h"
 
@@ -86,3 +90,4 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
       break;
   }
 }
+#endif // HAS_WIFI

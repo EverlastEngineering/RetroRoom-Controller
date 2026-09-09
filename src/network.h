@@ -1,5 +1,14 @@
 #ifndef RR_NETWORK_H
 #define RR_NETWORK_H
+
+// The whole network stack is WiFi-coupled (AsyncWebServer, AsyncWebSocket,
+// AsyncWiFiManager, etc.) and is not currently portable to the Pico-W CYW43
+// path. On any env without HAS_WIFI, the network code compiles to nothing so
+// the rest of the firmware can build on Pico_base. The picow env (HAS_WIFI)
+// would need a separate "Pico-W WiFi" implementation before network_init()
+// does anything meaningful there.
+#if defined(HAS_WIFI)
+
 #include <FS.h>
 
 #if defined(ESP8266)
@@ -25,4 +34,5 @@ void websocketRoutes(uint8_t *message);
 bool messageIs( uint8_t *data, std::string message);
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
+#endif // HAS_WIFI
 #endif
