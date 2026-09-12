@@ -19,9 +19,14 @@
 	// Override once wiring is known; this is a reasonable starting point that
 	// avoids strapping pins (GP25 is the on-board LED, GP0-GP7 are safe on the
 	// standard header).
-	// MANUAL_OE_PIN deliberately left undefined: a perfboard revision is needed
-	// before driving that line; for now, use FastLED.setBrightness(0) for the
-	// "off" path.
+	// MANUAL_OE_PIN: drives an external output-enable MOSFET (high = LED
+	// ring blanked for power-saving / standby). GP12 is free on the
+	// standard Pico header, away from UART0 (GP0/GP1) and I2C0 (GP4/GP5).
+	// The `#ifdef MANUAL_OE_PIN` guards in src/state.cpp and src/main.cpp
+	// activate automatically once this define is set. To temporarily
+	// disable, comment the line out -- the firmware falls back to
+	// FastLED.setBrightness(0) for the off path.
+	#define MANUAL_OE_PIN     12
 	#define ROTARY_PIN_IN1    2
 	#define ROTARY_PIN_IN2    3
 	#define DATA_PIN          4   // FastLED ring on GP4
@@ -31,7 +36,6 @@
 	#define ARM_PIN           8
 	#define CYCLE_PIN         9
 	#define ENABLE_PIN        10  // StackSelector ENABLE on GP10; revise on perfboard
-	// MANUAL_OE_PIN intentionally left undefined; see top of branch.
 #elif defined(ARDUINO_YD_RP2040)
 	// VCC-GND Studio YD-RP2040 (dev board currently on the desk). Distinct
 	// from the standard Pico block above because:

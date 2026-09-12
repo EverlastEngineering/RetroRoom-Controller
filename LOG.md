@@ -5,6 +5,77 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-12T19:15:00.000Z — IR blaster restored (z3t0/IRremote@4.x) + MANUAL_OE_PIN = GP12
+
+**Context:** Two open items from `TODO.md` and the user's pinout-doc open-question list closed in one pass. `z3t0/IRremote@^4.7.1` was already in `lib_deps` for all Pico envs (originally added in the plan for swapping out `crankyoldgit/IRremoteESP8266`); the v4 `IrSender` global is the canonical API. The legacy `crankyoldgit::IRsend::sendSony(0xa90, 12, 2)` form decoded cleanly into `IrSender.sendSony(address, command, repeats)` where `address = (value >> 7) & 0x1F` and `command = value & 0x7F`. For the manual-OE pin, GP12 is free on the standard Pico header and away from UART0 (GP0/GP1) and I2C0 (GP4/GP5), so it was the obvious pick without further user input.
+
+**Decision:** Single commit `<see git log>` on `session/merge-pico-json`.
+
+- **`src/ircontrol.{h,cpp}` restored** as 12-bit SIRC thin wrappers
+  around the v4 `IRsend IrSender` global.
+  - `ir_control_init()` calls `IrSender.begin(IR_CONTROL_PIN,
+    USE_DEFAULT_FEEDBACK_LED_PIN)`.
+  - `setInput(int)` decodes a 12-bit SIRC value into (address, command)
+    and calls `IrSender.sendSony(address, command, 2)`. The address /
+    command split is hardcoded for now because the JSON's `tvInput`
+    field stores a single 12-bit SIRC value; if the perfboard later
+    wants per-protocol address encoding (the legacy entry mentioned
+    that) we'll parse the JSON's `irCodes.<name>` into split fields.
+  - `sendSonyPower()` and `discretePowerOn()` are kept as backward-
+    compat wrappers around `setInput(0xA90)` / `setInput(0x750)`;
+    nothing currently calls them but the legacy caller sites (a
+    future button action) have something to bind to.
+- **`<IRremote.hpp>` is only `#include`d in `src/ircontrol.cpp`.**
+  Including it in `src/ircontrol.h` (which is pulled into every TU
+  via `src/main.h`) caused linker multiple-definition errors on
+  `IRrecv::decode()`, `IRsend::setLEDFeedback`, the timer state, etc.
+  Those functions are non-inline definitions in the library's own
+  sources; including the header from multiple TUs pulls them into
+  each TU and the linker rejects duplicates. Single-include is the
+  canonical fix.
+- **`<HAS_IR>` build flag** added to all three Pico envs'
+  `build_flags`. When `HAS_IR` is undefined, `src/ircontrol.cpp`
+  falls back to no-op stubs (so the rest of the firmware still
+  compiles on a hypothetical future build that drops IR).
+- **`#define MANUAL_OE_PIN 12`** in the RP2040 (perfboard) pin block
+  in `src/configuration.h`. The existing `#ifdef MANUAL_OE_PIN`
+  guards in `src/state.cpp` (`digitalWrite(MANUAL_OE_PIN, !state)`,
+  `analogWrite(MANUAL_OE_PIN, 127)`) and `src/main.cpp`
+  (`pinMode(MANUAL_OE_PIN, OUTPUT)`, `analogWriteFreq(40000)`)
+  activate automatically. The YD pin block does NOT define
+  `MANUAL_OE_PIN` since the YD dev board has no MOSFET circuit.
+- **`src/consoles.cpp::selectConsole()`** now calls
+  `setInput(c.tvinput)` after `selectStack()`, gated on
+  `#if defined(HAS_IR)`. Removed the
+  "log-the-hex-instead-of-blasting-it" branch that was the TODO
+  placeholder when IR was stubbed out.
+- **`platformio.ini`** cleaned up:
+  - `-D HAS_IR` added to all three Pico envs' `build_flags`
+    (alongside `-D HAS_LEDS`).
+  - `build_src_filter` simplified: the
+    `-<ircontrol.cpp> -<ircontrol.h>` exclusions are gone
+    (the file is back in scope).
+- **`pico-pin-mapping.md` updated:** added `MANUAL_OE_PIN = GP12`
+  to the per-role table and the KiCad net list, demoted
+  "MANUAL_OE on the Pico" from "Open questions" to "wired", and
+  updated `IR_CONTROL_PIN` consumer (now `src/ircontrol.cpp::ir_control_init()`
+  instead of "removed; re-add on `z3t0/IRremote@4.x`").
+
+**Consequences:**
+
+- All three Pico envs build green. `pico_base` 4.0% RAM / 2.8% Flash
+  (RAM up from 3.7% pre-IR as expected: the `IRrecv` class + the
+  feedback-LED state add a small amount of static state). `picow`,
+  `pico_yd`, and `test_native` (24/24 host tests) all green.
+- `pico_yd` flashed to `/dev/cu.usbmodem101`. Boot should print
+  "IR sender initialized on GP7" (after `ir_control_init()` runs),
+  "Select Console index=N: <name> selector=P tvInput=0xH" on every
+  `advanceConsole()` press, and the IR blip should fire on GP7
+  (GP7 → 33 Ω resistor → IR LED → GND, 940 nm). Confirm by aiming
+  the YD's GP7 IR pin at a Sony TV set to the same input.
+- TODO.md updated: the IR-restoration item moved to "Done";
+  MANUAL_OE item moved to "Done".
+
 ## 2026-09-12T17:30:00.000Z — Pico-only: drop ESP8266 / AVR, USR button advances console
 
 **Context:** The user wants to simplify the firmware to Raspberry Pi Pico only and stop carrying the legacy ESP8266 (NodeMCU v2) + AVR compatibility scaffold. With the Pico RP2040 target set, the next concrete UX step is: the YD-RP2040 USR button (TOUCH_SENSOR_PIN = GP24) should advance the selected console with wrap-around instead of toggling the smoke-test WS2812 R/G/B cycle. Reasonable removal list: the WS2812 cycle-toggle (functions stay as dead code), the boot R/G/B flash and per-second pin diagnostic prints (no startup chatter beyond `consoleDefinitions()` log), the heartbeat blink (decorative), the IR layer (re-add via `z3t0/IRremote@4.x` when the perfboard lands), and ESP-only `#ifdef`s throughout.

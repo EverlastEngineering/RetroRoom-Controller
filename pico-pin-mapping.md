@@ -30,8 +30,8 @@ as the codebase uses it today:
 | `DATA_PIN`                  | FastLED ring data in (NeoPixel DIN)                   | `src/lighting.cpp` (FastLED.addLeds)       |
 | `TOUCH_SENSOR_PIN`          | Capacitive touch sensor output / button input         | `src/controls.cpp` (`EasyButton touchSensor`) |
 | `ROTARY_SELECTOR_PIN`       | Rotary encoder push-button (the click that selects)  | `src/controls.cpp` (rotarySelector)        |
-| `IR_CONTROL_PIN`            | IR LED data (sender, not receiver) — *stubbed, see TODO.md* | `src/ircontrol.{cpp,h}` removed; re-add on `z3t0/IRremote@4.x` |
-| `MANUAL_OE_PIN`             | Manual output-enable (drives a MOSFET / LED OE pin) — *intentionally undefined* | `src/state.cpp`, `src/main.cpp` (gated on `#ifdef MANUAL_OE_PIN`) |
+| `IR_CONTROL_PIN`            | IR LED data (sender). Z3t0/IRremote 4.x driver, PIO-driven on Pico. | `src/ircontrol.cpp::ir_control_init()` |
+| `MANUAL_OE_PIN`             | Manual output-enable (drives a MOSFET / LED OE pin). GP12. | `src/state.cpp`, `src/main.cpp` (gated on `#ifdef MANUAL_OE_PIN`) |
 
 ---
 
@@ -51,9 +51,10 @@ free for future expansion.
 | `DATA_PIN`                  | GP4     | FastLED ring DIN. **Add 470 Ω series resistor close to the first LED.** |
 | `TOUCH_SENSOR_PIN`          | GP5     | Capacitive touch / YD-RP2040 USR button. RP2040 needs an **external 10 kΩ pull-up to 3.3V** (RP2040 internal pull-up is weak). |
 | `ROTARY_SELECTOR_PIN`       | GP6     | Rotary encoder push-button.                 |
-| `IR_CONTROL_PIN`            | GP7     | IR sender data. Not currently wired — see TODO.md. |
+| `IR_CONTROL_PIN`            | GP7     | IR sender data (z3t0/IRremote 4.x PIO-driven). 38 kHz carrier, 940 nm IR LED + series resistor (~33 Ω for 5 V). |
 | `CYCLE_PIN`                 | GP9     | StackSelector CYCLE.                        |
 | `ENABLE_PIN`                | GP10    | StackSelector ENABLE.                       |
+| `MANUAL_OE_PIN`             | GP12    | Manual output-enable MOSFET gate (idle high). |
 
 ### Pico perfboard pin map (silkscreen labels)
 
@@ -77,8 +78,7 @@ NET "IR_LED_DATA"  -> GP7
 NET "STK_ARM"      -> GP8
 NET "STK_CYCLE"    -> GP9
 NET "STK_ENABLE"   -> GP10
-
-; MANUAL_OE  -> not assigned; perfboard-dependent (see TODO.md)
+NET "MANUAL_OE"    -> GP12
 ```
 
 ### Pico wiring notes (read before breadboarding)
@@ -88,11 +88,14 @@ NET "STK_ENABLE"   -> GP10
    so no external pull-up is required.
 2. **GP5 (TOUCH_SENSOR_PIN) needs an external 10 kΩ pull-up to 3.3V.**
    The RP2040's internal pull-up is too weak for reliable capacitive
-   sensing.
-3. **No `MANUAL_OE_PIN` defined.** That role drives an external
-   output-enable MOSFET. `src/state.cpp` and `src/main.cpp` are
-   already gated on `#ifdef MANUAL_OE_PIN`, so adding it later is a
-   one-line change in `src/configuration.h`. Suggested pin: GP12 (free,
+   se`MANUAL_OE_PIN` is GP12 on the perfboard** (set in `src/configuration.h`).
+   Drives an external output-enable MOSFET (idle-high) that blanks the
+   LED ring for power-saving / standby. `src/state.cpp` writes
+   `digitalWrite(MANUAL_OE_PIN, !state)` and `analogWrite(MANUAL_OE_PIN, 127)`
+   inside `#ifdef MANUAL_OE_PIN` guards. `src/main.cpp` calls
+   `pinMode(MANUAL_OE_PIN, OUTPUT)` and `analogWriteFreq(40000)` during
+   setup. To temporarily disable, comment out the `#define` and the
+   `#ifdef`-guarded blocks become no-ops in `src/configuration.h`. Suggested pin: GP12 (free,
    away from UART).
 4. **GP0 / GP1 are UART0 TX/RX** for the on-board USB-CDC bridge. Don't
    drive them as GPIO unless you can afford to lose the serial monitor.
@@ -153,10 +156,11 @@ These need answers before the next perfboard cut, in priority order:
    then, the IR layer is gone and `selectConsole()` only logs the
    `tvInput` hex instead of blasting it. (See [TODO.md](TODO.md).)
 2. **`MANUAL_OE_PIN` on the Pico.** Where does the manual-LED-OE
-   circuit actually want its drive? Suggested: GP12 (free, away from
-   UART). Add the `#define` to `[env:pico_base]` and `[env:picow]`
-   pin blocks (not the YD block) when decided.
-3. **StackSelector daisy-chain.** Currently the role names imply a
+   circuit actually wis GP12 on the perfboard** (now wired; see
+   Section 2 above). When the perfboard revision lands, verify the
+   MOSFET circuit can idle-high on GP12 without pulling too much
+   current on boot (RP2040 GPIO default state is high-impedance; the
+   `pinMode(MANUAL_OE_PIN, OUTPUT)` call in setup() explicitly drives it)he role names imply a
    single module. If the design moves to multiple modules,
    `selectStack()` in `src/stackselector.cpp` needs to know the chain
    length. Track as `STACK_MODULES` config (TODO) rather than

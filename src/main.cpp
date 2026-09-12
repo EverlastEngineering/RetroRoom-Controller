@@ -33,8 +33,13 @@ void setup() {
 	network_init();
 #endif
 	controls_init();
-	// ir_control_init() will be added back once z3t0/IRremote@4.x is wired
-	// in (see TODO.md).
+	// Initialize the IR sender early so selectConsole() can blast codes
+	// during consoleDefinitions()'s initial setStack + post-load apply
+	// cycle. HAS_IR is set in build_flags for all Pico envs; when HAS_IR
+	// is undefined this is a no-op (see src/ircontrol.cpp).
+#if defined(HAS_IR)
+	ir_control_init();
+#endif
 	consoleDefinitions();
 	selectStack_init();
 	Serial.println("Setup Complete.");

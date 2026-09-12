@@ -3,6 +3,9 @@
 #include <ConsoleConfig.h>
 
 #include "lighting.h"
+#if defined(HAS_IR)
+#include "ircontrol.h"
+#endif
 #include "stackselector.h"
 
 // Embedded console-configuration JSON. Source of truth: lib/ConsoleConfig/.
@@ -79,9 +82,9 @@ void consoleDefinitions() {
 }
 
 void selectConsole(const Console& c) {
-	// TODO (session/merge-pico-json): re-add setInput(c.tvinput) once
-	// z3t0/IRremote@4.x is wired up. Until then, the serial log shows the IR
-	// code so the operator can verify wiring on the bench.
+	// Drives the StackSelector AND blasts the IR code. Order matters:
+	// the StackSelector takes a few ms to settle the ARM/CYCLE/ENABLE
+	// state machine; blasting IR in parallel is fine (one-shot send).
 	Serial.print("Select Console index=");
 	Serial.print(currentConsoleIndex);
 	Serial.print(": ");
@@ -91,6 +94,9 @@ void selectConsole(const Console& c) {
 	Serial.print(" tvInput=0x");
 	Serial.print(c.tvinput, HEX);
 	selectStack(c.selector_position);
+#if defined(HAS_IR)
+	setInput(c.tvinput);
+#endif
 }
 
 void advanceConsole() {

@@ -7,6 +7,9 @@
 #include "network.h"
 #include "lighting.h"
 #include "Console.h"
+#if defined(HAS_IR)
+#include "ircontrol.h"
+#endif
 #include "stackselector.h"
 #include "consoles.h"
 
