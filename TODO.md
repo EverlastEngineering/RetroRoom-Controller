@@ -95,10 +95,17 @@ remove from here), `// note:` free-form annotation.
   instead of the placeholder `2..10` values in
   `src/configuration.h`'s RP2040 block.
 
-## Done (moved to LOG.md)
+## Done (moved to LOG.md, `session/merge-pico-json`)
 
-_(None yet. When items close, move them to the latest LOG.md entry and
-remove from this list.)_
+- [x] **Map the YD-RP2040 USR button to advance the console index** (commit
+  `c6005c7`). New free function
+  [`src/consoles.cpp::advanceConsole()`](src/consoles.cpp) increments
+  `currentConsoleIndex` modulo `HowManyConsoles()`, paints one bright
+  pixel via `lightSingle()`, calls `selectConsole()`. Bound as
+  `touchSensor.onPressed(advanceConsole)` in
+  [`src/controls.cpp::controls_init()`](src/controls.cpp). On the
+  perfboard the same pin will be the capacitive touch input and the
+  same handler fires.
 
 ## Notes
 
