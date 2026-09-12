@@ -41,28 +41,12 @@ void lighting_init() {
 	// to the numeric pin number from configuration.h.
 	FastLED.addLeds<WS2812B, RR_FASTLED_DATA_PIN, GRB>(leds, NUM_LEDS);
 	FastLED.setBrightness(LED_BRIGHTNESS);
-
-	// Boot smoke test: flash red -> green -> blue once, then clear.
-	// This is the first end-to-end test that the PIO WS2812 driver is
-	// actually outputting a valid waveform on DATA_PIN. On the YD-RP2040
-	// dev board this lights the onboard WS2812 on GP23 in three colors;
-	// on the perfboard build (DATA_PIN=4) it lights the external ring.
-	// If the LED stays dark, the PIO/clockless path is broken.
-	const struct { CRGB color; const char *name; } flash[] = {
-		{CRGB::Red,    "red"},
-		{CRGB::Green,  "green"},
-		{CRGB::Blue,   "blue"},
-	};
-	for (auto &f : flash) {
-		fill_solid(leds, NUM_LEDS, f.color);
-		FastLED.show();
-		Serial.print("Lighting smoke test: ");
-		Serial.println(f.name);
-		delay(250);
-	}
+	// Clear the ring at boot. The previous boot-time R/G/B smoke test was
+	// removed on session/merge-pico-json (per user request); the LED will
+	// stay dark until something (lightSingle, lightRing, lightCycleTick,
+	// etc.) drives it.
 	fill_solid(leds, NUM_LEDS, CRGB::Black);
 	FastLED.show();
-	Serial.println("Lighting init done.");
 }
 
 // Continuous RGB-cycle smoke test for the YD-RP2040 onboard WS2812.

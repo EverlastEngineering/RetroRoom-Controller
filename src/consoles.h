@@ -24,4 +24,10 @@ void consoleDefinitions();
 // hardware includes.
 void selectConsole(const Console& c);
 
+// Bound to the YD-RP2040 USR button (TOUCH_SENSOR_PIN = GP24). Each press
+// advances currentConsoleIndex by one with wrap-around (last -> first),
+// then calls selectConsole() on the new index. Logs the index + name +
+// selector_position + tvinput hex on every press.
+void advanceConsole();
+
 #endif

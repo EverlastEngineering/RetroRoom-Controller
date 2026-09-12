@@ -4,21 +4,13 @@
 // lighting
 #define NUM_LEDS 8
 
-#if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO_EVERY)
-	#define ROTARY_PIN_IN1 A2
-	#define ROTARY_PIN_IN2 A3
-#elif defined(ESP8266)
-	#define ARM_PIN D0 // Selector ARM pin,  **HIGH at boot**
-	#define ROTARY_PIN_IN1 D1
-	#define ROTARY_PIN_IN2 D2
-	#define DATA_PIN D3 // connected to FLASH button, boot fails if pulled LOW
-	#define TOUCH_SENSOR_PIN D5
-	#define ROTARY_SELECTOR_PIN D6
-	#define IR_CONTROL_PIN D7
-	#define CYCLE_PIN D8 // Selector CYCLE pin, boot fails if pulled HIGH
-	#define ENABLE_PIN D9
-	#define MANUAL_OE_PIN D10
-#elif defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
+// ESP8266 (NodeMCU v2) and AVR boards were dropped on session/merge-pico-json.
+// Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
+// are supported. The ESP-only `#define MANUAL_OE_PIN` is intentionally gone;
+// when a perfboard revision lands, MANUAL_OE_PIN will be added back to the
+// Pico block (see TODO.md).
+
+#if defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
 	// Bare Raspberry Pi Pico / Pico-W pin map. The Pico-W variant
 	// (ARDUINO_RASPBERRY_PI_PICO_W) is currently used the same way as plain Pico
 	// since the CYW43 WiFi stack has not been wired in yet (network.{h,cpp} is

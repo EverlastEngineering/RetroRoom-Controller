@@ -2,7 +2,7 @@
 
 #include <ConsoleConfig.h>
 
-#include "ircontrol.h"
+#include "lighting.h"
 #include "stackselector.h"
 
 // Embedded console-configuration JSON. Source of truth: lib/ConsoleConfig/.
@@ -59,14 +59,55 @@ void consoleDefinitions() {
 	}
 	Serial.print("Loaded ");
 	Serial.print(result.consoles.size());
-	Serial.println(" consoles from JSON config.");
+	Serial.print(" consoles from JSON:");
+	for (const auto& c : consoles) {
+		Serial.print(" [");
+		Serial.print(c.id.c_str());
+		Serial.print(" -> ");
+		Serial.print(c.name.c_str());
+		Serial.print(" sel=");
+		Serial.print(c.selector_position);
+		Serial.print(" tvInput=0x");
+		Serial.print(c.tvinput, HEX);
+		Serial.print(" led=");
+		Serial.print(c.led_position);
+		Serial.print("..");
+		Serial.print(c.led_position + c.led_width - 1);
+		Serial.print("]");
+	}
+	Serial.println();
 }
 
 void selectConsole(const Console& c) {
-	Serial.print("Select Console: ");
-	Serial.println(c.name.c_str());
+	// TODO (session/merge-pico-json): re-add setInput(c.tvinput) once
+	// z3t0/IRremote@4.x is wired up. Until then, the serial log shows the IR
+	// code so the operator can verify wiring on the bench.
+	Serial.print("Select Console index=");
+	Serial.print(currentConsoleIndex);
+	Serial.print(": ");
+	Serial.print(c.name.c_str());
+	Serial.print(" selector=");
+	Serial.print(c.selector_position);
+	Serial.print(" tvInput=0x");
+	Serial.print(c.tvinput, HEX);
 	selectStack(c.selector_position);
-#if defined(ESP8266)
-	setInput(c.tvinput);
-#endif
+}
+
+void advanceConsole() {
+	// Wrap-around console advance. Safe on an empty vector.
+	int n = HowManyConsoles();
+	if (n <= 0) {
+		Serial.println("advanceConsole: no consoles loaded");
+		return;
+	}
+	currentConsoleIndex = (currentConsoleIndex + 1) % n;
+	Serial.print("Button: advance -> index ");
+	Serial.println(currentConsoleIndex);
+	const Console& c = CurrentConsole();
+	// Paint the new selection on the LED ring so the operator gets visual
+	// confirmation on the perfboard. lightSingle writes one bright pixel
+	// at the index (the rest dark blue) and is harmless if no ring is
+	// wired (e.g. pico_yd with no external LEDs).
+	lightSingle(currentConsoleIndex);
+	selectConsole(c);
 }

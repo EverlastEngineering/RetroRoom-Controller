@@ -1,9 +1,8 @@
 /**
- * RetroRoom firmware main loop. Originally written for ESP8266; the
- * Raspberry Pi Pico port (see session/pico-migration) gates any
- * ESP-only code on HAS_WIFI so the same init sequence runs on
- * pico_base (no wireless, no web UI) without dragging in WiFiManager
- * / AsyncWebServer / etc.
+ * RetroRoom firmware main loop. Targets the Raspberry Pi Pico (RP2040)
+ * via Earle Philhower's arduino-pico core. Originally written for
+ * ESP8266; ESP support was dropped on session/merge-pico-json (see
+ * TODO.md and LOG.md).
  *
  * Author: Jason Copp
  * Contact: jason@everlastengineering.com
@@ -13,49 +12,20 @@
 #include "main.h"
 
 // consoleDefinitions() is defined in src/consoles.cpp and reads the embedded
-// JSON via the functional core (lib/ConsoleConfig). The old hand-rolled
-// addConsole(...) sequence that used to live here is gone.
-
-// HARD_RESET is a hack to completely nuke the onboard PRAM (or is it SRAM or..) that contains the saved wifi settings
-// #define HARD_RESET
-#if defined(HARD_RESET) && defined(ESP8266)
-#warning HARD_RESET defined: will erase ESP WiFi config and reboot on next setup()
-#endif
+// JSON via the functional core (lib/ConsoleConfig). On boot it prints the
+// number of consoles loaded so the user can confirm the JSON parser
+// succeeded without having to look at the WS or run any test.
 
 void setup() {
-	#if defined(HARD_RESET) && defined(ESP8266)
-	Serial.println("Resetting");
-	delay(1000);
-	WiFi.disconnect();
-	ESP.eraseConfig();
-	delay(1000);
-	*((int *)0) = 0; // boom (ESP-only)
-	return;
-	#endif
-
-	// 115200 on Pico native USB-CDC is conventional. ESP8266 still gets the
-	// legacy 76800 baud (the comment in the old line about "native esp8266
-	// speed" was misleading -- 76800 is not actually native; left as-is so the
-	// ESP build is unchanged for now).
-#if defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
+	// 115200 on Pico native USB-CDC is conventional.
 	Serial.begin(115200);
-#else
-	Serial.begin(76800);
-#endif
 
-	// The classic Arduino `while (!Serial) {};` pattern is for boards whose
-	// native USB CDC requires the host to open the port before printing works
-	// (Leonardo-style). On ESP it was always a no-op. On Pico native USB-CDC
-	// it can hang on some hosts. Drop it -- Serial.print() before any
+	// The classic Arduino `while (!Serial) {};` pattern can hang on the Pico's
+	// native USB-CDC on some hosts. Drop it -- Serial.print() before any
 	// host-side read just goes into the USB buffer and is read on next open.
 	pinMode(LED_BUILTIN, OUTPUT);
-#ifdef MANUAL_OE_PIN
-	// MANUAL_OE_PIN is currently commented out in src/configuration.h for the
-	// ESP build too, so this guard exists to keep setup() referencing an
-	// optional pin only when the build defines it.
-	pinMode(MANUAL_OE_PIN, OUTPUT);
-	analogWriteFreq(40000);
-#endif
+	// MANUAL_OE_PIN is intentionally undefined (see src/configuration.h);
+	// when the perfboard lands, the pinMode/analogWriteFreq lines go back.
 #if defined(HAS_LEDS)
 	lighting_init();
 #endif
@@ -63,75 +33,27 @@ void setup() {
 	network_init();
 #endif
 	controls_init();
-	// ir_control_init() is deferred until the IRremote v4.x swap lands
-	// (z3t0/IRremote@^4.7.1 in lib_deps; the existing ESP-only IRremoteESP8266
-	// call has been moved into ircontrol.cpp gated on ESP8266+IR).
-#if defined(ESP8266)
-	ir_control_init();
-#endif
+	// ir_control_init() will be added back once z3t0/IRremote@4.x is wired
+	// in (see TODO.md).
 	consoleDefinitions();
 	selectStack_init();
 	Serial.println("Setup Complete.");
 }
 
 void loop() {
-	if (flash) {
-		flashLed();
-	}
+	// Track the rotary encoder for console switching.
 	rotaryEncoderTick();
 
-	// Poll the touch sensor (YD-RP2040 USR button on GP24 is mapped to
-	// TOUCH_SENSOR_PIN). EasyButton in POLL mode requires touchSensor.read()
-	// to be called periodically -- that's what reads the pin and fires
-	// onPressed/wasReleased callbacks. EasyButton::update() is for time
-	// tracking only (used by interrupt-driven onPressedFor handlers); it
-	// does NOT read the pin. Calling update() instead of read() was the
-	// silent-toggle bug -- the pin state was never actually polled.
+	// Service the touch sensor (YD-RP2040 USR button on GP24 is mapped to
+	// TOUCH_SENSOR_PIN). EasyButton in POLL mode requires .read() (not
+	// .update()) to fire onPressed / wasReleased callbacks. The handler
+	// registered in controls_init() -- see TODO.md.
 	touchSensor.read();
 
-	// Diagnostic: print TOUCH_SENSOR_PIN state every 500ms. Useful when
-	// debugging button wiring (the EasyButton's internal pin-tracking is
-	// black-box; raw pin state is easier to reason about).
-#if defined(ARDUINO_ARCH_RP2040)
-	static unsigned long lastPinPrint = 0;
-	if (millis() - lastPinPrint >= 500) {
-		lastPinPrint = millis();
-		Serial.print("pin=");
-		Serial.print(digitalRead(TOUCH_SENSOR_PIN));
-		Serial.print(" enabled=");
-		Serial.println(lightCycleIsEnabled() ? "ON" : "OFF");
-	}
-#endif
-
-	// Smoke-test: drive the WS2812 ring with red -> green -> blue at 1Hz
-	// so we can confirm the FastLED PIO path is continuously outputting
-	// valid frames. Cheap (FastLED.show() returns immediately when no
-	// pixels changed); only meaningful on envs that actually have a
-	// WS2812 chain wired up (pico_yd uses the onboard GP23 WS2812; the
-	// generic pico_base / picow envs will silently drive an empty
-	// buffer if no ring is connected). The USR button toggles this cycle
-	// on/off via lightCycleToggle (registered as a touchSensor.onPressed
-	// handler in controls_init()).
-	#if defined(HAS_LEDS)
-	lightCycleTick();
-	#endif
-
-	// Smoke-test heartbeat: blink the onboard LED once per second so we
-	// can confirm at a glance that the firmware booted cleanly through
-	// lighting_init() (which exercises the FastLED PIO bring-up on
-	// RP2040) and the loop is running. The toggle is gated on the current
-	// statusLedActive so it doesn't fight flashLed() / setLed() if the
-	// WebSocket-driven `flash` mode is active on the ESP build. On the
-	// Pico envs flash is never set true (no network), so this is the only
-	// LED activity in loop().
-	static unsigned long lastBlink = 0;
-	if (millis() - lastBlink >= 500) {
-		lastBlink = millis();
-		// Only blink if no other LED state is being driven (i.e. flash
-		// mode is off and the WebSocket-driven ledOn/ledOff hasn't been
-		// called recently). Cheap gate: skip while flash is on.
-		if (!flash) {
-			setLed(statusLedActive ? 0x0 : 0x1);
-		}
-	}
+	// The legacy WS2812 red/green/blue "light cycle" + USR-toggle handler
+	// + diagnostic per-second pin prints + heartbeat blink have all been
+	// removed from loop() on session/merge-pico-json. The lightCycleTick /
+	// lightCycleToggle / lightCycleIsEnabled functions in src/lighting.{h,cpp}
+	// are kept around in case the perfboard ever wants a background pattern.
+	// See TODO.md.
 }

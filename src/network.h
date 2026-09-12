@@ -2,37 +2,25 @@
 #define RR_NETWORK_H
 
 // The whole network stack is WiFi-coupled (AsyncWebServer, AsyncWebSocket,
-// AsyncWiFiManager, etc.) and is not currently portable to the Pico-W CYW43
-// path. On any env without HAS_WIFI, the network code compiles to nothing so
-// the rest of the firmware can build on Pico_base. The picow env (HAS_WIFI)
-// would need a separate "Pico-W WiFi" implementation before network_init()
-// does anything meaningful there.
+// CYW43 driver, etc.) and currently does nothing on any env (ESP8266 is
+// gone; the Pico-W CYW43 work is tracked in TODO.md). On any env without
+// HAS_WIFI the network code compiles to nothing so the rest of the firmware
+// can build on pico_base. When the Pico-W WiFi lands, this is the intended
+// anchor:
+//   1. Add cyw43-driver (or similar) to lib_deps for [env:picow].
+//   2. Add -D HAS_WIFI to [env:picow] build_flags.
+//   3. Implement network_init() here using the CYW43 API.
+//
+// The ESP-coupled includes (FS.h, ESP8266WiFi.h, ESP8266mDNS.h,
+// ESPAsyncWebServer.h, ESPAsyncWiFiManager.h) are gone; once HAS_WIFI is
+// enabled for the Pico-W board, AsyncWebServer + a CYW43 driver go back
+// in their place. See TODO.md for the full plan.
 #if defined(HAS_WIFI)
 
-#include <FS.h>
-
-#if defined(ESP8266)
-#include <ESP8266WiFi.h> //https://github.com/esp8266/Arduino
-#else
 #include <WiFi.h>
-#endif
-
-#include <ESP8266mDNS.h>
-#include <ESPAsyncWebServer.h>
-#include <ESPAsyncWiFiManager.h>
-
-extern AsyncWebServer server;
-extern DNSServer dns;
 
 extern void network_init();
-extern void broadcastSocketMessage(std::string message);
-void routes();
-void notFound(AsyncWebServerRequest *request);
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
-void initWebSocket();
-void websocketRoutes(uint8_t *message);
-bool messageIs( uint8_t *data, std::string message);
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
+extern void broadcastSocketMessage(const std::string& message);
 
 #endif // HAS_WIFI
 #endif
