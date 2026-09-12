@@ -107,6 +107,16 @@ remove from here), `// note:` free-form annotation.
   perfboard the same pin will be the capacitive touch input and the
   same handler fires.
 
+- [x] **Pinout doc (pico-pin-mapping.md)** with clear Pin → role tables for
+  the perfboard target (Raspberry Pi Pico, GP2-GP10) and the YD-RP2040
+  dev board (GP23 onboard WS2812, GP24 USR button, rest matches Pico).
+  Sources-of-truth anchor section at the bottom pointing readers back
+  to the actual `#define`s in `src/configuration.h`. Also drops the
+  legacy ESP8266 / NodeMCU v2 pin tables (those boards are no longer
+  supported as of session/merge-pico-json) and adds wiring notes
+  (470 Ω series resistor on DATA_PIN, 10 kΩ external pull-up on
+  TOUCH_SENSOR_PIN, MANUAL_OE_PIN deliberately undefined).
+
 ## Notes
 
 - This file is the single source of truth for outstanding work on the
