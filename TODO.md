@@ -7,46 +7,11 @@ remove from here), `// note:` free-form annotation.
 
 ## Open
 
-- [ ] **Re-add IR blaster support via `z3t0/IRremote@^4.7.1`.** The lib is
-  already in `lib_deps` on all Pico envs. The legacy crankyoldgit-based
-  `src/ircontrol.{cpp,h}` was deleted on session/merge-pico-json
-  commit `c6005c7`. Plan:
-  1. Create `src/ircontrol.h` (declares `ir_control_init()`,
-     `setInput(int hexCode)`, optionally `sendSonyPower()` / `discretePowerOn()`
-     for parity with the legacy API). Include `<IRremote.hpp>` and use the
-     v4 `IrSender` global instance.
-  2. Create `src/ircontrol.cpp` that calls `IrSender.begin(IR_CONTROL_PIN,
-     ENABLE_IR_SEND, LED_FEEDBACK_DISABLE)` in `ir_control_init()`. Implement
-     `setInput(int)` as a thin SIRC wrapper -- the legacy
-     `crankyoldgit::IRsend::sendSony(0xA90, 12, 2)` maps to v4
-     `IrSender.sendSony(address=0x01, command=0x90, repeats=2)` (the legacy
-     `0xa90` is the 12-bit value; split into the SIRC 5-bit address + 7-bit
-     command; see legacy `src/ircontrol.cpp` comment block for the math).
-  3. Wire `src/consoles.cpp::selectConsole()` to call `setInput(c.tvinput)`
-     unconditionally (drop the `#if defined(ESP8266)` gate; ESP is gone).
-  4. Drop the special-case "log the hex instead of blasting" branch in
-     `selectConsole()` once IR is wired up.
-  5. Smoke-test on the YD-RP2040 (GP7 = IR_CONTROL_PIN) -- connect an
-     IR LED + resistor to GP7, blast at TV, confirm TV switches input.
-  6. Add a `[lib]` flag or `#if defined(HAS_IR)` so the build can opt
-     out of the IR layer (default ON for pico_base / picow / pico_yd).
-
-- [ ] **Pick `MANUAL_OE_PIN` GP12 on the perfboard.** Add the `#define`
-  to the RP2040 block in `src/configuration.h`:
-  `#define MANUAL_OE_PIN 12` (free, away from UART0 GP0/GP1, doesn't
-  conflict with anything else in the current pin map). The existing
-  `#ifdef MANUAL_OE_PIN` guards in `src/state.cpp` (drives the pin
-  via `digitalWrite(MANUAL_OE_PIN, !state);` and `analogWrite(MANUAL_OE_PIN, 127);`)
-  and `src/main.cpp` (`pinMode`/`analogWriteFreq`) activate automatically
-  once the define is added. Decide on YD-RP2040 later (probably leave
-  undefined there since the YD has no manual-OE circuit).
-
-- [ ] CYW43 (Pico-W) WiFi. `src/network.{h,cpp}` is the intended anchor.
-  Currently the body is gated on `#if defined(HAS_WIFI)` and the
-  `HAS_WIFI` build flag is intentionally NOT set on `[env:picow]` --
-  it's a placeholder for the WiFi work. Implementation steps:
-  1. Add `cyw43-driver` or `PicoW-async-webserver` to `lib_deps` for
-     `[env:picow]`.
+- [ ] **CYW43 (Pico-W) WiFi.** `src/network.{h,cpp}` is the intended
+  anchor. Currently the body is gated on `#if defined(HAS_WIFI)` and
+  the `HAS_WIFI` build flag is intentionally NOT set on `[env:picow]`
+  -- it's a placeholder for the WiFi work. Implementation steps:
+  1. Add `cyw43-driver` (or similar) to `lib_deps` for `[env:picow]`.
   2. Add `-D HAS_WIFI` to `[env:picow] build_flags`.
   3. Map `network.cpp::network_init()` to the CYW43 equivalent:
      start the CYW43 station mode, join the configured SSID
@@ -54,103 +19,42 @@ remove from here), `// note:` free-form annotation.
      on port 80.
   4. Move `lightRing` WebSocket handler (currently dangling because
      `network.{h,cpp}` compiles to nothing on `[env:pico_base]`).
-  5. Drop the `_was_btn_held` / `EasyButton::read()` vs `update()`
-     trivia that bit us on Pico -- the Pico-W board target is
-     different from the bare Pico, may need different polling.
 
-- [ ] StackSelector perfboard revision. `src/stackselector.{h,cpp}` is
-  ready but the actual module-to-Pico wiring is speculative. When the
-  perfboard lands, settle on real GP numbers for ARM/CYCLE/ENABLE
-  instead of the placeholder `2..10` values in
-  `src/configuration.h`'s RP2040 block.
+- [ ] **StackSelector perfboard revision.** `src/stackselector.{h,cpp}`
+  is ready but the actual module-to-Pico wiring is speculative for
+  the production perfboard. Currently uses GP8=ARM, GP9=CYCLE, GP10=ENABLE
+  (defined in `src/configuration.h` as placeholder values; see
+  `pico-pin-mapping.md` Section 5). When the perfboard lands, confirm
+  the wiring or assign real GP numbers.
 
-- [ ] Defer: StackSelector daisy-chain length config (only matters if
-  perfboard has >1 module; current `selectStack()` hard-codes to
-  `consoles.size()` + 1).
+- [ ] **5-second boot fade.** Currently `lighting_init()` clears the
+  ring (CRGB::Black) and waits for `lightSingle()` / `selectConsole()`
+  to paint. Add a single-pixel "I'm alive" white flash at boot on the
+  perfboard (or a slow color cycle on the WS2812) so the operator gets
+  visual confirmation that the firmware got past `setup()`. Skip on
+  YD-RP2040 since its onboard LED would just blink once and look like
+  a glitch. Tracked in `src/lighting.cpp` `lighting_init()`.
 
-- [ ] Defer: I2C OLED/encoder expansion (GP2/GP3 I2C1 and GP4/GP5 I2C0
-  are free on the perfboard; add when the perfboard has an OLED).
+## Deferred (waiting on the perfboard)
 
-- [ ] **5-second boot fade** -- currently `lighting_init()` clears the
-  ring and waits for `lightSingle()` / `selectConsole()` to paint. Add
-  a single-pixel "I'm alive" white flash at boot on the perfboard (or
-  a slow color cycle on the WS2812) so the operator gets visual
-  confirmation that the firmware actually got past `setup()`.
-  Skip on YD-RP2040 since its onboard LED would just blink once and
-  look like a glitch.
-  `currentConsoleIndex` by one with wrap-around (last → first). Behaviour:
-  on each release edge, increment `currentConsoleIndex`, clamp
-  modulo `HowManyConsoles()`, then:
-  - `Serial.print("Console Index: "); Serial.println(<index>);`
-  - `lightSingle(<index>)` (existing helper; white pixel at the index)
-  - `selectStack(consoles[index].selector_position)` (StackSelector ARM/CYCLE/ENABLE dance)
-  - `setInput(consoles[index].tvinput)` once IR is wired back in
-  - For now `setInput` is the no-op stub in `src/consoles.cpp` (TODO
-    below). The serial log should show the selection so the user can
-    confirm without a working TV.
-  Hardware target: the existing `EasyButton touchSensor(TOUCH_SENSOR_PIN, 35, true, false)`
-  in `src/controls.cpp` is already the right instance. Replace the
-  `lightCycleToggle` registration with the new handler.
+The following items only matter once a real perfboard revision lands.
+Don't pick these up speculatively; wait for the hardware.
 
-- [ ] Restore `setInput()` in `src/consoles.cpp::selectConsole()`. Currently
-  the line is gated on `#if defined(ESP8266)` which is gone. Either:
-  (a) re-add `#if defined(HAS_IR)` so the call compiles only when the
-  IR layer is wired in, or (b) remove the call entirely and mark it
-  TODO'd. Once `z3t0/IRremote@^4.7.1` is integrated, the call site
-  becomes unconditional again. Tracked under: `src/consoles.cpp:69-71`
-  and the `#include "ircontrol.h"` at `src/consoles.cpp:5`.
+- [ ] **StackSelector daisy-chain length config.** Today
+  `selectStack()` hard-codes to `consoles.size() + 1` for the home
+  position and loops `consoles.size()` times. If the perfboard ever
+  has more than one daisy-chained StackSelector module, this needs
+  to know the chain length (e.g. a `STACK_MODULES` config constant).
 
-- [ ] Wire `consoleDefinitions()` startup logs in `src/consoles.cpp::setup()` / `loop()`.
-  Today the function only logs on the failure path (`Serial.println("Console config load failed: ...")`).
-  Add a success-path log: `Serial.print("Loaded N consoles:"); for (auto& c : consoles) Serial.print(" ...")`.
-  Also: when a touch button-press advances the selection, log the
-  new index AND the console's `name`, `selector_position`, and
-  `tvinput` hex code so the operator can verify wiring on the bench.
+- [ ] **I2C OLED / encoder expansion.** GP2/GP3 (I2C1) and GP4/GP5 (I2C0)
+  are free on the perfboard header. An SSD1306 OLED would integrate
+  cleanly with the current code; defer until the perfboard actually
+  has an OLED.
 
-- [ ] Drop legacy framework files / lib_deps that are no longer needed.
-  Confirm the smoke build runs cleanly without:
-  - `crankyoldgit/IRremoteESP8266` (already removed in platformio.ini)
-  - `ottowinter/ESPAsyncWebServer-esphome` and `alanswx/ESPAsyncWiFiManager`
-    (already removed but the docs/comments still reference them in
-    `platformio.ini`, `LOG.md`, etc.; sweep these to say "removed on
-    session/merge-pico-json")
-  - `[env:nodemcuv2]` block in `platformio.ini` (already removed)
-  - the `ArduinoJson` lib_dep entries if not strictly required by the
-    host-side `[env:test_native]`
-  - `src/Console.cpp` (the entire file is `#include "Console.h"` only --
-    left as a stub for backward compat; can be deleted if no one imports it)
-
-- [ ] Re-add IR blaster support via `z3t0/IRremote@^4.7.1` (already in
-  `lib_deps`). The current `ircontrol.{cpp,h}` files were deleted in
-  this session; they need to be re-created using the v4 API
-  (`IRsend` with raw pulse-distance timing -- the legacy
-  `crankyoldgit/IRremoteESP8266::sendSony(0xA90, 12, 2)` call maps to
-  `IrSender.sendSony(0xA90, 12, 2)` or to the v4 raw-pulse API).
-  Wire on the YD-RP2040 first (GP7 = IR_CONTROL_PIN per
-  `src/configuration.h`), then move to the perfboard.
-
-- [ ] CYW43 (Pico-W) WiFi. `src/network.{h,cpp}` is the intended anchor.
-  Currently the body is gated on `#if defined(HAS_WIFI)` and the
-  `HAS_WIFI` build flag is intentionally NOT set on `[env:picow]` --
-  it's a placeholder for the WiFi work. Implementation steps:
-  1. Add `cyw43-driver` or `PicoW-async-webserver` to `lib_deps` for
-     `[env:picow]`.
-  2. Add `-D HAS_WIFI` to `[env:picow] build_flags`.
-  3. Map `network.cpp::network_init()` to the CYW43 equivalent:
-     start the CYW43 station mode, join the configured SSID
-     (WiFiManager or hardcoded for now), bring up the AsyncWebServer
-     on port 80.
-  4. Move `lightRing` WebSocket handler (currently dangling because
-     `network.{h,cpp}` compiles to nothing on `[env:pico_base]`).
-  5. Drop the `_was_btn_held` / `EasyButton::read()` vs `update()`
-     trivia that bit us on Pico -- the Pico-W board target is
-     different from the bare Pico, may need different polling.
-
-- [ ] StackSelector perfboard revision. `src/stackselector.{h,cpp}` is
-  ready but the actual module-to-Pico wiring is speculative. When the
-  perfboard lands, settle on real GP numbers for ARM/CYCLE/ENABLE
-  instead of the placeholder `2..10` values in
-  `src/configuration.h`'s RP2040 block.
+- [ ] **External 10 kΩ pull-up on TOUCH_SENSOR_PIN (GP5).** The RP2040
+  internal pull-up is too weak for reliable capacitive sensing. The
+  perfboard schematic must include this. Soft reminder for whoever
+  draws the PCB.
 
 ## Done (moved to LOG.md, `session/merge-pico-json`)
 
@@ -168,11 +72,32 @@ remove from here), `// note:` free-form annotation.
   the perfboard target (Raspberry Pi Pico, GP2-GP10) and the YD-RP2040
   dev board (GP23 onboard WS2812, GP24 USR button, rest matches Pico).
   Sources-of-truth anchor section at the bottom pointing readers back
-  to the actual `#define`s in `src/configuration.h`. Also drops the
-  legacy ESP8266 / NodeMCU v2 pin tables (those boards are no longer
-  supported as of session/merge-pico-json) and adds wiring notes
-  (470 Ω series resistor on DATA_PIN, 10 kΩ external pull-up on
-  TOUCH_SENSOR_PIN, MANUAL_OE_PIN deliberately undefined).
+  to the actual `#define`s in `src/configuration.h`. Wired MANUAL_OE_PIN
+  to GP12 in commit `643be7c` (see Section 2 of the doc); ESP8266
+  tables removed since those boards are no longer supported.
+
+- [x] **IR blaster restored via `z3t0/IRremote@^4.7.1`** (commit `643be7c`).
+  `src/ircontrol.{h,cpp}` (94 + 42 lines) wrap the v4 `IRsend IrSender`
+  global. `setInput(int hex)` decodes a 12-bit Sony SIRC value into
+  (address, command) per the legacy mapping (`address = (v >> 7) & 0x1F`,
+  `command = v & 0x7F`) and calls `IrSender.sendSony(addr, cmd, 2)`. The
+  `<IRremote.hpp>` include is restricted to `src/ircontrol.cpp` to
+  avoid linker multiple-definition errors (the library has non-inline
+  globals — `IRrecv::decode`, the timer helpers, the feedback LED
+  state — that get duplicated if multiple TUs pull in the header).
+  `<HAS_IR>` build flag added to all three Pico envs; on a hypothetical
+  off-build, `src/ircontrol.cpp` falls back to no-op stubs. `selectConsole()`
+  calls `setInput(c.tvinput)` after `selectStack()`, gated on
+  `#if defined(HAS_IR)`. The legacy "log-the-hex-instead-of-blasting"
+  placeholder branch is gone.
+
+- [x] **`MANUAL_OE_PIN = 12` on the perfboard** (commit `643be7c`). Added
+  `#define MANUAL_OE_PIN 12` to the RP2040 pin block in
+  `src/configuration.h`. The existing `#ifdef MANUAL_OE_PIN` guards in
+  `src/state.cpp` (`digitalWrite(MANUAL_OE_PIN, !state)` + `analogWrite(MANUAL_OE_PIN, 127)`)
+  and `src/main.cpp` (`pinMode(MANUAL_OE_PIN, OUTPUT)` + `analogWriteFreq(40000)`)
+  activate automatically once the `#define` is set. YD pin block
+  leaves it undefined since the YD has no MOSFET circuit.
 
 ## Notes
 
