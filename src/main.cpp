@@ -36,6 +36,13 @@ void setup() {
 		delay(10);
 	}
 	pinMode(LED_BUILTIN, OUTPUT);
+	// Default the on-board LED / ring OE line into the flashing state.
+	// flashLed() engages the OE pin PWM; `flash` is initialised true in
+	// state.cpp so /state.json reports flash=true from boot and the
+	// /flash endpoint toggles off cleanly. The legacy 1 Hz heartbeat
+	// blink in loop() is gone -- ledOn / ledOff / flashLed are the
+	// canonical LED state drivers.
+	flashLed();
 #if defined(HAS_LEDS)
 	lighting_init();
 #endif
@@ -74,29 +81,12 @@ void loop() {
 	network_loop();
 #endif
 
-	// Heartbeat blink on the on-board LED. LED_BUILTIN resolves to:
-	//   - GP25 on Pico / Pico-W (green)
-	//   - GP64 on Pico 2 W (green)
-	//   - GP25 on YD-RP2040 (blue)
-	// 1 Hz toggle (500 ms on / 500 ms off). Provides visual confirmation
-	// that setup() completed past pinMode(LED_BUILTIN, OUTPUT) and that
-	// loop() is running -- even when there's no host attached to read
-	// serial output. Cheap (one digitalWrite + a millis() compare).
-	static unsigned long lastBlink = 0;
-	static bool ledState = false;
-	if (millis() - lastBlink >= 500) {
-		lastBlink = millis();
-		ledState = !ledState;
-		// output millis() to serial so the user can confirm the firmware is running even
-
-		Serial.print("Heartbeat: ");
-		Serial.println(millis());
-		digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
-	}
-
-	// The legacy WS2812 red/green/blue "light cycle" + USR-toggle handler
-	// + diagnostic per-second pin prints were removed from loop() on
-	// session/merge-pico-json. The lightCycleTick / lightCycleToggle /
-	// lightCycleIsEnabled functions in src/lighting.{h,cpp} are kept around
-	// in case the perfboard ever wants a background pattern. See TODO.md.
+	// On-board LED is now driven exclusively by ledOn() / ledOff() /
+	// flashLed() -- the HTTP /ledOn / /ledOff / /flash endpoints and any
+	// future button-bound handlers mutate it via state.cpp. The legacy
+	// 1 Hz heartbeat blink lived here and fought with those commands
+	// (every toggle got clobbered by the next loop() iteration); it has
+	// been removed. The lightCycleTick / lightCycleToggle helpers in
+	// src/lighting.{h,cpp} are kept around for the perfboard's
+	// WS2812-ring smoke test only.
 }

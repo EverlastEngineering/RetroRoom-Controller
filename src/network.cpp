@@ -203,194 +203,11 @@ static void saveWifiCreds(const String& ssid, const String& pass) {
 
 // ---------- SoftAP setup portal ----------
 
-// The /setup page (kSetupHtml) and its companion JS (kSetupJs) are
-// embedded as PROGMEM raw-string literals. We keep them in network.cpp
-// (rather than under src/html/) because C++'s preprocessor trips on
-// CSS values like `2em` (the `e` parses as the start of a hex float)
-// when the HTML is brought in via `#include`. Using a unique raw-string
-// delimiter avoids the `)"` early-end problem inside the markup.
-
-static const char kSetupHtml[] PROGMEM = R"setup_html(<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RetroRoom WiFi Setup</title>
-<style>
-  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:420px;margin:2em auto;padding:0 1em;color:rgb(34,34,34);line-height:1.4}
-  h2{margin:0 0 .25em}
-  p.lede{color:rgb(68,68,68);margin:0 0 1.5em}
-  label{display:block;margin:1em 0 .25em;font-weight:600}
-  select,input[type=text],input[type=password]{box-sizing:border-box;width:100%;padding:.6em .7em;font-size:1em;border:1px solid rgb(170,170,170);border-radius:6px;background:white}
-  select:disabled,input:disabled{background:rgb(240,240,240);color:rgb(136,136,136)}
-  button{padding:.7em 1.4em;font-size:1em;border:none;border-radius:6px;background:rgb(10,132,255);color:white;cursor:pointer;font-weight:600}
-  button:disabled{background:rgb(170,170,204);cursor:default}
-  .row{display:flex;gap:.5em;align-items:center;margin-top:1.5em}
-  .hint{font-size:.85em;color:rgb(102,102,102);margin-top:.25em;min-height:1.2em}
-  .status{margin-top:1em;font-size:.95em;color:rgb(51,51,51);min-height:1.2em}
-  .networkspin{display:inline-block;width:.9em;height:.9em;border:.15em solid rgb(136,136,136);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-left:.5em}
-  .hidden{display:none!important}
-  details{font-size:.85em;color:rgb(102,102,102);margin-top:1em}
-  details summary{cursor:pointer}
-  details input{font-size:.95em}
-  @keyframes spin{to{transform:rotate(360deg)}}
-</style>
-</head>
-<body>
-<h2>RetroRoom WiFi Setup</h2>
-<p class="lede">Pick your network. The device will reboot and join it.</p>
-
-<form method="POST" action="/setup" id="f" autocomplete="off">
-  <label for="ssid">SSID</label>
-  <select id="ssid" name="ssid" required>
-    <option value="">Scanning&hellip;</option>
-  </select>
-  <div class="hint"><a href="#" id="rescan">Rescan networks</a></div>
-
-  <div id="passwrap">
-    <label for="pass" id="passlabel">Password</label>
-    <input id="pass" name="pass" type="password" autocomplete="current-password" placeholder="WPA / WPA2 passphrase">
-    <div class="hint" id="passhint">Required for secured networks.</div>
-  </div>
-
-  <div class="row">
-    <button type="submit" id="save" disabled>Save &amp; Reboot</button>
-    <span id="spin" class="networkspin hidden"></span>
-  </div>
-  <div class="status" id="status"></div>
-</form>
-
-<details id="manual" class="hidden">
-  <summary>Network not listed? Enter it manually</summary>
-  <input id="ssid_manual" type="text" placeholder="SSID" autocomplete="off">
-</details>
-
-<script src="/setup.js"></script>
-</body>
-</html>)setup_html";
-
-static const char kSetupJs[] PROGMEM = R"setup_js((function () {
-  const $ = (id) => document.getElementById(id);
-  const ssidSel   = $('ssid');
-  const pass      = $('pass');
-  const passWrap  = $('passwrap');
-  const passHint  = $('passhint');
-  const save      = $('save');
-  const status    = $('status');
-  const spin      = $('spin');
-  const rescan    = $('rescan');
-  const manual    = $('manual');
-  const manualInp = $('ssid_manual');
-
-  function setStatus(msg)  { status.textContent = msg || ''; }
-  function setBusy(busy)  {
-    // Note: do NOT toggle ssidSel.disabled here. The submit handler
-    // runs setBusy(true) right before the browser collects form data,
-    // and a disabled select is stripped from the POST. We only want
-    // to block UI interaction (button, spinner, rescan link), not
-    // mutate form-field state.
-    save.disabled = busy;
-    spin.classList.toggle('hidden', !busy);
-    rescan.style.pointerEvents = busy ? 'none' : '';
-    if (busy) {
-      manualInp.disabled = true;
-    } else {
-      manualInp.disabled = false;
-    }
-  }
-
-  function isOpen(opt) {
-    return opt && opt.dataset && opt.dataset.open === '1';
-  }
-
-  function updatePassUI() {
-    const opt = ssidSel.options[ssidSel.selectedIndex];
-    if (isOpen(opt)) {
-      passWrap.classList.add('hidden');
-      pass.value = '';
-      pass.removeAttribute('required');
-    } else {
-      passWrap.classList.remove('hidden');
-      pass.setAttribute('required', '');
-      passHint.textContent = opt && opt.dataset.auth
-        ? 'Authentication: ' + opt.dataset.auth + '.'
-        : 'Required for secured networks.';
-    }
-  }
-
-  function renderPlaceholder(label) {
-    ssidSel.innerHTML = '';
-    const o = document.createElement('option');
-    o.value = ''; o.textContent = label;
-    ssidSel.appendChild(o);
-  }
-
-  async function load() {
-    setBusy(true);
-    renderPlaceholder('Scanning\u2026');
-    setStatus('');
-    try {
-      const r = await fetch('/scan.json', { cache: 'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const obj  = await r.json();
-      const nets = obj && obj.networks;
-      ssidSel.innerHTML = '';
-      if (!Array.isArray(nets) || nets.length === 0) {
-        const why = obj ? ('(scan returned ' + obj._count + ')') : '(no JSON)';
-        renderPlaceholder('No networks found ' + why);
-        manual.classList.remove('hidden');
-      } else {
-        nets.sort((a, b) => (b.rssi | 0) - (a.rssi | 0));
-        for (const n of nets) {
-          const o = document.createElement('option');
-          o.value = n.ssid || '';
-          o.textContent = (n.open ? '[ ] ' : '[*] ')
-            + (n.ssid || '(hidden)')
-            + '  (' + n.rssi + ' dBm, ch ' + n.channel + ')';
-          o.dataset.open  = n.open ? '1' : '0';
-          o.dataset.auth  = n.auth || '';
-          o.dataset.rssi  = String(n.rssi);
-          ssidSel.appendChild(o);
-        }
-        manual.classList.remove('hidden');
-      }
-      setBusy(false);
-      updatePassUI();
-    } catch (e) {
-      renderPlaceholder('Scan failed');
-      setStatus('Scan failed: ' + e.message + '. You can still type an SSID below.');
-      manual.classList.remove('hidden');
-      setBusy(false);
-      updatePassUI();
-    }
-  }
-
-  ssidSel.addEventListener('change', updatePassUI);
-  rescan.addEventListener('click', (e) => { e.preventDefault(); load(); });
-
-  manualInp.addEventListener('input', () => {
-    const v = manualInp.value.trim();
-    if (!v) return;
-    let opt = Array.from(ssidSel.options).find((o) => o.value === v);
-    if (!opt) {
-      opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = '[?] ' + v + '  (manual)';
-      opt.dataset.open = '0';
-      opt.dataset.auth = 'unknown';
-      ssidSel.insertBefore(opt, ssidSel.firstChild);
-    }
-    ssidSel.value = v;
-    updatePassUI();
-  });
-
-  document.getElementById('f').addEventListener('submit', () => {
-    setBusy(true);
-    save.textContent = 'Saving\u2026';
-    setStatus('Saving credentials and rebooting\u2026');
-  });
-
-  load();
-})();)setup_js";
+// The /setup page and its companion JS live in src/html/setup.html and
+// src/html/setup.js, included via html.h as `const String {...}`. The
+// wrappers use `R""""(` / `)""""` to dodge C preprocessor edge cases
+// (CSS `2em` parses as a hex float, embedded `)"` sequences break raw
+// strings, etc.). See src/html.h for the full rationale.
 
 static void onSetupPost(AsyncWebServerRequest* req) {
 	if (!req->hasParam("ssid", true)) {
@@ -522,12 +339,13 @@ static void startApPortal() {
 		req->redirect("/setup");
 	});
 	// /setup form: serve the static HTML and the companion JS. Both
-	// live in PROGMEM as raw-string literals at the top of this file.
+	// live in src/html/{setup.html,setup.js}, exposed via html_setup_html
+	// / html_setup_js from src/html.h.
 	server.on("/setup", HTTP_GET, [](AsyncWebServerRequest* req) {
-		req->send(200, "text/html", kSetupHtml);
+		req->send(200, "text/html", html_setup_html);
 	});
 	server.on("/setup.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-		req->send(200, "application/javascript", kSetupJs);
+		req->send(200, "application/javascript", html_setup_js);
 	});
 	server.on("/setup", HTTP_POST, onSetupPost);
 	server.onNotFound([](AsyncWebServerRequest* req) {
@@ -650,16 +468,49 @@ static void startStaServer() {
 	server.on("/state.json", HTTP_GET, onStateJson);
 	server.on("/wifi", HTTP_GET, onWifiJson);
 
-	// /factory-reset: wipes /wifi.json and reboots. After reboot the
-	// device will boot into SoftAP / captive-portal mode (no creds).
-	// Useful when the operator typos a password or wants to move the
-	// device to a different wifi network without reflashing.
+	// /factory-reset: two-step wipe + reboot. A GET serves a prompt page
+	// asking the operator to confirm; a POST does the actual wipe. This
+	// prevents the legacy GET-immediately behaviour where a stray
+	// browser prefetch, link previewer, or fat-fingered bookmark could
+	// silently wipe the saved credentials. After reboot the device
+	// boots into SoftAP / captive-portal mode (no creds). Useful when
+	// the operator typos a password or wants to move the device to a
+	// different wifi network without reflashing.
 	server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest* req) {
-		Serial.println("net: /factory-reset -- wiping /wifi.json and rebooting");
+		const char* page =
+			"<html><head><meta name=\"viewport\" "
+			"content=\"width=device-width,initial-scale=1\"><title>Reset "
+			"RetroRoom?</title>"
+			"<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe "
+			"UI,sans-serif;max-width:420px;margin:3em auto;padding:0 "
+			"1em;color:rgb(34,34,34);line-height:1.4}"
+			"h2{margin:0 0 .25em}p{color:rgb(68,68,68)}"
+			"button{padding:.7em 1.4em;font-size:1em;border:none;border-radius:"
+			"6px;color:white;cursor:pointer;font-weight:600}"
+			"button.yes{background:rgb(200,40,40)}button.no{background:rgb(170,"
+			"170,170);margin-left:.5em}</style></head><body>"
+			"<h2>Factory reset?</h2>"
+			"<p>This will erase the saved WiFi credentials and reboot into "
+			"the setup portal. The device will need to be reconfigured "
+			"before it can join your network again.</p>"
+			"<form method=\"POST\" action=\"/factory-reset\">"
+			"<button type=\"submit\" class=\"yes\">Yes, erase and reboot</button>"
+			"</form>"
+			"<form method=\"GET\" action=\"/\" style=\"margin-top:.5em\">"
+			"<button type=\"submit\" class=\"no\">Cancel</button>"
+			"</form>"
+			"</body></html>";
+		req->send(200, "text/html", page);
+	});
+	server.on("/factory-reset", HTTP_POST, [](AsyncWebServerRequest* req) {
+		Serial.println("net: /factory-reset POST -- wiping /wifi.json and rebooting");
 		if (LittleFS.begin()) {
 			LittleFS.remove(kWifiConfigPath);
 		}
-		req->send(200, "text/plain", "wifi credentials wiped; rebooting into setup mode\n");
+		req->send(200, "text/html",
+		          "<html><body style=\"font-family:sans-serif;text-align:center;margin-top:4em\">"
+		          "<h2>Reset.</h2><p>Rebooting into setup mode&hellip;</p>"
+		          "</body></html>");
 		delay(500);
 		rp2040.restart();
 	});

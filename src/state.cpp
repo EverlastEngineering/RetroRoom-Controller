@@ -1,7 +1,13 @@
 #include "state.h"
 #include "main.h"
 
-bool flash = false;
+// Defaults: boot into the "flashing" state so the on-board LED / ring OE
+// line is engaged at startup. The previous `false` left the LED dark
+// until the first /flash toggle; the on-board LED then blinked at the
+// heartbeat cadence (1 Hz) controlled from main.cpp::loop(). The
+// heartbeat is gone now -- flashLed() is the canonical "flash on" path,
+// so the flag should be true from the start.
+bool flash = true;
 int statusLedActive = 0x0;
 
 // setLed() drives the on-board LED plus, if MANUAL_OE_PIN is defined by the
