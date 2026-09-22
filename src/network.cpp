@@ -637,6 +637,20 @@ static void startStaServer() {
 	server.on("/state.json", HTTP_GET, onStateJson);
 	server.on("/wifi", HTTP_GET, onWifiJson);
 
+	// /factory-reset: wipes /wifi.json and reboots. After reboot the
+	// device will boot into SoftAP / captive-portal mode (no creds).
+	// Useful when the operator typos a password or wants to move the
+	// device to a different wifi network without reflashing.
+	server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest* req) {
+		Serial.println("net: /factory-reset -- wiping /wifi.json and rebooting");
+		if (LittleFS.begin()) {
+			LittleFS.remove(kWifiConfigPath);
+		}
+		req->send(200, "text/plain", "wifi credentials wiped; rebooting into setup mode\n");
+		delay(500);
+		rp2040.restart();
+	});
+
 	ws.onEvent(onWsEvent);
 	server.addHandler(&ws);
 
