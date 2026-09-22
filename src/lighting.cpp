@@ -28,9 +28,10 @@ void lightRing(bool lit) {
 }
 
 void lighting_init() {
-	// FastLED 3.10+ on RP2040. The addLeds clockless helper signature
-	// that binds to a 3-arg `<CHIPSET, DATA_PIN, RGB_ORDER>` call is the
-	// one the upstream FastLED RP2040 examples use, and it binds cleanly
+	// FastLED 3.10+ on RP2040 / RP2350 (the rpcommon PIO backend
+	// transparently supports both chips). The addLeds clockless helper
+	// signature that binds to a 3-arg `<CHIPSET, DATA_PIN, RGB_ORDER>`
+	// call is the one the upstream examples use, and it binds cleanly
 	// to WS2812B (which is `template<uint8_t DATA_PIN, EOrder RGB_ORDER>
 	// class WS2812B : public WS2812Controller800Khz<DATA_PIN, RGB_ORDER>`).
 	// GRB is what WS2812 / NeoPixel / the ring on DATA_PIN expect.

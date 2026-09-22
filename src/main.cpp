@@ -26,12 +26,7 @@ void setup() {
 	while (!Serial && millis() - waitStart < 3000) {
 		delay(10);
 	}
-	// The classic Arduino `while (!Serial) {};` pattern can hang on the Pico's
-	// native USB-CDC on some hosts. Drop it -- Serial.print() before any
-	// host-side read just goes into the USB buffer and is read on next open.
 	pinMode(LED_BUILTIN, OUTPUT);
-	// MANUAL_OE_PIN is intentionally undefined (see src/configuration.h);
-	// when the perfboard lands, the pinMode/analogWriteFreq lines go back.
 #if defined(HAS_LEDS)
 	lighting_init();
 #endif
@@ -39,10 +34,6 @@ void setup() {
 	network_init();
 #endif
 	controls_init();
-	// Initialize the IR sender early so selectConsole() can blast codes
-	// during consoleDefinitions()'s initial setStack + post-load apply
-	// cycle. HAS_IR is set in build_flags for all Pico envs; when HAS_IR
-	// is undefined this is a no-op (see src/ircontrol.cpp).
 #if defined(HAS_IR)
 	ir_control_init();
 #endif
