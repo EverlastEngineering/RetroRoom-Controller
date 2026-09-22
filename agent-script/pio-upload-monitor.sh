@@ -111,6 +111,12 @@ if [ "$MONITOR_ONLY" = 1 ]; then
     # gives you ~15 lines of "Heartbeat: ..." which is enough to
     # confirm the loop is still running.
     echo "[pio-upload-monitor] --monitor-only set; attaching to $ENV for ${MONITOR_SECS}s (no build, no upload)." >&2
+    # Same pty-under-script(1) pattern as the upload+monitor path
+    # below; just a different inner command. The status-summary at
+    # the bottom of the script understands the monitor-only case
+    # (no Verifying Flash line to look for, exit 0 if we got any
+    # output, exit 1 if the log is empty -- which is exactly the
+    # "device wedged" signal heartbeats exist to disambiguate).
     script -q "$LOG" pio device monitor --environment "$ENV" &
     PIO_PID=$!
     sleep "$MONITOR_SECS"
