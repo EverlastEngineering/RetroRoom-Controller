@@ -17,9 +17,15 @@
 // succeeded without having to look at the WS or run any test.
 
 void setup() {
-	// 115200 on Pico native USB-CDC is conventional.
+	// 115200 on Pico native USB-CDC is conventional. On the RP2350 (Pico 2 W)
+	// the CDC-ACM buffer drops writes issued before the host opens the
+	// port, so we wait briefly for a host connection before printing
+	// anything. Bounded by 3 s so the firmware still boots unattended.
 	Serial.begin(115200);
-
+	const unsigned long waitStart = millis();
+	while (!Serial && millis() - waitStart < 3000) {
+		delay(10);
+	}
 	// The classic Arduino `while (!Serial) {};` pattern can hang on the Pico's
 	// native USB-CDC on some hosts. Drop it -- Serial.print() before any
 	// host-side read just goes into the USB buffer and is read on next open.
@@ -43,6 +49,7 @@ void setup() {
 	consoleDefinitions();
 	selectStack_init();
 	Serial.println("Setup Complete.");
+	Serial.flush();
 }
 
 void loop() {
