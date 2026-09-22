@@ -28,12 +28,21 @@
 #   ./agent-script/pio-upload-monitor.sh -e pico_base           # different env
 #   ./agent-script/pio-upload-monitor.sh -e pico2w -t 60       # 60s monitor window
 #   ./agent-script/pio-upload-monitor.sh --no-build            # skip the standalone build
+#   ./agent-script/pio-upload-monitor.sh --no-upload           # build only, do NOT flash / monitor
 #   ./agent-script/pio-upload-monitor.sh --keep-heartbeats     # don't strip Heartbeat: lines
 #
-# Defaults: ENV=pico2w, MONITOR_SECS=25, LOG=/tmp/pio_upload_monitor.log
+# Defaults: ENV=pico2w, MONITOR_SECS=25, LOG=/tmp/pio_upload_monitor.log, DO_BUILD=1, DO_UPLOAD=1
+#
+# NOTE on --no-build vs --no-upload:
+#   --no-build   skips the standalone `pio run -e $ENV` pass; upload+monitor still run.
+#   --no-upload  skips the `pio run -e $ENV -t upload -t monitor` pass entirely; only
+#                `pio run -e $ENV` runs. Use this for a compile-only check (per AGENT.md
+#                §4 "building is always fine") without flashing the device (which needs
+#                explicit user permission). DO NOT use --no-build as a build-only check --
+#                it will still flash the device.
 #
 # Exit codes:
-#   0  pipeline finished cleanly (build green, upload OK, monitor window elapsed)
+#   0  pipeline finished cleanly (build green, upload OK if requested, monitor window elapsed)
 #   1  bad CLI args
 #   2  build failed (caught before the upload+monitor stage)
 #   3  upload failed (build OK but picotool didn't reach 100%)
@@ -45,6 +54,7 @@ ENV="pico2w"
 MONITOR_SECS=35
 LOG="/tmp/pio_upload_monitor.log"
 DO_BUILD=1
+DO_UPLOAD=1
 FILTER_HEARTBEATS=1
 
 print_usage() {
@@ -58,6 +68,7 @@ while [ $# -gt 0 ]; do
         -t) MONITOR_SECS="$2"; shift 2 ;;
         --timeout=*) MONITOR_SECS="${1#*=}"; shift ;;
         --no-build) DO_BUILD=0; shift ;;
+        --no-upload) DO_UPLOAD=0; shift ;;
         --keep-heartbeats) FILTER_HEARTBEATS=0; shift ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -70,7 +81,9 @@ done
 # 1. Optional standalone build. We do this *before* the upload+monitor so
 #    that a compile error doesn't waste a flash cycle or a 25 s monitor
 #    window waiting for output that will never come. If you only changed
-#    one file and want to skip this, pass --no-build.
+#    one file and want to skip this, pass --no-build. (Note: --no-build
+#    only skips step 1; the upload+monitor in step 2 still runs. Use
+#    --no-upload for a true build-only check.)
 if [ "$DO_BUILD" = 1 ]; then
     echo "[pio-upload-monitor] pio run -e $ENV (full build)..." >&2
     if ! pio run -e "$ENV" 2>&1 | tee -a "$LOG" | tail -3 ; then
@@ -78,6 +91,14 @@ if [ "$DO_BUILD" = 1 ]; then
         exit 2
     fi
     echo "[pio-upload-monitor] build OK" >&2
+fi
+
+if [ "$DO_UPLOAD" = 0 ]; then
+    # --no-upload: skip the flash + monitor entirely. The standalone build
+    # (above) already proved the firmware compiles; nothing more to do.
+    # Per AGENT.md §4, flashing requires explicit user permission.
+    echo "[pio-upload-monitor] --no-upload set; skipping flash + monitor."
+    exit 0
 fi
 
 # 2. Upload + monitor under script(1) so pio monitor sees a pty.
@@ -97,13 +118,28 @@ sleep 2
 kill -9  "$PIO_PID" 2>/dev/null || true
 wait "$PIO_PID" 2>/dev/null || true
 
-# 4. Print the meaningful part of the log (heartbeats stripped by default).
+# 4. Print the meaningful part of the log.
+#    - Heartbeats stripped by default (turn off with --keep-heartbeats).
+#    - ArduinoJson StaticJsonDocument deprecation blocks are stripped
+#      ALWAYS (not gated on a flag). Those warnings live in pre-existing
+#      code (src/network.cpp had StaticJsonDocument<256> calls before
+#      this script was written) and produce three lines of noise per
+#      occurrence. The recommended migration is to JsonDocument; that
+#      cleanup is a separate task from anything that touches the
+#      build / flash / monitor pipeline. Re-introduce the noise by
+#      piping through `cat` yourself if you ever need to see it.
 echo
 echo "================================================================"
-echo "[pio-upload-monitor] non-heartbeat log lines from $LOG:"
+echo "[pio-upload-monitor] log lines from $LOG:"
 echo "================================================================"
 if [ "$FILTER_HEARTBEATS" = 1 ]; then
-    grep -v "^Heartbeat:" "$LOG" || true
+    # Strip heartbeats. The ArduinoJson deprecation block is removed
+    # below via a second pass.
+    grep -v "^Heartbeat:" "$LOG" \
+        | grep -v "^src/.*warning: '.*StaticJsonDocument" \
+        | grep -v "^.*note: declared here" \
+        | grep -v "^.*compatibility.hpp:.*$" \
+        || true
 else
     cat "$LOG"
 fi

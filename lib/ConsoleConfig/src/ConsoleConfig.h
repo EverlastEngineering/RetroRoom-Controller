@@ -74,4 +74,37 @@ int wraparoundNext(int current, int n, int direction);
 // console list has changed.
 int clampIndex(int requested, int n);
 
+// Validate a console-config JSON string. Thin wrapper over loadFromJson()
+// that exists so the network shell has a clearly-named "is this body
+// safe to write to LittleFS?" gate; today it just forwards to the parser,
+// but if we ever add cross-field invariants (e.g. unique console ids,
+// non-overlapping LED ranges) they land here without touching the shell.
+// On success: returns true and fills `out` with the parsed consoles/irCodes.
+// On failure: returns false and `out.error` carries the reason.
+bool validateConsoleConfigJson(const std::string& json, LoadResult& out);
+
+// Pure backup-rotation policy for the LittleFS store. The shell keeps
+// three blob slots -- the live config + two rolling backups. Before
+// committing a new live config, the shell calls this function to compute
+// the new slot values:
+//
+//     out_live   = newPayload
+//     out_backup1 = current_live      (whatever was live becomes the
+//                                       most recent backup)
+//     out_backup2 = current_backup1   (the older backup is dropped)
+//
+// `current_live` and `current_backup1` may be empty strings to indicate
+// the slot is empty (file missing / new device / wiped FS); an empty
+// slot simply propagates downstream. The function never inspects the
+// JSON -- it's a pure byte-level rotation so the shell can unit-test
+// the policy against an in-memory mock FS.
+struct BackupRotation {
+	std::string live;
+	std::string backup1;
+	std::string backup2;
+};
+BackupRotation rotateBackupBlobs(const std::string& current_live,
+                                 const std::string& current_backup1,
+                                 const std::string& new_payload);
+
 }  // namespace retroroom_core

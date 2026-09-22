@@ -34,6 +34,8 @@
 #include "html.h"
 #include "state.h"
 #include "main.h"
+#include "consoleconfig_store.h"
+#include <ConsoleConfig.h>
 
 // ---------- module state ----------
 
@@ -89,6 +91,19 @@ std::atomic<uint32_t> g_factoryResetNonce(0);
 // "Resetting now!" page.
 static constexpr unsigned long kFactoryResetRebootDelayMs = 1500;
 volatile unsigned long g_pendingFactoryResetRebootAt = 0;
+
+// Pending reboot timestamp for POST /consoles.json. Mirrors the
+// factory-reset pattern (separate flag, same delay constant). The
+// POST handler validates the JSON via the functional core, writes it
+// (plus two backups) to LittleFS via the shell-side store wrapper,
+// sends a short "Saved. Rebooting..." page, and arms this deadline.
+// network_loop() fires the restart from main-loop context so the TCP
+// send buffer drains cleanly. Separate from
+// g_pendingFactoryResetRebootAt so a factory reset happening mid-
+// POST (theoretical -- the CSRF nonce would block it, but defense in
+// depth) can't clobber this one.
+static constexpr unsigned long kConsoleConfigRebootDelayMs = 1500;
+volatile unsigned long g_pendingConsoleConfigRebootAt = 0;
 
 // Boot-time scan cache. Populated by network_scan_cache() before the
 // AP comes up (the CYW43 cannot scan while a client is associated, so
@@ -452,6 +467,37 @@ static void onHealthcheck(AsyncWebServerRequest* req) {
 	req->send(200, "text/plain", "OK\n");
 }
 
+// /next + /prev: HTTP-driven console advance / rewind. These are the
+// script-friendly counterpart of the USR button (advanceConsole() in
+// src/consoles.cpp); the e2e test in agent-script/e2e-consoles-json.sh
+// drives them over curl, the embedded UI's script.js can call them
+// from any button, and the WebSocket command "next" / "prev" (see
+// onWsEvent below) drives the same code path so the UI doesn't have
+// to choose between HTTP and WS.
+//
+// Both endpoints return the current index + console name as JSON so
+// the caller can verify the device actually moved (curl --include
+// surfaces the JSON; a synchronous test script asserts on it).
+// advanceConsole() / rewindConsole() also broadcast a "console:<name>:<idx>"
+// WS message in the same call, so any connected UI sees the change
+// without having to poll.
+static void onConsoleNext(AsyncWebServerRequest* req) {
+	advanceConsole();
+	// 200 OK with the current state -- lets the test script
+	// confirm the device actually advanced without a second
+	// round-trip to /state.json.
+	String out = "{\"index\":" + String(currentConsoleIndex) +
+	             ",\"name\":\"" + CurrentConsole().name.c_str() + "\"}\n";
+	req->send(200, "application/json", out);
+}
+
+static void onConsolePrev(AsyncWebServerRequest* req) {
+	rewindConsole();
+	String out = "{\"index\":" + String(currentConsoleIndex) +
+	             ",\"name\":\"" + CurrentConsole().name.c_str() + "\"}\n";
+	req->send(200, "application/json", out);
+}
+
 static void onStateJson(AsyncWebServerRequest* req) {
 	StaticJsonDocument<256> doc;
 	doc["index"]   = currentConsoleIndex;
@@ -491,6 +537,164 @@ static void startStaServer() {
 	server.on("/healthcheck", HTTP_GET, onHealthcheck);
 	server.on("/state.json", HTTP_GET, onStateJson);
 	server.on("/wifi", HTTP_GET, onWifiJson);
+	// Console cycling. GET makes them browser-friendly; the
+	// WebSocket command "next" / "prev" hits the same shell
+	// functions so the UI's ws-driven path doesn't fork from the
+	// HTTP path. See the docstring on onConsoleNext for why both
+	// directions return the current index + name in the body.
+	server.on("/next", HTTP_GET, onConsoleNext);
+	server.on("/prev", HTTP_GET, onConsolePrev);
+
+	// /consoles.json POST: accept a JSON body from an external service,
+	// validate it via the functional core, save it to LittleFS with two
+	// rolling backups, then schedule a reboot so the next boot picks up
+	// the new config.
+	//
+	// Design notes:
+	//   - The body is collected via an onBody middleware that fills
+	//     request->_tempObject with the raw bytes (then null-terminates
+	//     the buffer so we can pass it to ArduinoJson as a C string).
+	//     This mirrors the pattern used by AsyncCallbackJsonWebHandler
+	//     in this version of ESPAsyncWebServer (see AsyncJson.cpp).
+	//     We use the same _tempObject slot but skip the library's
+	//     auto-deserialize step so the bytes land on disk verbatim --
+	//     re-serializing through ArduinoJson would re-format whitespace
+	//     and lose the operator's preferred indentation.
+	//   - Content-Length is capped at 8 KB (mirrors the cap in
+	//     src/consoleconfig_store.cpp's read path; the example configs
+	//     are < 1 KB). Bigger uploads are rejected before we allocate.
+	//   - Validation runs BEFORE the FS write. A bad body never
+	//     reaches disk; the response carries the typed error string
+	//     from the core so the operator can see exactly what was
+	//     rejected.
+	//   - On success: write, then 200 + tiny "Saved. Rebooting..." page,
+	//     then schedule the reboot via g_pendingConsoleConfigRebootAt
+	//     (mirrors the /factory-reset pattern in network_loop()).
+	//   - On validation failure: 400 + the parser's error string. No
+	//     FS write, no reboot.
+	//   - On FS failure: 500 + a generic message; the FS may be in a
+	//     partial-write state but the boot path falls back through
+	//     bak1 -> bak2 -> PROGMEM so the device still boots. The
+	//     operator can retry.
+	constexpr size_t kMaxBodyBytes = 8 * 1024;
+	auto consolesJsonOnBody = [kMaxBodyBytes](AsyncWebServerRequest* req,
+	                                          uint8_t* data, size_t len,
+	                                          size_t index, size_t total) {
+		// Reject oversized uploads up front so we never allocate a
+		// pathologically large buffer. This matches the read-side
+		// cap in consoleconfig_store.cpp -- the device can't read
+		// more than 8 KB on boot, so accepting more on the way in
+		// would silently truncate anyway.
+		if (total > kMaxBodyBytes) {
+			Serial.print("net: consoles.json body too large (");
+			Serial.print((unsigned)total);
+			Serial.println(" bytes)");
+			req->send(413, "application/json",
+			          "{\"error\":\"body exceeds 8 KB cap\"}\n");
+			req->abort();
+			return;
+		}
+		// First chunk: allocate the full buffer (calloc gives us a
+		// zeroed buffer so the null terminator at offset `total` is
+		// already in place for the ArduinoJson C-string parser).
+		if (index == 0) {
+			if (req->_tempObject != nullptr) {
+				// Middleware re-entry on the same request -- shouldn't
+				// happen but free defensively so we don't leak.
+				free(req->_tempObject);
+			}
+			req->_tempObject = calloc(total + 1, sizeof(uint8_t));
+			if (req->_tempObject == nullptr) {
+				Serial.print("net: consoles.json body alloc failed (");
+				Serial.print((unsigned)total);
+				Serial.println(" bytes)");
+				req->send(500, "application/json",
+				          "{\"error\":\"body alloc failed\"}\n");
+				req->abort();
+				return;
+			}
+		}
+		// Subsequent chunks: copy into the pre-allocated buffer.
+		// index+len is bounded by total (which we capped above) so
+		// no overflow is possible here.
+		if (req->_tempObject != nullptr) {
+			memcpy((uint8_t*)req->_tempObject + index, data, len);
+		}
+	};
+	auto consolesJsonOnRequest = [](AsyncWebServerRequest* req) {
+		// The onBody middleware ran first and stashed the raw body
+		// in _tempObject. If it's NULL here, the request either had
+		// no body or the middleware aborted it -- either way, we
+		// have nothing to validate, so reject.
+		if (req->_tempObject == nullptr) {
+			req->send(400, "application/json",
+			          "{\"error\":\"empty body; expected console-config JSON\"}\n");
+			return;
+		}
+		const char* raw = static_cast<const char*>(req->_tempObject);
+		const size_t len = strlen(raw);  // safe -- calloc zeroed offset `total`.
+
+		Serial.print("net: /consoles.json POST body=");
+		Serial.print(len);
+		Serial.println(" bytes");
+
+		// Step 1: validate via the functional core. Any structural
+		// error (missing irCodes, unknown tvInput, bad hex, malformed
+		// JSON, empty id) is reported back to the client verbatim
+		// from the core's typed error string.
+		std::string payload(raw, len);
+		retroroom_core::LoadResult parsed;
+		if (!retroroom_core::validateConsoleConfigJson(payload, parsed)) {
+			Serial.print("net: /consoles.json rejected: ");
+			Serial.println(parsed.error.c_str());
+			String body_out = String("{\"error\":\"") + parsed.error.c_str() + "\"}\n";
+			req->send(400, "application/json", body_out);
+			return;
+		}
+		Serial.print("net: /consoles.json accepted; parsed ");
+		Serial.print(parsed.consoles.size());
+		Serial.print(" consoles + ");
+		Serial.print(parsed.irCodes.size());
+		Serial.println(" IR codes");
+
+		// Step 2: write to LittleFS with two rolling backups via the
+		// shell-side store wrapper. The wrapper handles rotation
+		// policy via the functional core; we just commit whatever
+		// the policy produced.
+		const retroroom_store::SaveResult saved =
+			retroroom_store::saveConsoleConfigWithBackups(payload);
+		if (saved == retroroom_store::SaveResult::MountFailed) {
+			req->send(500, "application/json",
+			          "{\"error\":\"LittleFS mount failed\"}\n");
+			return;
+		}
+		if (saved == retroroom_store::SaveResult::WriteFailed) {
+			req->send(500, "application/json",
+			          "{\"error\":\"LittleFS write failed (partial state possible); retry the POST\"}\n");
+			return;
+		}
+
+		// Step 3: respond, then arm the reboot. Same async-reboot
+		// pattern as /factory-reset -- sending the response from the
+		// handler, then restarting in network_loop() once the TCP
+		// send buffer has drained.
+		req->send(200, "application/json",
+		          "{\"status\":\"saved\",\"consoles\":" +
+		          String((unsigned)parsed.consoles.size()) +
+		          ",\"irCodes\":" + String((unsigned)parsed.irCodes.size()) +
+		          ",\"message\":\"Rebooting in ~1.5 s\"}\n");
+
+		g_pendingConsoleConfigRebootAt = millis() + kConsoleConfigRebootDelayMs;
+		Serial.print("net: /consoles.json reboot scheduled at millis()=");
+		Serial.println(g_pendingConsoleConfigRebootAt);
+	};
+	// server.on(uri, method, onRequest) returns a reference to the
+	// underlying AsyncCallbackWebHandler so we can chain an onBody
+	// middleware onto it. This is the same pattern AsyncJson.cpp
+	// uses internally to register its body-collecting middleware.
+	AsyncCallbackWebHandler& consoles_h =
+		server.on("/consoles.json", HTTP_POST, consolesJsonOnRequest);
+	consoles_h.onBody(consolesJsonOnBody);
 
 	// /factory-reset: two-step wipe + reboot with a one-shot CSRF nonce
 	// to prevent accidental re-trigger.
@@ -655,6 +859,14 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
 					// after flashLed(), which double-toggled and
 					// made the WS flash path look like a no-op.
 					flashLed();
+				} else if (msg == "next") {
+					// Same shell function as HTTP /next. The "console:..."
+					// broadcast inside advanceConsole() fans out to all
+					// connected clients, so the originating socket sees
+					// the change in the same message stream.
+					advanceConsole();
+				} else if (msg == "prev") {
+					rewindConsole();
 				} else if (msg == "healthcheck") {
 					// No hardware side effect, just ack so the client
 					// knows we're alive.
@@ -765,6 +977,20 @@ void network_loop() {
 		if ((long)(millis() - deadline) >= 0) {
 			g_pendingFactoryResetRebootAt = 0;
 			Serial.println("net: factory-reset reboot firing now");
+			rp2040.restart();
+		}
+	}
+
+	// Pending /consoles.json reboot. Same shape as the factory-reset
+	// branch above: the POST handler saved the new config + sent the
+	// response + armed this deadline; we restart from main-loop
+	// context once the TCP send buffer has drained. Separate flag so
+	// a race with /factory-reset (theoretical -- /factory-reset has
+	// its own CSRF nonce gate) can't lose this one.
+	if (const unsigned long deadline = g_pendingConsoleConfigRebootAt) {
+		if ((long)(millis() - deadline) >= 0) {
+			g_pendingConsoleConfigRebootAt = 0;
+			Serial.println("net: /consoles.json reboot firing now");
 			rp2040.restart();
 		}
 	}

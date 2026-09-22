@@ -5,6 +5,7 @@
 #include <string>
 
 #include "lighting.h"
+#include "consoleconfig_store.h"
 #if defined(HAS_IR)
 #include "ircontrol.h"
 #endif
@@ -17,6 +18,17 @@
 // The shell stores the same string in PROGMEM so it lands in flash and the
 // core's parser is fed directly from RAM. (The legacy approach was a
 // hand-rolled addConsole(...) sequence in main.cpp; this file replaces it.)
+//
+// At boot, consoleDefinitions() prefers /consoles.json from LittleFS
+// (the slot maintained by the POST /consoles.json handler in
+// src/network.cpp). This PROGMEM literal is the fallback used when:
+//   - the FS isn't mounted (board with no filesystem partition,
+//     e.g. [env:pico_base]),
+//   - /consoles.json is missing (factory-fresh device),
+//   - or /consoles.json fails to parse (corrupt or partial write).
+// Keeping the default here means the device never wedges at boot just
+// because no one has POSTed a config yet -- it comes up with the
+// 3-console example config and the operator can build from there.
 static const char CONFIG_JSON[] PROGMEM = R"({
     "irCodes": {
         "SVideo": "0x030",
@@ -56,9 +68,33 @@ void consoleDefinitions() {
 	// the parse path. The returned LoadResult has ok=false + a typed error
 	// string on any structural problem (missing irCodes, missing consoleNames,
 	// unknown tvInput reference, etc.).
-	retroroom_core::LoadResult result = retroroom_core::loadFromJson(CONFIG_JSON);
+	//
+	// Source selection:
+	//   1. Try /consoles.json from LittleFS (the live slot maintained by
+	//      POST /consoles.json in src/network.cpp). If the FS isn't mounted
+	//      (boards without a filesystem partition) or the file is missing
+	//      (factory-fresh device), fall through silently.
+	//   2. Fall back to the embedded PROGMEM CONFIG_JSON literal above.
+	//      This means the device always boots with *something* -- the
+	//      example 3-console config -- even on a fresh device or a board
+	//      with no FS at all.
+	std::string source;
+	std::string source_label;
+	std::string fs_json;
+	if (retroroom_store::loadLiveConsoleConfig(fs_json) && !fs_json.empty()) {
+		source = std::move(fs_json);
+		source_label = "LittleFS /consoles.json";
+	} else {
+		source.assign(CONFIG_JSON);
+		source_label = "PROGMEM default (CONFIG_JSON)";
+	}
+
+	retroroom_core::LoadResult result =
+		retroroom_core::loadFromJson(source.data(), source.size());
 	if (!result.ok) {
-		Serial.print("Console config load failed: ");
+		Serial.print("Console config load failed (");
+		Serial.print(source_label.c_str());
+		Serial.print("): ");
 		Serial.println(result.error.c_str());
 		return;
 	}
@@ -67,7 +103,9 @@ void consoleDefinitions() {
 	}
 	Serial.print("Loaded ");
 	Serial.print(result.consoles.size());
-	Serial.print(" consoles from JSON:");
+	Serial.print(" consoles from ");
+	Serial.print(source_label.c_str());
+	Serial.print(":");
 	for (const auto& c : consoles) {
 		Serial.print(" [");
 		Serial.print(c.id.c_str());
@@ -106,12 +144,15 @@ void selectConsole(const Console& c) {
 
 void advanceConsole() {
 	// Wrap-around console advance. Safe on an empty vector.
+	// Forward step: +1, mirror of advanceConsole()'s pre-refactor
+	// behavior (USR button on YD-RP2040 still advances forward on
+	// every press).
 	int n = HowManyConsoles();
 	if (n <= 0) {
 		Serial.println("advanceConsole: no consoles loaded");
 		return;
 	}
-	currentConsoleIndex = (currentConsoleIndex + 1) % n;
+	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, +1);
 	Serial.print("Button: advance -> index ");
 	Serial.println(currentConsoleIndex);
 	const Console& c = CurrentConsole();
@@ -124,6 +165,36 @@ void advanceConsole() {
 #if defined(HAS_WIFI)
 	// Mirror the change to any connected web UI over WebSocket so the
 	// page doesn't need to poll /state.json to stay in sync.
+	{
+		std::string msg = "console:";
+		msg += c.name;
+		msg += ":";
+		msg += std::to_string(currentConsoleIndex);
+		broadcastSocketMessage(msg);
+	}
+#endif
+}
+
+void rewindConsole() {
+	// Wrap-around console rewind (counterpart of advanceConsole()).
+	// Exposed for the /prev HTTP endpoint and the "prev" WebSocket
+	// command so external scripts can drive the device in either
+	// direction without needing the physical button. Same wraparound
+	// math as advanceConsole() but stepping -1; the math itself
+	// lives in the functional core (wraparoundNext) so the policy
+	// stays unit-testable on the host.
+	int n = HowManyConsoles();
+	if (n <= 0) {
+		Serial.println("rewindConsole: no consoles loaded");
+		return;
+	}
+	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, -1);
+	Serial.print("Button: rewind -> index ");
+	Serial.println(currentConsoleIndex);
+	const Console& c = CurrentConsole();
+	lightSingle(currentConsoleIndex);
+	selectConsole(c);
+#if defined(HAS_WIFI)
 	{
 		std::string msg = "console:";
 		msg += c.name;

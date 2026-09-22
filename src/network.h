@@ -22,12 +22,15 @@
 //   GET  /ledOn        -> turn the on-board LED on; sends "ledOn" over WS
 //   GET  /ledOff       -> turn the on-board LED off; sends "ledOff" over WS
 //   GET  /flash        -> toggle the flash state; sends "flash" over WS
+//   GET  /next         -> wrap-around advance (forward); returns JSON {index,name}; broadcasts "console:<name>:<idx>" over WS
+//   GET  /prev         -> wrap-around rewind (backward); same JSON + WS broadcast shape as /next
 //   GET  /healthcheck  -> "OK\n"
 //   GET  /state.json   -> JSON of current state for polling fallback
+//   POST /consoles.json-> accept a console-config JSON body, validate it, save to LittleFS with two backups, reboot (see src/network.cpp for details)
 //   GET  /setup        -> SoftAP-only: HTML form to set SSID + password
 //   POST /setup        -> SoftAP-only: write creds to LittleFS, reboot
 //   GET  /wifi         -> JSON of current WiFi status (IP, RSSI, mode)
-//   WS   /ws           -> broadcastSocketMessage() push channel
+//   WS   /ws           -> broadcastSocketMessage() push channel. Recognized text commands: ledOn, ledOff, flash, next, prev, healthcheck (echo for unknown).
 #if defined(HAS_WIFI)
 
 #include <Arduino.h>

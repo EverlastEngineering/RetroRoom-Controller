@@ -1,0 +1,18 @@
+{
+    "irCodes": {
+        "SVideo": "0x030",
+        "Front": "0x830",
+        "Video": "0x430",
+        "YUV":   "0xE30"
+    },
+    "consoleNames": {
+        "NES":  "Nintendo Entertainment System",
+        "SNES": "Super Nintendo Entertainment System",
+        "GEN":  "Sega Genesis"
+    },
+    "consoles": [
+        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1},
+        {"id": "SNES", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5},
+        {"id": "GEN",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 13, "ledWidth": 5}
+    ]
+}

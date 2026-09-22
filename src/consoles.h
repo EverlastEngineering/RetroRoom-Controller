@@ -30,4 +30,10 @@ void selectConsole(const Console& c);
 // selector_position + tvinput hex on every press.
 void advanceConsole();
 
+// Wrap-around rewind (first -> last). Counterpart of advanceConsole()
+// for the /prev HTTP endpoint and the "prev" WS command. Same shell
+// side-effects (LED single-light, StackSelector + IR drive, WS
+// broadcast) as advanceConsole(), just stepping -1 instead of +1.
+void rewindConsole();
+
 #endif

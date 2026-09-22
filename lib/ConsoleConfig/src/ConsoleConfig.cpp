@@ -165,4 +165,39 @@ int clampIndex(int requested, int n) {
 	return requested;
 }
 
+bool validateConsoleConfigJson(const std::string& json, LoadResult& out) {
+	// Out is overwritten on every call (including on failure) so the
+	// caller doesn't have to remember to reset it. The error string is
+	// only populated on the failure path -- on success, callers should
+	// branch on the bool return and ignore out.error.
+	out = loadFromJson(json.data(), json.size());
+	return out.ok;
+}
+
+BackupRotation rotateBackupBlobs(const std::string& current_live,
+                                 const std::string& current_backup1,
+                                 const std::string& new_payload) {
+	// Pure byte-level rotation. The new payload is committed to the live
+	// slot unconditionally; the live and backup1 values shift down by
+	// one slot. backup2 is dropped (the previous backup2 -- if any --
+	// becomes the new backup1's predecessor in the chain but we only
+	// keep two backups total).
+	//
+	// Rationale for dropping the oldest:
+	//   - Two backups (live + b1 + b2 = three on-disk copies) give us a
+	//     one-step-recovery window: if the new live is corrupt and the
+	//     prior live was also corrupt, b1 still has the last-known-good.
+	//   - Keeping a third backup would burn LittleFS space for marginal
+	//     gain -- any corruption pattern that's bad enough to take out
+	//     b1 + b2 is bad enough that the operator should factory-reset.
+	//
+	// Empty inputs (file missing / wiped FS) are propagated forward --
+	// if backup1 was empty it stays empty in the new backup2 slot.
+	BackupRotation out;
+	out.live = new_payload;
+	out.backup1 = current_live;
+	out.backup2 = current_backup1;
+	return out;
+}
+
 }  // namespace retroroom_core

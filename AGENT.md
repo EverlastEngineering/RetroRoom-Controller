@@ -133,11 +133,29 @@ Things that burned time and will burn yours if you don't know:
 
 ## 4. Hardware-permission policy
 
-`pio ... -t upload` and `pio device monitor` may only run when the
-user has **explicitly asked** for that action in the current
-conversation. Building (`pio run -e pico2w`) is always fine; flashing
-and serial attach are not. When in doubt, ask before uploading or
-attaching the monitor. (LOG entry 2026-09-07, "Policy #5".)
+`pio ... -t upload`, `pio device monitor`, and any action that
+**causes a device reboot or hardware state change** (POST
+`/consoles.json` on a running device, `rp2040.restart()`, factory
+reset, etc.) may only run when the user has explicitly asked for
+that action in the current conversation. The two recognized
+patterns of explicit permission:
+
+  1. **Direct command**: "flash the device", "upload and monitor",
+     "POST the JSON to it", or similar wording that names the
+     hardware-touching action.
+  2. **Task-scoped delegation**: assigning a task whose fulfillment
+     requires a hardware-touching step (e.g. "run the e2e test
+     suite against the device", "verify the new firmware boots
+     clean", "iterate on the WS handshake"), and saying it is OK
+     to perform those steps. The user doing this once per task is
+     sufficient; do not re-ask before every flash/reboot within the
+     same task.
+
+Building (`pio run -e pico2w`) is always fine. Mounting/unmounting
+LittleFS or any other host-side code change is always fine. When
+in doubt, ask before uploading or attaching the monitor. (LOG
+entry 2026-09-07, "Policy #5", last revised 2026-09-22 — added the
+task-scoped delegation pattern after the e2e harness work.)
 
 ## 5. Logging / decision records
 
