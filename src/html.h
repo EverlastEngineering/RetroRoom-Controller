@@ -21,4 +21,15 @@ const String html_setup_js = {
 #include "html/setup.js"
 };
 
+// /factory-reset prompt + post-reset confirmation. The prompt page
+// embeds a CSRF nonce at request time (via String::replace on
+// "__NONCE__"); the done page is static.
+const String html_factory_reset_html = {
+#include "html/factory-reset.html"
+};
+
+const String html_factory_reset_done_html = {
+#include "html/factory-reset-done.html"
+};
+
 #endif

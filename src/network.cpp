@@ -524,35 +524,10 @@ static void startStaServer() {
 		const uint32_t nonce = micros() ^ 0xA5A5A5A5;
 		g_factoryResetNonce.store(nonce);
 
-		String page;
-		page.reserve(900);
-		page += "<!DOCTYPE html><html><head>";
-		page += "<meta name=\"viewport\" "
-		        "content=\"width=device-width,initial-scale=1\">";
-		page += "<title>Reset RetroRoom?</title>";
-		page += "<style>body{font-family:-apple-system,BlinkMacSystemFont,"
-		        "Segoe UI,sans-serif;max-width:420px;margin:3em auto;"
-		        "padding:0 1em;color:rgb(34,34,34);line-height:1.4}";
-		page += "h2{margin:0 0 .25em}p{color:rgb(68,68,68)}";
-		page += "button{padding:.7em 1.4em;font-size:1em;border:none;"
-		        "border-radius:6px;color:white;cursor:pointer;font-weight:600}";
-		page += "button.yes{background:rgb(200,40,40)}button.no{background:"
-		        "rgb(170,170,170);margin-left:.5em}</style>";
-		page += "</head><body>";
-		page += "<h2>Factory reset?</h2>";
-		page += "<p>This will erase the saved WiFi credentials and reboot "
-		        "into the setup portal. The device will need to be "
-		        "reconfigured before it can join your network again.</p>";
-		page += "<form method=\"POST\" action=\"/factory-reset\">";
-		page += "<input type=\"hidden\" name=\"nonce\" value=\"";
-		page += String((unsigned long)nonce, 16);
-		page += "\">";
-		page += "<button type=\"submit\" class=\"yes\">Yes, erase and reboot</button>";
-		page += "</form>";
-		page += "<form method=\"GET\" action=\"/\" style=\"margin-top:.5em\">";
-		page += "<button type=\"submit\" class=\"no\">Cancel</button>";
-		page += "</form>";
-		page += "</body></html>";
+		// Inject the nonce into the prompt page (the `__NONCE__`
+		// placeholder in src/html/factory-reset.html) and serve it.
+		String page = html_factory_reset_html;
+		page.replace("__NONCE__", String((unsigned long)nonce, 16));
 
 		AsyncWebServerResponse* resp = req->beginResponse(200, "text/html", page);
 		// Block all caching. A cached copy of this page could be
@@ -600,50 +575,18 @@ static void startStaServer() {
 			LittleFS.remove(kWifiConfigPath);
 		}
 
-		// Build a "resetting now" page that includes a link back to
-		// the device's eventual SoftAP root once the reboot lands.
-		// The link points to the well-known captive-portal IP
-		// (192.168.4.1) which the device will be serving on once it
-		// comes back up in SoftAP mode -- the user's laptop will
-		// likely still be on the old network at this point so a
-		// relative "/" would 404. After the device reboots and
-		// starts its SoftAP, the operator reconnects to
-		// "RetroRoom-Setup" and the link works.
-		//
-		// The page also includes a small auto-refresh meta tag so
-		// the browser will attempt to reconnect on its own once the
-		// AP comes back -- helps the operator who walks away and
-		// comes back to find the page already showing the new state.
-		String page;
-		page.reserve(700);
-		page += "<!DOCTYPE html><html><head>";
-		page += "<meta name=\"viewport\" "
-		        "content=\"width=device-width,initial-scale=1\">";
-		page += "<meta http-equiv=\"refresh\" content=\"10;url=http://192.168.4.1/\">";
-		page += "<title>Resetting&hellip;</title>";
-		page += "<style>body{font-family:-apple-system,BlinkMacSystemFont,"
-		        "Segoe UI,sans-serif;max-width:420px;margin:3em auto;"
-		        "padding:0 1em;color:rgb(34,34,34);line-height:1.4;text-align:center}";
-		page += "h2{margin:0 0 .25em}p{color:rgb(68,68,68)}";
-		page += "a{color:rgb(10,132,255);font-weight:600;text-decoration:none}";
-		page += ".spinner{display:inline-block;width:1.2em;height:1.2em;"
-		        "border:.18em solid rgb(136,136,136);border-top-color:transparent;"
-		        "border-radius:50%;animation:spin .9s linear infinite;"
-		        "vertical-align:middle;margin-right:.5em}";
-		page += "@keyframes spin{to{transform:rotate(360deg)}}";
-		page += "</style></head><body>";
-		page += "<h2>Resetting now!</h2>";
-		page += "<p><span class=\"spinner\"></span>WiFi credentials erased. "
-		        "The device is rebooting into setup mode&hellip;</p>";
-		page += "<p>When the on-board LED blinks steadily, reconnect your "
-		        "computer to <code>RetroRoom-Setup</code> and open "
-		        "<a href=\"http://192.168.4.1/\">http://192.168.4.1/</a> "
-		        "to configure WiFi again.</p>";
-		page += "<p style=\"font-size:.85em;color:rgb(136,136,136);margin-top:2em\">"
-		        "This page will refresh automatically in 10 seconds.</p>";
-		page += "</body></html>";
-
-		AsyncWebServerResponse* resp = req->beginResponse(200, "text/html", page);
+		// Serve the post-reset confirmation page. The auto-refresh
+		// link uses a RELATIVE URL ("/") so it resolves to whatever
+		// hostname / IP the operator's browser is currently looking
+		// at. After the reboot the device will be on SoftAP
+		// (192.168.4.1) and the user's laptop will (a) likely still
+		// be associated with the old network, so an absolute
+		// "http://192.168.4.1/" link would trigger the captive-
+		// portal probe on the *old* network and 404 there, and
+		// (b) the browser may have already cached the hostname as
+		// "retroroom.local" via mDNS, so the relative "/" is the
+		// robust target.
+		AsyncWebServerResponse* resp = req->beginResponse(200, "text/html", html_factory_reset_done_html);
 		// Same no-store directive as the GET -- we don't want the
 		// browser to cache this success page; the next time it
 		// loads /factory-reset it must re-render the confirmation
@@ -814,17 +757,11 @@ void network_loop() {
 	// handler was racy -- the user saw a spinner until the browser
 	// timed out instead of the success message.
 	//
-	// Read once at the top so the comparison is consistent if
-	// something else were to write the flag mid-iteration. The
-	// guard is `flag != 0` -- an explicit sentinel prevents the
-	// fire-on-zero edge case (which a previous draft using
-	// `(long)(millis() - 0)` would have triggered once millis()
-	// wrapped past zero).
+	// The `if (const unsigned long deadline = g_pendingFactoryResetRebootAt)`
+	// form gives a compiler-checked non-zero guard (the variable only
+	// exists in scope when the flag is non-zero), preventing the
+	// `(long)(millis() - 0)` fire-on-zero edge case.
 	if (const unsigned long deadline = g_pendingFactoryResetRebootAt) {
-		Serial.print("net: factory-reset pending; deadline millis()=");
-		Serial.print(deadline);
-		Serial.print(" now=");
-		Serial.println(millis());
 		if ((long)(millis() - deadline) >= 0) {
 			g_pendingFactoryResetRebootAt = 0;
 			Serial.println("net: factory-reset reboot firing now");

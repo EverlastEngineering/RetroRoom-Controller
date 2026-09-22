@@ -1,0 +1,30 @@
+R""""(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset RetroRoom?</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:420px;margin:3em auto;padding:0 1em;color:rgb(34,34,34);line-height:1.4}
+  h2{margin:0 0 .25em}
+  p{color:rgb(68,68,68)}
+  button{padding:.7em 1.4em;font-size:1em;border:none;border-radius:6px;color:white;cursor:pointer;font-weight:600}
+  button.yes{background:rgb(200,40,40)}
+  button.no{background:rgb(170,170,170);margin-left:.5em}
+</style>
+</head>
+<body>
+<h2>Factory reset?</h2>
+<p>This will erase the saved WiFi credentials and reboot into the
+setup portal. The device will need to be reconfigured before it
+can join your network again.</p>
+<form method="POST" action="/factory-reset">
+  <input type="hidden" name="nonce" value="__NONCE__">
+  <button type="submit" class="yes">Yes, erase and reboot</button>
+</form>
+<form method="GET" action="/" style="margin-top:.5em">
+  <button type="submit" class="no">Cancel</button>
+</form>
+</body>
+</html>
+)""""
