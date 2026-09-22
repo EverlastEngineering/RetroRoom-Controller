@@ -36,12 +36,12 @@ void setup() {
 		delay(10);
 	}
 	pinMode(LED_BUILTIN, OUTPUT);
-	// Default the on-board LED / ring OE line into the flashing state.
-	// flashLed() engages the OE pin PWM; `flash` is initialised true in
-	// state.cpp so /state.json reports flash=true from boot and the
-	// /flash endpoint toggles off cleanly. The legacy 1 Hz heartbeat
-	// blink in loop() is gone -- ledOn / ledOff / flashLed are the
-	// canonical LED state drivers.
+	// Default into the flashing state. flashLed() toggles `flash`
+	// (initialised true in state.cpp) and sets MANUAL_OE_PIN to 50%
+	// PWM; the 1 Hz on-board LED blink is then driven from loop()
+	// while `flash` is true. /flash toggles off cleanly; /ledOn and
+	// /ledOff clear `flash` so a solid-state command stops the
+	// blink immediately.
 	flashLed();
 #if defined(HAS_LEDS)
 	lighting_init();
@@ -81,12 +81,15 @@ void loop() {
 	network_loop();
 #endif
 
-	// On-board LED is now driven exclusively by ledOn() / ledOff() /
-	// flashLed() -- the HTTP /ledOn / /ledOff / /flash endpoints and any
-	// future button-bound handlers mutate it via state.cpp. The legacy
-	// 1 Hz heartbeat blink lived here and fought with those commands
-	// (every toggle got clobbered by the next loop() iteration); it has
-	// been removed. The lightCycleTick / lightCycleToggle helpers in
-	// src/lighting.{h,cpp} are kept around for the perfboard's
-	// WS2812-ring smoke test only.
+	// Pump the on-board LED state machine. Owns LED_BUILTIN + ring
+	// OE internally; main.cpp never touches the LED pin directly.
+	// No-op when `flash` is false; 1 Hz toggle while it's true.
+	flashLedTick();
+
+	// On-board LED is driven exclusively from src/state.cpp:
+	// ledOn / ledOff / flashLed toggle the `flash` flag and drive
+	// the solid state, flashLedTick (above) does the 1 Hz blink
+	// while flashing. The lightCycleTick / lightCycleToggle
+	// helpers in src/lighting.{h,cpp} are kept around for the
+	// perfboard's WS2812-ring smoke test only.
 }
