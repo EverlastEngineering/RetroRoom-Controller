@@ -10,15 +10,17 @@
 // when a perfboard revision lands, MANUAL_OE_PIN will be added back to the
 // Pico block (see TODO.md).
 
-#if defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W)
-	// Bare Raspberry Pi Pico / Pico-W pin map. The Pico-W variant
-	// (ARDUINO_RASPBERRY_PI_PICO_W) is currently used the same way as plain Pico
-	// since the CYW43 WiFi stack has not been wired in yet (network.{h,cpp} is
-	// gated on HAS_WIFI; HAS_WIFI is intentionally NOT set on picow env for now).
+#if defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W) || defined(ARDUINO_RASPBERRY_PI_PICO_2W)
+	// Bare Raspberry Pi Pico / Pico-W / Pico 2 W pin map. All three have
+	// the same GP0-GP28 layout at the GPIO level (the Pico 2 W is an RP2350A
+	// dual-core ARM Cortex-M33; the original Pico and Pico-W are RP2040).
+	// On-board LED differs: GP25 on the Pico / Pico-W; GP64 on the Pico 2 W
+	// -- the framework's LED_BUILTIN resolves to the right pin per board.
+	// The Pico-W variant (ARDUINO_RASPBERRY_PI_PICO_W) and the Pico 2 W
+	// (ARDUINO_RASPBERRY_PI_PICO_2W) have on-board CYW43 WiFi -- see
+	// [env:pico2w] in platformio.ini and todo/open/2026-09-21_pico-2-w-platform.md
+	// for the CYW43 / webserver bring-up.
 	//
-	// Override once wiring is known; this is a reasonable starting point that
-	// avoids strapping pins (GP25 is the on-board LED, GP0-GP7 are safe on the
-	// standard header).
 	// MANUAL_OE_PIN: drives an external output-enable MOSFET (high = LED
 	// ring blanked for power-saving / standby). GP12 is free on the
 	// standard Pico header, away from UART0 (GP0/GP1) and I2C0 (GP4/GP5).
