@@ -27,6 +27,7 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <pico/cyw43_arch.h>
+#include <cyw43.h>
 #include <functional>
 
 #include "html.h"
@@ -43,6 +44,15 @@ constexpr const char* kApPass        = "";  // open AP; acceptable since the Sof
                                             // exposes a /setup form and we reboot immediately
                                             // after the user POSTs.
 constexpr uint8_t     kStaTimeoutSec = 20;
+constexpr uint8_t     kScanCacheMax  = 24; // CYW43 returns at most 24 per scan
+
+struct CachedNet {
+    String  ssid;
+    int32_t rssi;
+    uint8_t auth;
+    uint8_t channel;
+    bool    open;
+};
 
 AsyncWebServer       server(80);
 AsyncWebSocket       ws("/ws");
@@ -52,6 +62,16 @@ DNSServer            dnsServer;          // Captive-portal DNS: replies to every
 bool                 wsClientConnected = false;
 bool                 networkUp = false;
 bool                 inApMode  = false;
+unsigned long        dnsSuspendedAt = 0; // millis() when /debug/dns-off was hit;
+                                          // network_loop() re-enables after 60 s.
+
+// Boot-time scan cache. Populated by network_scan_cache() before the
+// AP comes up (the CYW43 cannot scan while a client is associated, so
+// this has to run pre-AP). /scan.json serves from this array; no
+// in-flight scans ever happen from a request handler.
+CachedNet            scanCache[kScanCacheMax];
+uint8_t              scanCacheCount = 0;
+bool                 scanCacheReady = false;
 
 }  // namespace
 
@@ -69,6 +89,47 @@ void network_loop();
 // ---------- public API ----------
 
 bool network_isUp() { return networkUp; }
+
+// network_scan_cache -- synchronous STA-mode scan, must be called
+// BEFORE the AP comes up. The CYW43 radio cannot scan while a client
+// is associated with the SoftAP, so this is the only safe window.
+// Idempotent: re-running replaces the cached results.
+//
+// On Pico 2 W boot this gets called once before network_init(). If
+// the device later joins an AP in STA mode and the operator wants
+// the captive portal back, they'd have to power-cycle (we don't
+// tear down STA->AP in the current build).
+void network_scan_cache() {
+	// Need STA-only mode for the scan; cyw43_arch_enable_sta_mode()
+	// is what scanNetworks() does internally, but we set it
+	// explicitly here so the AP doesn't get briefly brought up
+	// before the scan starts.
+	WiFi.mode(WIFI_STA);
+	WiFi.disconnect();
+	delay(100);  // let the radio settle into STA mode
+
+	scanCacheCount = 0;
+	scanCacheReady = false;
+	int16_t n = WiFi.scanNetworks(/*async=*/false);
+	Serial.print("net: boot scan found ");
+	Serial.print(n);
+	Serial.println(" networks");
+
+	uint8_t keep = (n > (int16_t)kScanCacheMax) ? kScanCacheMax : (uint8_t)n;
+	for (uint8_t i = 0; i < keep; i++) {
+		scanCache[i].ssid    = WiFi.SSID(i);
+		scanCache[i].rssi    = WiFi.RSSI(i);
+		scanCache[i].auth    = WiFi.encryptionType(i);
+		scanCache[i].channel = WiFi.channel(i);
+		scanCache[i].open    = (scanCache[i].auth == CYW43_AUTH_OPEN);
+	}
+	scanCacheCount = keep;
+	scanCacheReady = true;
+
+	// Free the Earle WiFi class's internal scan-result buffer.
+	// (scanCache owns the Strings; scanDelete drops the lib's copies.)
+	WiFi.scanDelete();
+}
 
 void broadcastSocketMessage(const std::string& message) {
 #if !defined(HAS_WIFI)
@@ -258,10 +319,12 @@ static const char kSetupJs[] PROGMEM = R"setup_js((function () {
     try {
       const r = await fetch('/scan.json', { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const nets = await r.json();
+      const obj  = await r.json();
+      const nets = obj && obj.networks;
       ssidSel.innerHTML = '';
       if (!Array.isArray(nets) || nets.length === 0) {
-        renderPlaceholder('No networks found');
+        const why = obj ? ('(scan returned ' + obj._count + ')') : '(no JSON)';
+        renderPlaceholder('No networks found ' + why);
         manual.classList.remove('hidden');
       } else {
         nets.sort((a, b) => (b.rssi | 0) - (a.rssi | 0));
@@ -347,7 +410,15 @@ static void startApPortal() {
 	Serial.print("net: starting SoftAP \"");
 	Serial.print(kApSsid);
 	Serial.println("\"");
-	WiFi.mode(WIFI_AP);
+	// WIFI_AP_STA so the radio runs both interfaces at once. The
+	// CYW43 can only do a wifi scan from a STA interface; running
+	// AP-only means scanNetworks() walks the radio into STA mode
+	// internally, but the softAP netif gets torn down in the
+	// process and the DHCP server drops. AP_STA mode keeps both
+	// interfaces up so /scan.json works without disturbing the
+	// captive portal. STA has no SSID configured so it doesn't
+	// try to join anything -- it just exists for the scan.
+	WiFi.mode(WIFI_AP_STA);
 	// Earle's WiFi.softAP(ssid, password) wrapper does
 	//   cyw43_arch_enable_ap_mode(ssid, password, password ? WPA2 : OPEN)
 	// with a pointer-null check, NOT strlen(). Passing "" falls into the
@@ -381,38 +452,48 @@ static void startApPortal() {
 	Serial.print("net: SoftAP IP = ");
 	Serial.println(ip);  // typically 192.168.4.1
 
+	// Boot-time diagnostic scan was removed: the first scanNetworks()
+	// call flips the Earle WiFi class's _wifiHWInitted flag and walks
+	// the CYW43 into STA mode; flipping back to AP afterward left
+	// the radio in a state where the second scan (from the
+	// /scan.json handler) returned zero results. Keep this section
+	// empty; the real diagnostic lives in /scan.json itself.
+	{
+		// intentionally blank -- do not add a boot-time scan here
+	}
+
 	// WiFi scan endpoint -- synchronous (the only overload Earle's
 	// arduino-pico core exposes is scanNetworks(bool async = false)).
-	// scanNetworks() clobbers the current WiFi mode; we restore AP mode
-	// after the scan so the captive portal keeps working. Results come
-	// back as a JSON array of {ssid, rssi, open, channel}.
+	// scanNetworks() calls cyw43_arch_enable_sta_mode() internally to
+	// do the scan, which wipes any existing scan results and tears down
+	// the AP netif. The fix is to (1) capture the count + read every
+	// /scan.json -- serves the boot-time scan cache. The CYW43 radio
+	// cannot scan while a client is associated with the SoftAP, so we
+	// do the scan ONCE during boot (before the AP comes up) and serve
+	// from the cache for the lifetime of the firmware. /scan.json is
+	// safe to call from any request handler regardless of how many
+	// clients are connected -- there's no live scan.
 	server.on("/scan.json", HTTP_GET, [](AsyncWebServerRequest* req) {
-		int16_t n = WiFi.scanNetworks(/*async=*/false);
-		WiFi.mode(WIFI_AP);
 		String out;
-		out.reserve(64 + n * 80);
-		out += '[';
-		for (int16_t i = 0; i < n; i++) {
+		out.reserve(96 + scanCacheCount * 80);
+		out += "{\"_count\":";
+		out += scanCacheCount;
+		out += ",\"networks\":[";
+		for (uint8_t i = 0; i < scanCacheCount; i++) {
 			if (i) out += ',';
 			out += "{\"ssid\":\"";
-			String ss = WiFi.SSID(i);
-			ss.replace("\"", "\\\"");
-			out += ss;
+			out += scanCache[i].ssid;
 			out += "\",\"rssi\":";
-			out += WiFi.RSSI(i);
-			// CYW43_AUTH_OPEN == 0 is the same value the Earle WiFi
-			// library's encryptionType() returns for an unencrypted
-			// network. The legacy ESP8266 "WIFI_AUTH_OPEN" name doesn't
-			// exist in arduino-pico's API.
+			out += scanCache[i].rssi;
 			out += ",\"open\":";
-			out += (WiFi.encryptionType(i) == CYW43_AUTH_OPEN) ? "true" : "false";
+			out += scanCache[i].open ? "true" : "false";
 			out += ",\"auth\":";
-			out += WiFi.encryptionType(i);  // 0 = OPEN, 2 = WPA2, etc. (raw value)
+			out += scanCache[i].auth;
 			out += ",\"channel\":";
-			out += WiFi.channel(i);
-			out += "}";
+			out += scanCache[i].channel;
+			out += '}';
 		}
-		out += ']';
+		out += "]}";
 		req->send(200, "application/json", out);
 	});
 
@@ -440,6 +521,28 @@ static void startApPortal() {
 		// Anything else (including the legacy /script.js, /ledOn, etc.)
 		// also redirects to /setup while we're still on the AP.
 		req->redirect("/setup");
+	});
+
+	// /debug/dns-off and /debug/dns-on let the operator temporarily
+	// suspend the captive-portal DNS catch-all so they can navigate
+	// to /scan.json (or any other URL) in a regular browser tab while
+	// the SoftAP is up. Auto-restart after 60 s so we never leave the
+	// device in an unsafe state. Debug-only.
+	server.on("/debug/dns-off", HTTP_GET, [](AsyncWebServerRequest* req) {
+		dnsSuspendedAt = millis();
+		dnsServer.stop();
+		Serial.println("net: debug -- dns catch-all SUSPENDED for 60 s");
+		req->send(200, "text/plain", "DNS suspended for 60 s. /scan.json reachable directly now.\n");
+	});
+	server.on("/debug/dns-on", HTTP_GET, [](AsyncWebServerRequest* req) {
+		dnsSuspendedAt = 0;
+		// Re-enable without flipping WiFi mode (that would clobber
+		// the CYW43 state and break subsequent /scan.json calls).
+		IPAddress ip = WiFi.softAPIP();
+		dnsServer.start(53, "*", ip);
+		dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+		Serial.println("net: debug -- dns catch-all RE-ENABLED");
+		req->send(200, "text/plain", "DNS re-enabled.\n");
 	});
 
 	ws.onEvent(onWsEvent);
@@ -636,8 +739,18 @@ void network_init() {
 }
 
 void network_loop() {
-	// Per-loop pump for the captive-portal DNS server. Only does work
-	// while the AP is up; the dnssServer is a no-op otherwise.
+	// Auto-restart the DNS catch-all if the debug suspension has
+	// expired. The operator hit /debug/dns-off, the 60 s window is up,
+	// we put things back the way they were. Only does work while the
+	// AP is up. Don't flip WiFi mode -- that would clobber the CYW43
+	// state and break subsequent /scan.json calls.
+	if (dnsSuspendedAt && (millis() - dnsSuspendedAt) >= 60000UL) {
+		IPAddress ip = WiFi.softAPIP();
+		dnsServer.start(53, "*", ip);
+		dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+		dnsSuspendedAt = 0;
+		Serial.println("net: dns catch-all auto-restarted after 60 s");
+	}
 	dnsServer.processNextRequest();
 }
 

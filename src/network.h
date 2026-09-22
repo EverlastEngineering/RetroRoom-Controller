@@ -34,6 +34,11 @@
 #include <string>
 
 extern void network_init();
+// Run a synchronous wifi scan and cache the results so /scan.json can
+// serve them later. MUST be called before network_init() on first boot
+// (or before any AP-mode bring-up on reboot) -- the CYW43 can't scan
+// while a client is associated with the SoftAP.
+extern void network_scan_cache();
 // Per-loop pump. Currently just feeds the captive-portal DNS server.
 // Cheap; safe to call on every iteration of main.cpp::loop().
 extern void network_loop();

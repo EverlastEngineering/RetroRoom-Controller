@@ -40,6 +40,12 @@ void setup() {
 	lighting_init();
 #endif
 #if defined(HAS_WIFI)
+	// Scan wifi networks BEFORE the AP comes up. The CYW43 radio
+	// can't scan while a client is associated with the SoftAP, so the
+	// boot window is the only safe place to populate /scan.json's
+	// cache. network_init() below brings up the AP that locks the
+	// radio onto a single channel.
+	network_scan_cache();
 	network_init();
 #endif
 	controls_init();
