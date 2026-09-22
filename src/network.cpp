@@ -238,7 +238,7 @@ static const char kSetupHtml[] PROGMEM = R"setup_html(<!DOCTYPE html>
 
 <form method="POST" action="/setup" id="f" autocomplete="off">
   <label for="ssid">SSID</label>
-  <select id="ssid" name="ssid" required disabled>
+  <select id="ssid" name="ssid" required>
     <option value="">Scanning&hellip;</option>
   </select>
   <div class="hint"><a href="#" id="rescan">Rescan networks</a></div>
@@ -280,10 +280,19 @@ static const char kSetupJs[] PROGMEM = R"setup_js((function () {
 
   function setStatus(msg)  { status.textContent = msg || ''; }
   function setBusy(busy)  {
+    // Note: do NOT toggle ssidSel.disabled here. The submit handler
+    // runs setBusy(true) right before the browser collects form data,
+    // and a disabled select is stripped from the POST. We only want
+    // to block UI interaction (button, spinner, rescan link), not
+    // mutate form-field state.
     save.disabled = busy;
     spin.classList.toggle('hidden', !busy);
-    ssidSel.disabled = busy;
     rescan.style.pointerEvents = busy ? 'none' : '';
+    if (busy) {
+      manualInp.disabled = true;
+    } else {
+      manualInp.disabled = false;
+    }
   }
 
   function isOpen(opt) {
