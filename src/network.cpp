@@ -25,6 +25,7 @@
 #include <ArduinoJson.h>
 #include <RPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <DNSServer.h>
 #include <pico/cyw43_arch.h>
 #include <functional>
 
@@ -45,6 +46,9 @@ constexpr uint8_t     kStaTimeoutSec = 20;
 
 AsyncWebServer       server(80);
 AsyncWebSocket       ws("/ws");
+DNSServer            dnsServer;          // Captive-portal DNS: replies to every query
+                                         // with the AP's IP so iOS/macOS/Android/Windows
+                                         // treat the network as a captive portal.
 bool                 wsClientConnected = false;
 bool                 networkUp = false;
 bool                 inApMode  = false;
@@ -57,6 +61,10 @@ static void startApPortal();
 static void startStaServer();
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
                       AwsEventType type, void* arg, uint8_t* data, size_t len);
+
+// Per-loop pump for the DNS server. Only does work while the AP is
+// running (inApMode). Call from the main loop after setup().
+void network_loop();
 
 // ---------- public API ----------
 
@@ -241,29 +249,10 @@ static void startApPortal() {
 		req->send(200, "application/json", out);
 	});
 
-	// Captive-portal detection handlers. iOS/macOS, Windows, Android,
-	// and ChromeOS each probe a specific URL when they join an open WiFi
-	// network; if the response is anything other than what they expect
-	// from "the internet", they pop the captive-portal sheet.
-	//
-	// The standard trick: respond with a 302 redirect to /setup on any
-	// of those probe URLs. The OS then opens /setup in the browser and
-	// dismisses the sheet. We only install these on the SoftAP path so
-	// STA-mode traffic isn't disrupted.
-	auto redirectToSetup = [](AsyncWebServerRequest* req) {
-		AsyncWebServerResponse* r = req->beginResponse(302, "text/plain", "");
-		r->addHeader("Location", "http://192.168.4.1/setup");
-		req->send(r);
-	};
-	server.on("/hotspot-detect.html",         HTTP_GET, redirectToSetup);  // Apple
-	server.on("/library/test/success.html",  HTTP_GET, redirectToSetup);  // Apple iOS 14+
-	server.on("/generate_204",               HTTP_GET, redirectToSetup);  // Android, ChromeOS
-	server.on("/gen_204",                    HTTP_GET, redirectToSetup);  // some Android builds
-	server.on("/connecttest.txt",            HTTP_GET, redirectToSetup);  // Windows
-	server.on("/redirect",                   HTTP_GET, redirectToSetup);  // Windows
-	server.on("/ncsi.txt",                   HTTP_GET, redirectToSetup);  // Windows NCSI
-	server.on("/fwlink",                     HTTP_GET, redirectToSetup);  // Windows 10+
-	server.on("/success.txt",                HTTP_GET, redirectToSetup);  // Firefox
+	// Captive-portal detection is handled by the DNS server below: every
+	// query for any hostname resolves to 192.168.4.1, so every browser
+	// request that hits "the internet" actually hits us. The HTTP
+	// not-found handler below then redirects to /setup.
 
 	// Serve only the setup form on the AP. We register a wildcard
 	// catch-all that sends users to /setup so they can't accidentally
@@ -284,6 +273,14 @@ static void startApPortal() {
 	ws.onEvent(onWsEvent);
 	server.addHandler(&ws);
 	server.begin();
+
+	// DNS server: replies to every query with the SoftAP IP. This is the
+	// bog-standard captive-portal trick that every ESP8266/Pico-W
+	// WiFiManager sketch uses -- iOS/macOS/Android/Windows all probe a
+	// well-known host, see our IP, and pop the captive-portal sheet.
+	dnsServer.start(53, "*", ip);
+	dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
+
 	Serial.println("net: setup portal running on http://192.168.4.1/setup");
 }
 
@@ -458,7 +455,18 @@ void network_init() {
 	Serial.print(WiFi.RSSI());
 	Serial.println(" dBm");
 
+	// Make sure the captive-portal DNS server isn't running. It's only
+	// started by startApPortal() so this is a no-op in the normal STA
+	// flow, but defensive against a future STA->AP fallback transition.
+	dnsServer.stop();
+
 	startStaServer();
+}
+
+void network_loop() {
+	// Per-loop pump for the captive-portal DNS server. Only does work
+	// while the AP is up; the dnssServer is a no-op otherwise.
+	dnsServer.processNextRequest();
 }
 
 #endif  // HAS_WIFI

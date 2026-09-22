@@ -34,6 +34,9 @@
 #include <string>
 
 extern void network_init();
+// Per-loop pump. Currently just feeds the captive-portal DNS server.
+// Cheap; safe to call on every iteration of main.cpp::loop().
+extern void network_loop();
 // Broadcast a string to all connected WebSocket clients. No-op if no
 // clients are connected. Safe to call from any context (main loop or
 // ISR-adjacent handler) as long as the AsyncWebServer is still alive.

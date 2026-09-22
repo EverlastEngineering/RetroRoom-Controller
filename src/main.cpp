@@ -62,6 +62,12 @@ void loop() {
 	// registered in controls_init() -- see TODO.md.
 	touchSensor.read();
 
+	// Pump the network stack (currently the captive-portal DNS server).
+	// No-op when WiFi is not active.
+#if defined(HAS_WIFI)
+	network_loop();
+#endif
+
 	// Heartbeat blink on the on-board LED. LED_BUILTIN resolves to:
 	//   - GP25 on Pico / Pico-W (green)
 	//   - GP64 on Pico 2 W (green)
