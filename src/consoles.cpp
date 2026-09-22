@@ -49,6 +49,14 @@ static const char CONFIG_JSON[] PROGMEM = R"({
 })";
 
 int currentConsoleIndex = 0;
+// millis() at the moment we last decided on the current console
+// (i.e. immediately after wraparoundNext() resolves in advanceConsole()
+// / rewindConsole()). Used by GET /state.json to surface
+// `selectedAtUptimeMs` so the e2e harness can verify the device
+// actually moved (delta changes) without trusting response codes.
+// RAM-only; resets to 0 on every boot (RP2350 .bss is zeroed by crt0
+// on every boot, warm or cold -- same lifetime as currentConsoleIndex).
+uint32_t currentConsoleSelectedAtMs = 0;
 std::vector<Console> consoles;
 
 void addConsole(const Console& console) {
@@ -153,6 +161,11 @@ void advanceConsole() {
 		return;
 	}
 	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, +1);
+	// Stamp the selection time at-the-moment-of-decision (after
+	// wraparoundNext but before any side effects / WS broadcast) so the
+	// e2e harness can read `selectedAtUptimeMs` from /state.json and
+	// assert the device actually moved (delta changes across calls).
+	currentConsoleSelectedAtMs = millis();
 	Serial.print("Button: advance -> index ");
 	Serial.println(currentConsoleIndex);
 	const Console& c = CurrentConsole();
@@ -189,6 +202,10 @@ void rewindConsole() {
 		return;
 	}
 	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, -1);
+	// Stamp the selection time at-the-moment-of-decision (after
+	// wraparoundNext but before any side effects / WS broadcast) -- same
+	// contract as advanceConsole(). See comment there.
+	currentConsoleSelectedAtMs = millis();
 	Serial.print("Button: rewind -> index ");
 	Serial.println(currentConsoleIndex);
 	const Console& c = CurrentConsole();

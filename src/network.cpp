@@ -482,6 +482,15 @@ static void onHealthcheck(AsyncWebServerRequest* req) {
 // WS message in the same call, so any connected UI sees the change
 // without having to poll.
 static void onConsoleNext(AsyncWebServerRequest* req) {
+	// Guard against advancing into an empty vector. CurrentConsole()
+	// dereferences operator[] which is UB on size 0; surface 409
+	// with a typed error so the harness can distinguish "no config
+	// uploaded yet" from a real HTTP failure.
+	if (consoles.empty()) {
+		req->send(409, "application/json",
+		          "{\"error\":\"no consoles configured\"}\n");
+		return;
+	}
 	advanceConsole();
 	// 200 OK with the current state -- lets the test script
 	// confirm the device actually advanced without a second
@@ -492,6 +501,11 @@ static void onConsoleNext(AsyncWebServerRequest* req) {
 }
 
 static void onConsolePrev(AsyncWebServerRequest* req) {
+	if (consoles.empty()) {
+		req->send(409, "application/json",
+		          "{\"error\":\"no consoles configured\"}\n");
+		return;
+	}
 	rewindConsole();
 	String out = "{\"index\":" + String(currentConsoleIndex) +
 	             ",\"name\":\"" + CurrentConsole().name.c_str() + "\"}\n";
@@ -499,11 +513,31 @@ static void onConsolePrev(AsyncWebServerRequest* req) {
 }
 
 static void onStateJson(AsyncWebServerRequest* req) {
-	StaticJsonDocument<256> doc;
+	// Surface enough state that the e2e harness can verify every
+	// assertion from one round-trip:
+	//   index/name           -- current console
+	//   total                -- how many consoles are loaded (lets
+	//                            the harness distinguish "no config"
+	//                            from "config has one console")
+	//   ledOn / flash / mode -- UI status (unchanged)
+	//   uptimeMs             -- millis() at the time this handler ran,
+	//                            so the harness can compute time deltas
+	//   selectedAtUptimeMs   -- millis() at the moment of the most
+	//                            recent /next or /prev decision (set
+	//                            in advanceConsole()/rewindConsole()
+	//                            in src/consoles.cpp). Asserting that
+	//                            this value CHANGES across calls is the
+	//                            harness's TDD proof that the device
+	//                            actually advanced -- not just that the
+	//                            HTTP response code was 2xx.
+	StaticJsonDocument<384> doc;
 	doc["index"]   = currentConsoleIndex;
+	doc["total"]   = HowManyConsoles();
 	doc["name"]    = CurrentConsole().name.c_str();
 	doc["ledOn"]   = statusLedActive != 0x0;
 	doc["flash"]   = flash;
+	doc["uptimeMs"]           = (unsigned long)millis();
+	doc["selectedAtUptimeMs"] = (unsigned long)currentConsoleSelectedAtMs;
 	const char* mode = inApMode ? "ap" : "sta";
 	doc["mode"]    = mode;
 	String out;
@@ -527,6 +561,53 @@ static void onWifiJson(AsyncWebServerRequest* req) {
 	req->send(200, "application/json", out);
 }
 
+// /consoles.json GET: serve the live console config back to the
+// caller verbatim. Used by the e2e harness to verify the POST
+// actually landed on disk (byte-equality, not a JSON re-serialize
+// round-trip). Three response shapes:
+//   200 + raw bytes   -- file present, served byte-for-byte from
+//                          LittleFS (the same bytes POST /consoles.json
+//                          wrote via File.print())
+//   204 + empty body  -- file missing (factory-fresh device)
+//   500 + JSON error  -- LittleFS mount failed; the operator should
+//                          investigate (FS corruption, missing
+//                          partition, etc.)
+//
+// Why raw bytes instead of re-serializing through ArduinoJson on the
+// read path: ArduinoJson v7's serializeJson is NOT byte-stable with
+// the POST input -- it minifies whitespace, escapes non-ASCII via
+// \uXXXX, reformats numeric fields, etc. The TDD harness's "POST a
+// config and read it back" assertion would flake on every change to
+// either formatter. The cleanest fix is to never touch the bytes:
+// the POST handler calls f.print(payload) verbatim, the GET handler
+// reads them back with loadLiveConsoleConfig() and ships them
+// verbatim. Round-trip is trivially byte-identical.
+static void onConsolesJsonGet(AsyncWebServerRequest* req) {
+	if (!retroroom_store::ensureMounted()) {
+		Serial.println("net: GET /consoles.json -- LittleFS mount failed");
+		req->send(500, "application/json",
+		          "{\"error\":\"fs mount failed\"}\n");
+		return;
+	}
+	std::string fs_json;
+	if (!retroroom_store::loadLiveConsoleConfig(fs_json)) {
+		// File missing -- 204 with empty body. Distinct from 500 so
+		// the harness can assert "fresh device, no config yet" vs
+		// "FS broken".
+		req->send(204);
+		return;
+	}
+	// Ship raw bytes. Use the len-aware send() overload so we don't
+	// have to guarantee a trailing NUL (loadLiveConsoleConfig does
+	// not NUL-terminate). The (const uint8_t*, size_t) overload is
+	// the byte-oriented form; the (const char*, size_t) overload
+	// doesn't exist in this ESPAsyncWebServer build (it treats const
+	// char* as NUL-terminated even when len is given).
+	req->send(200, "application/json",
+	          reinterpret_cast<const uint8_t*>(fs_json.c_str()),
+	          fs_json.size());
+}
+
 static void startStaServer() {
 	// Wire routes.
 	server.on("/", HTTP_GET, onRoot);
@@ -545,7 +626,11 @@ static void startStaServer() {
 	server.on("/next", HTTP_GET, onConsoleNext);
 	server.on("/prev", HTTP_GET, onConsolePrev);
 
-	// /consoles.json POST: accept a JSON body from an external service,
+	// /consoles.json GET: route registration. The handler itself
+	// (onConsolesJsonGet) lives in the STA-mode section above so
+	// it's a sibling of onStateJson / onConsoleNext / etc. We
+	// register it here, alongside the POST registration below.
+// /consoles.json POST: accept a JSON body from an external service,
 	// validate it via the functional core, save it to LittleFS with two
 	// rolling backups, then schedule a reboot so the next boot picks up
 	// the new config.
@@ -580,6 +665,16 @@ static void startStaServer() {
 	auto consolesJsonOnBody = [kMaxBodyBytes](AsyncWebServerRequest* req,
 	                                          uint8_t* data, size_t len,
 	                                          size_t index, size_t total) {
+		// Method guard: the same path is registered for both GET and
+		// POST. ESPAsyncWebServer fires onBody for any request with a
+		// Content-Length header -- including a GET that sent
+		// `Content-Length: 0`. Without this guard the GET would write
+		// zero bytes into a tempObject, then onRequest would 400 on
+		// "empty body" and the GET would 500 instead of returning the
+		// live config.
+		if (req->method() != HTTP_POST) {
+			return;
+		}
 		// Reject oversized uploads up front so we never allocate a
 		// pathologically large buffer. This matches the read-side
 		// cap in consoleconfig_store.cpp -- the device can't read
@@ -622,6 +717,12 @@ static void startStaServer() {
 		}
 	};
 	auto consolesJsonOnRequest = [](AsyncWebServerRequest* req) {
+		// Method guard (defense in depth -- onBody already short-
+		// circuits non-POST, but if a future refactor changes the
+		// chain order we still want POST-only validation here).
+		if (req->method() != HTTP_POST) {
+			return;
+		}
 		// The onBody middleware ran first and stashed the raw body
 		// in _tempObject. If it's NULL here, the request either had
 		// no body or the middleware aborted it -- either way, we
@@ -688,6 +789,13 @@ static void startStaServer() {
 		Serial.print("net: /consoles.json reboot scheduled at millis()=");
 		Serial.println(g_pendingConsoleConfigRebootAt);
 	};
+	// GET /consoles.json -- read-back. Same path as the POST below;
+	// the POST's onBody middleware has a method guard so a GET with
+	// Content-Length: 0 doesn't accidentally write zero bytes into
+	// a tempObject. See onConsolesJsonGet above for the response
+	// shapes (200 raw bytes / 204 missing / 500 mount failed).
+	server.on("/consoles.json", HTTP_GET, onConsolesJsonGet);
+
 	// server.on(uri, method, onRequest) returns a reference to the
 	// underlying AsyncCallbackWebHandler so we can chain an onBody
 	// middleware onto it. This is the same pattern AsyncJson.cpp
@@ -860,12 +968,26 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
 					// made the WS flash path look like a no-op.
 					flashLed();
 				} else if (msg == "next") {
+					// Empty-vector guard: a WS-driven /next on a device
+					// with no consoles loaded would otherwise UB inside
+					// CurrentConsole() (via the WS broadcast that fires
+					// after the advance). Broadcast a noop marker so
+					// connected UIs can keep their state in sync without
+					// polling.
+					if (consoles.empty()) {
+						cli->text("console:noop");
+						break;
+					}
 					// Same shell function as HTTP /next. The "console:..."
 					// broadcast inside advanceConsole() fans out to all
 					// connected clients, so the originating socket sees
 					// the change in the same message stream.
 					advanceConsole();
 				} else if (msg == "prev") {
+					if (consoles.empty()) {
+						cli->text("console:noop");
+						break;
+					}
 					rewindConsole();
 				} else if (msg == "healthcheck") {
 					// No hardware side effect, just ack so the client

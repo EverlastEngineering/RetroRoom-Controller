@@ -7,6 +7,10 @@
 #include <vector>
 
 extern std::vector<Console> consoles;
+// millis() at the moment we last decided on the current console.
+// RAM-only (zeroed on every boot along with currentConsoleIndex).
+// Exposed so GET /state.json can surface `selectedAtUptimeMs`.
+extern uint32_t currentConsoleSelectedAtMs;
 
 void addConsole(const Console& console);
 int HowManyConsoles();

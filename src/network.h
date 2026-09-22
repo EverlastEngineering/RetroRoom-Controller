@@ -22,10 +22,16 @@
 //   GET  /ledOn        -> turn the on-board LED on; sends "ledOn" over WS
 //   GET  /ledOff       -> turn the on-board LED off; sends "ledOff" over WS
 //   GET  /flash        -> toggle the flash state; sends "flash" over WS
-//   GET  /next         -> wrap-around advance (forward); returns JSON {index,name}; broadcasts "console:<name>:<idx>" over WS
-//   GET  /prev         -> wrap-around rewind (backward); same JSON + WS broadcast shape as /next
+//   GET  /next         -> wrap-around advance (forward); returns JSON {index,name}; broadcasts "console:<name>:<idx>" over WS; 409 if no consoles configured
+//   GET  /prev         -> wrap-around rewind (backward); same JSON + WS broadcast shape as /next; 409 if no consoles configured
 //   GET  /healthcheck  -> "OK\n"
-//   GET  /state.json   -> JSON of current state for polling fallback
+//   GET  /state.json   -> JSON of current state for polling fallback. Fields:
+//                         index, total, name, ledOn, flash, mode ("sta"|"ap"),
+//                         uptimeMs (millis() at handler time),
+//                         selectedAtUptimeMs (millis() at last /next|/prev decision)
+//   GET  /consoles.json-> read-back of the live config file. 200 + raw bytes if present
+//                         (byte-identical to what POST /consoles.json wrote),
+//                         204 if file missing, 500 if LittleFS mount failed.
 //   POST /consoles.json-> accept a console-config JSON body, validate it, save to LittleFS with two backups, reboot (see src/network.cpp for details)
 //   GET  /setup        -> SoftAP-only: HTML form to set SSID + password
 //   POST /setup        -> SoftAP-only: write creds to LittleFS, reboot
