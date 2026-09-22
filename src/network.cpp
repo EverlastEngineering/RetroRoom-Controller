@@ -78,6 +78,18 @@ unsigned long        dnsSuspendedAt = 0; // millis() when /debug/dns-off was hit
 // RPAsyncTCP, and even single-threaded it's a cheap guarantee.
 std::atomic<uint32_t> g_factoryResetNonce(0);
 
+// Pending reboot timestamp for /factory-reset. The POST handler sends
+// the success page, sets this to millis()+kFactoryResetRebootDelayMs,
+// and returns. network_loop() watches the flag and triggers
+// rp2040.restart() once the deadline passes -- giving the AsyncTCP
+// stack plenty of time to flush the response before the device goes
+// down. Calling rp2040.restart() directly from the request handler is
+// racy: the TCP send buffer hasn't necessarily drained by the time
+// we restart, so the user gets a spinner + timeout instead of the
+// "Resetting now!" page.
+static constexpr unsigned long kFactoryResetRebootDelayMs = 1500;
+volatile unsigned long g_pendingFactoryResetRebootAt = 0;
+
 // Boot-time scan cache. Populated by network_scan_cache() before the
 // AP comes up (the CYW43 cannot scan while a client is associated, so
 // this has to run pre-AP). /scan.json serves from this array; no
@@ -582,16 +594,73 @@ static void startStaServer() {
 		// can't be re-submitted by a browser-back-then-forward.
 		g_factoryResetNonce.store(0);
 
-		Serial.println("net: /factory-reset POST -- nonce OK, wiping /wifi.json and rebooting");
+		Serial.println("net: /factory-reset POST -- nonce OK, wiping /wifi.json and scheduling reboot");
 		if (LittleFS.begin()) {
 			LittleFS.remove(kWifiConfigPath);
 		}
-		req->send(200, "text/html",
-		          "<html><body style=\"font-family:sans-serif;text-align:center;margin-top:4em\">"
-		          "<h2>Reset.</h2><p>Rebooting into setup mode&hellip;</p>"
-		          "</body></html>");
-		delay(500);
-		rp2040.restart();
+
+		// Build a "resetting now" page that includes a link back to
+		// the device's eventual SoftAP root once the reboot lands.
+		// The link points to the well-known captive-portal IP
+		// (192.168.4.1) which the device will be serving on once it
+		// comes back up in SoftAP mode -- the user's laptop will
+		// likely still be on the old network at this point so a
+		// relative "/" would 404. After the device reboots and
+		// starts its SoftAP, the operator reconnects to
+		// "RetroRoom-Setup" and the link works.
+		//
+		// The page also includes a small auto-refresh meta tag so
+		// the browser will attempt to reconnect on its own once the
+		// AP comes back -- helps the operator who walks away and
+		// comes back to find the page already showing the new state.
+		String page;
+		page.reserve(700);
+		page += "<!DOCTYPE html><html><head>";
+		page += "<meta name=\"viewport\" "
+		        "content=\"width=device-width,initial-scale=1\">";
+		page += "<meta http-equiv=\"refresh\" content=\"10;url=http://192.168.4.1/\">";
+		page += "<title>Resetting&hellip;</title>";
+		page += "<style>body{font-family:-apple-system,BlinkMacSystemFont,"
+		        "Segoe UI,sans-serif;max-width:420px;margin:3em auto;"
+		        "padding:0 1em;color:rgb(34,34,34);line-height:1.4;text-align:center}";
+		page += "h2{margin:0 0 .25em}p{color:rgb(68,68,68)}";
+		page += "a{color:rgb(10,132,255);font-weight:600;text-decoration:none}";
+		page += ".spinner{display:inline-block;width:1.2em;height:1.2em;"
+		        "border:.18em solid rgb(136,136,136);border-top-color:transparent;"
+		        "border-radius:50%;animation:spin .9s linear infinite;"
+		        "vertical-align:middle;margin-right:.5em}";
+		page += "@keyframes spin{to{transform:rotate(360deg)}}";
+		page += "</style></head><body>";
+		page += "<h2>Resetting now!</h2>";
+		page += "<p><span class=\"spinner\"></span>WiFi credentials erased. "
+		        "The device is rebooting into setup mode&hellip;</p>";
+		page += "<p>When the on-board LED blinks steadily, reconnect your "
+		        "computer to <code>RetroRoom-Setup</code> and open "
+		        "<a href=\"http://192.168.4.1/\">http://192.168.4.1/</a> "
+		        "to configure WiFi again.</p>";
+		page += "<p style=\"font-size:.85em;color:rgb(136,136,136);margin-top:2em\">"
+		        "This page will refresh automatically in 10 seconds.</p>";
+		page += "</body></html>";
+
+		AsyncWebServerResponse* resp = req->beginResponse(200, "text/html", page);
+		// Same no-store directive as the GET -- we don't want the
+		// browser to cache this success page; the next time it
+		// loads /factory-reset it must re-render the confirmation
+		// form (and get a fresh nonce).
+		resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+		resp->addHeader("Pragma", "no-cache");
+		req->send(resp);
+
+		// Schedule the reboot kFactoryResetRebootDelayMs from now.
+		// Do NOT call rp2040.restart() in the handler: req->send()
+		// is asynchronous on AsyncWebServer (it queues the response
+		// onto the lwIP TCP context) and a 500 ms delay in the
+		// handler was racing the send buffer. The user would see a
+		// spinner until the browser timed out instead of the
+		// success message. network_loop() now handles the reboot from
+		// the main loop context, after the response has had time
+		// to drain.
+		g_pendingFactoryResetRebootAt = millis() + kFactoryResetRebootDelayMs;
 	});
 
 	ws.onEvent(onWsEvent);
@@ -734,6 +803,19 @@ void network_loop() {
 		Serial.println("net: dns catch-all auto-restarted after 60 s");
 	}
 	dnsServer.processNextRequest();
+
+	// Pending /factory-reset reboot. The POST handler sent the
+	// "Resetting now!" page, then scheduled this; we trigger the
+	// restart from the main loop so the TCP send buffer has time
+	// to drain before we go down. Doing the restart in the request
+	// handler was racy -- the user saw a spinner until the browser
+	// timed out instead of the success message.
+	if (g_pendingFactoryResetRebootAt &&
+	    (long)(millis() - g_pendingFactoryResetRebootAt) >= 0) {
+		g_pendingFactoryResetRebootAt = 0;
+		Serial.println("net: factory-reset reboot firing now");
+		rp2040.restart();
+	}
 }
 
 #endif  // HAS_WIFI
