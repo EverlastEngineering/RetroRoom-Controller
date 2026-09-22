@@ -533,7 +533,17 @@ static void onStateJson(AsyncWebServerRequest* req) {
 	StaticJsonDocument<384> doc;
 	doc["index"]   = currentConsoleIndex;
 	doc["total"]   = HowManyConsoles();
-	doc["name"]    = CurrentConsole().name.c_str();
+	// Empty-vector guard: CurrentConsole() dereferences operator[]
+	// on a possibly-empty vector (UB on size 0). When no consoles
+	// are configured (factory-fresh device, POST empty.json, etc.)
+	// surface name="" and index=0 so the harness can read the state
+	// without crashing the request handler. total=0 is the canonical
+	// "no consoles" signal the harness asserts on.
+	if (!consoles.empty()) {
+		doc["name"]    = CurrentConsole().name.c_str();
+	} else {
+		doc["name"]    = "";
+	}
 	doc["ledOn"]   = statusLedActive != 0x0;
 	doc["flash"]   = flash;
 	doc["uptimeMs"]           = (unsigned long)millis();
