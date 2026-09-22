@@ -90,3 +90,47 @@ Even if AsyncWebSocket isn't available on RP2350/CYW43, the polling-based state.
 - [src/network.{h,cpp}](../../src/network.{h,cpp}) — the implementation anchor.
 - [src/html/index.html](../../src/html/index.html), [src/html/script.js](../../src/html/script.js) — the legacy UI.
 - [LOG.md](../../LOG.md) — historical decisions (the ESP8266 webserver is gone as of `c6005c7`, this is the rebuild).
+
+## Gotchas discovered during Phase A
+
+### RP2350 BOOTSEL stays mounted after UF2 write
+
+Unlike the RP2040 (where writing a UF2 auto-ejects the volume and reboots
+into the firmware), the RP2350 bootloader keeps the `/Volumes/RP2350`
+mass-storage volume mounted until something explicitly exits BOOTSEL:
+
+- A physical button press (BOOTSEL or RESET) on the board
+- A USB cable unplug + re-plug
+- A 1200-baud reset sequence over USB-CDC from the host (open + close the
+  serial port at 1200 bps with `exclusive=True`; some macOS hosts need
+  this dance to actually trigger the bootloader)
+
+If `/Volumes/RP2350` appears immediately on power-up, the chip is in
+BOOTSEL — flash a UF2 and exit BOOTSEL via one of the methods above to
+boot into firmware.
+
+### RP2350 CDC-ACM buffer flush
+
+Earle Philhower's `rpipico2w` board target builds a USB-CDC ACM that
+**drops writes issued before the host opens the port**. This means:
+
+- The firmware's `setup()` can print a dozen `Serial.println()` calls
+  before the host connects, and none of them will arrive at the
+  reader. Looks like a wedge but isn't.
+- Once the host is open, subsequent prints flow normally.
+- `while (!Serial ... < 3000)` in setup() (with a 3 s ceiling so the
+  firmware boots unattended) lets the firmware block on the host
+  opening. Anything *after* the wait makes it through.
+
+Capture pattern that works reliably on macOS:
+1. Force BOOTSEL via 1200-baud reset.
+2. Wait for `/Volumes/RP2350` to mount.
+3. `cp` the UF2.
+4. Wait for `/dev/cu.usbmodem*` to enumerate (the firmware's CDC-ACM
+   instance — happens after the bootloader exits).
+5. Open the port immediately and read for ~6 s. The trailing
+   `Setup Complete.` makes it through; everything before is lost.
+
+A 1 Hz heartbeat blink on `LED_BUILTIN` (commit `a3408be`) is the
+failsafe: if the on-board LED blinks, the firmware ran past
+`pinMode(LED_BUILTIN, OUTPUT)` in `setup()`.
