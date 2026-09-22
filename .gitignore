@@ -3,3 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# agent-script transient outputs (the scripts themselves are tracked)
+agent-script/*.log
+/tmp/pio_upload_monitor.log

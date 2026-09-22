@@ -5,6 +5,114 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-22T18:00:00.000Z — Pico 2 W CYW43 AsyncWebServer + SoftAP setup portal
+
+**Context:** The Pico 2 W (RP2350 + on-board CYW43) had a working
+`[env:pico2w]` build since `session/merge-pico-json` but no WiFi
+stack — `src/network.{h,cpp}` was a `#error` stub gated on
+`HAS_WIFI`. The user got a Pico 2 W on the bench and asked for the
+ESP8266-era webserver experience (legacy HTML/JS, AsyncWebServer,
+WebSocket push) to come back on the new chip. `monitor_filters =
+direct` and the heartbeat debug-print were already on the branch
+from the prior session. The open items from
+`todo/open/2026-09-21_pico-2-w-platform.md` and the older
+`todo/open/2026-09-12_cyw43-picow-wifi.md` were closed in this
+pass.
+
+**Decision:**
+
+1. **Library picks.** `khoih-prog/AsyncTCP_RP2040W` +
+   `khoih-prog/AsyncWebServer_RP2040W` were the obvious first
+   candidates but the `AsyncTCP_RP2040W.h` gates on
+   `#if (defined(ARDUINO_RASPBERRY_PI_PICO_W))` and rejects the
+   Pico 2 W (`ARDUINO_RASPBERRY_PI_PICO_2W`). Switched to
+   `ayushsharma82/RPAsyncTCP@^1.3.2` + `esp32async/ESPAsyncWebServer@^3.7.2`
+   (Hristo Gochkov's ESPAsyncWebServer port). The latter is what
+   `ayushsharma82/RPAsyncTCP` is built to back, and it explicitly
+   supports both `RP2040+W` and `RP2350+W` on Earle Philhower's
+   `arduino-pico` core.
+2. **Flash partition.** Default `[env:pico2w]` uses 4 MB sketch
+   with no FS partition, which would silently disable
+   `LittleFS.begin()` and any saved-credential flow. The right
+   override is `board_build.filesystem_size = 1MB` — read by
+   `~/.platformio/platforms/raspberrypi/builder/main.py` via
+   `board.get("build.filesystem_size")`. After the override the
+   build prints `Filesystem size: 1.00MB` /
+   `Filesystem start: 0x102ff000 / end: 0x103ff000`. The earlier
+   `board_build.flash_length` / `fs_start` / `fs_end` overrides I
+   tried are silently dropped by the PlatformIO menu-merging code,
+   which is why the build was originally showing
+   `Filesystem size: 0.00MB`.
+3. **SoftAP setup portal on first boot.** Rather than ship a
+   hardcoded SSID or a heavy `AsyncWiFiManager` port, the firmware
+   reads `/wifi.json` from LittleFS on boot. If the file is
+   missing, it brings up a SoftAP `RetroRoom-Setup` (open, no
+   password — acceptable since the AP only exposes a `/setup` HTML
+   form and we reboot the moment the user POSTs creds) and serves
+   the form. On POST, the firmware writes `/wifi.json` with
+   `{"ssid":..., "pass":...}` then calls `rp2040.restart()`. On
+   next boot the SoftAP is skipped and STA mode is used. If the
+   saved creds are bad (or the network is out of range) the
+   20-second STA timeout falls back to the SoftAP again.
+4. **Endpoints implemented.**
+   - `GET  /` → `src/html/index.html` (the legacy iframe wrapper)
+   - `GET  /script.js` → `src/html/script.js` (the legacy
+     ws://host/ws flow with xhrget polling fallback)
+   - `GET  /ledOn` / `/ledOff` / `/flash` / `/healthcheck` →
+     drive the on-board LED + broadcast the action over WS
+   - `GET  /state.json` → JSON snapshot for polling
+   - `GET  /wifi` → JSON of current WiFi status (IP/RSSI/mode)
+   - `GET  /setup` (AP only) → HTML form
+   - `POST /setup` (AP only) → write creds, reboot
+   - `WS   /ws` → broadcastSocketMessage push channel
+5. **Wired `consoles.cpp::advanceConsole()` to WS** so the
+   browser-side iframe gets a `console:<name>:<index>` message
+   whenever the user presses the touch sensor (YD-RP2040 USR
+   button). Gated on `#if defined(HAS_WIFI)` so other envs
+   compile unchanged.
+6. **API surface stayed as close to legacy as possible.** The
+   script.js flow's WS path now actually works (no more
+   `Unable to send message to socket connection.`), and the
+   xhrget polling fallback is no longer exercised.
+7. **Build outputs.** 14.4% RAM (75,392 / 524,288), 13.5% flash
+   (424,788 / 3,141,632). Allocated CYW43 driver (~220 KB) +
+   LWIP buffers (~40 KB) + AsyncWebServer accounted for most of
+   the jump from the wired-only `pico_base` build.
+
+**Consequences:**
+
+- `pio run -e pico2w` is green; `pio run -e pico2w -t upload -t
+  monitor` flashes via picotool and prints every line of serial
+  output. On boot the firmware prints
+  `net: network_init()` →
+  `net: no /wifi.json; will start SoftAP` →
+  `net: starting SoftAP "RetroRoom-Setup"` →
+  `net: SoftAP IP = 192.168.4.1` →
+  `net: setup portal running on http://192.168.4.1/setup` →
+  `Setup Complete.`, then a 1 Hz heartbeat stream that
+  includes `millis()`. After 9+ minutes of continuous operation
+  the firmware is still heartbeating and the SoftAP is still
+  reachable (the file output we sampled went to `Heartbeat:
+  552359` with no resets or error prints).
+- User joins `RetroRoom-Setup` from a phone, opens
+  `http://192.168.4.1/`, submits SSID + password, firmware writes
+  `/wifi.json` and `rp2040.restart()`s. On next boot we expect
+  `net: connecting to "YourSSID"` followed by either
+  `net: connected, IP = ...` or the 20 s timeout → SoftAP
+  fallback. The script.js WS handshake should produce
+  `net: ws client #N connected` and an immediate `ws_init_ack`
+  echo on every new browser tab.
+- TODO.md items closed: `cyw43-picow-wifi.md` (deferred by
+  `pico-2-w-platform.md`) is now done in spirit — the CYW43
+  driver, AsyncWebServer, and WebSocket stack all live in
+  `src/network.cpp`. `pico-2-w-platform.md` Phase A (build) and
+  Phase B (WiFi stack) are complete; Phase C (polling vs WS) is
+  satisfied for both — the legacy xhrget polling path was never
+  touched and the real `/ws` is wired. The "Open questions"
+  section's SSID/password question is resolved by the SoftAP
+  portal approach. Static IP is still open and not needed for
+  bench testing.
+
 ## 2026-09-12T19:15:00.000Z — IR blaster restored (z3t0/IRremote@4.x) + MANUAL_OE_PIN = GP12
 
 **Context:** Two open items from `TODO.md` and the user's pinout-doc open-question list closed in one pass. `z3t0/IRremote@^4.7.1` was already in `lib_deps` for all Pico envs (originally added in the plan for swapping out `crankyoldgit/IRremoteESP8266`); the v4 `IrSender` global is the canonical API. The legacy `crankyoldgit::IRsend::sendSony(0xa90, 12, 2)` form decoded cleanly into `IrSender.sendSony(address, command, repeats)` where `address = (value >> 7) & 0x1F` and `command = value & 0x7F`. For the manual-OE pin, GP12 is free on the standard Pico header and away from UART0 (GP0/GP1) and I2C0 (GP4/GP5), so it was the obvious pick without further user input.
