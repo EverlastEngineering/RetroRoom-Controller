@@ -52,6 +52,12 @@ extern void broadcastSocketMessage(const std::string& message);
 // know when to start advertising the IP and by console advance to
 // broadcast the change.
 extern bool network_isUp();
+// True iff the device has joined a wifi network in STA mode (i.e.
+// is configured and online). False while in SoftAP / captive-portal
+// mode or before network_init() has run. Used by the on-board LED
+// state machine to distinguish the "needs wifi config" (fast flash)
+// convention from the "online and happy" (slow blink) convention.
+extern bool network_inStaMode();
 
 #endif // HAS_WIFI
 #endif

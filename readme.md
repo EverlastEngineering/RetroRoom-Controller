@@ -25,6 +25,7 @@ The reason for wanting the UI hosted on the web and not served locally was so I 
 - [x] Modified capacitive touch sensor which is attached to the ground of the rotary encode. Combined with a metal knob on the encoder, this allows the system to light LEDs as your hand nears or touches the knob.
 - [x] FastLED library for LED control of strips as well as a ring of LEDS around the encoder, to show a rotation effect.
 - [x] Add favicon.ico
+- [x] On-board LED status convention — fast flash (1 Hz) means "needs wifi config", slow blink (~3 s period) means "online and happy". See [pico-pin-mapping.md § 1a](pico-pin-mapping.md#1a-on-board-led-blink-convention).
 
 ## To Do
 

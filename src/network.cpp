@@ -114,6 +114,7 @@ void network_loop();
 // ---------- public API ----------
 
 bool network_isUp() { return networkUp; }
+bool network_inStaMode() { return networkUp && !inApMode; }
 
 // network_scan_cache -- synchronous STA-mode scan, must be called
 // BEFORE the AP comes up. The CYW43 radio cannot scan while a client

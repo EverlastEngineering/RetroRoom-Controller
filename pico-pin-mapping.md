@@ -35,6 +35,37 @@ as the codebase uses it today:
 
 ---
 
+## 1a. On-board LED blink convention
+
+`LED_BUILTIN` (GP25 on Pico / Pico-W / YD-RP2040, GP64 on Pico 2 W) is
+wired active-high — driving `HIGH` lights it, `LOW` turns it off. The
+firmware drives it via `state.cpp::setLed()` (solid on / off) and
+`state.cpp::flashLedTick()` (per-loop blink, called from
+`main.cpp::loop()`). `flashLedTick()` picks its cadence from the
+network state, giving the operator a clear visual status from across
+the room:
+
+| Cadence                                    | Meaning                                       | How to recover                         |
+| ------------------------------------------ | --------------------------------------------- | -------------------------------------- |
+| **Fast flash** (1 Hz, 500 ms on/off)       | **Needs wifi config.** SoftAP / captive-portal mode or no wifi configured. | Connect to `RetroRoom-Setup`, fill in `/setup`. |
+| **Slow blink** (~3 s period, 250 ms pulse, 2750 ms gap) | **Online and happy.** STA mode with an IP, server running, waiting for UI commands. | (no action — this is the healthy state) |
+| **Solid ON**                               | Manual `ledOn()` (e.g. `/ledOn`, WS `ledOn`).  | `/ledOff` to return to idle.           |
+| **Solid OFF**                              | Manual `ledOff()` (e.g. `/ledOff`, WS `ledOff`). | `/ledOn` to return to idle.           |
+
+The `flash` flag is the source of truth for the blink driver:
+`flash=true` enables the cadence (fast or slow depending on
+`network_inStaMode()`); `flash=false` idles the LED on whatever
+`setLed()` last wrote. `ledOn()` / `ledOff()` and the `/flash`
+handler all clear `flash` when the operator takes manual control, so
+the LED immediately stops blinking and pins to the solid state.
+
+The fast-vs-slow convention lets the operator tell at a glance
+whether the device needs wifi config without opening the serial
+monitor: a fast flash means "go to `/setup`," a slow blink means
+"everything is fine."
+
+---
+
 ## 2. Raspberry Pi Pico — perfboard target
 
 This is the wiring the codebase currently expects on a Pico running off

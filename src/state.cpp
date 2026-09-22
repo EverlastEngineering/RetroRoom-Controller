@@ -59,21 +59,31 @@ void flashLed() {
 }
 
 void flashLedTick() {
-	// ~1 Hz blink (500 ms on / 500 ms off). Same cadence as the old
-	// heartbeat in main.cpp::loop(), which was the only thing that
-	// ever actually drove LED_BUILTIN while flashing. Cheap: one
-	// millis() compare and one digitalWrite per tick.
+	// On-board LED blink driver. Two cadences picked automatically
+	// by network state:
+	//   fast flash (500 ms on / 500 ms off): "needs wifi config" --
+	//     SoftAP / captive-portal mode or no wifi configured. The
+	//     operator can tell at a glance that the device hasn't
+	//     joined a network yet.
+	//   slow blink (250 ms on / 2750 ms off, ~3 s period): "online
+	//     and happy" -- STA mode with an IP, server running, waiting
+	//     for UI commands. Replaces the legacy 1 Hz heartbeat from
+	//     main.cpp::loop(); slow + asymmetric makes the heartbeat
+	//     visually distinct from the "needs config" flash while
+	//     still being a clear "alive" signal.
+	// The /ledOn / /ledOff / /flash handlers set `flash = false`
+	// when the operator takes manual control; this driver then
+	// idles and the LED follows whatever setLed() last wrote.
 	static unsigned long lastBlink = 0;
 	static bool ledState = false;
 	if (!flash) {
-		// Idle. Reset the phase so re-enabling starts cleanly from
-		// the "on" half of the cycle (matches what flashLed() sets
-		// when it engages).
 		lastBlink = 0;
 		ledState = false;
 		return;
 	}
-	if (millis() - lastBlink < 500) {
+	const unsigned long halfPeriodMs =
+		network_inStaMode() ? 2750UL : 500UL;
+	if (millis() - lastBlink < halfPeriodMs) {
 		return;
 	}
 	lastBlink = millis();
