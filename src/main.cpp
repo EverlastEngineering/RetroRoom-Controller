@@ -53,10 +53,25 @@ void loop() {
 	// registered in controls_init() -- see TODO.md.
 	touchSensor.read();
 
+	// Heartbeat blink on the on-board LED. LED_BUILTIN resolves to:
+	//   - GP25 on Pico / Pico-W (green)
+	//   - GP64 on Pico 2 W (green)
+	//   - GP25 on YD-RP2040 (blue)
+	// 1 Hz toggle (500 ms on / 500 ms off). Provides visual confirmation
+	// that setup() completed past pinMode(LED_BUILTIN, OUTPUT) and that
+	// loop() is running -- even when there's no host attached to read
+	// serial output. Cheap (one digitalWrite + a millis() compare).
+	static unsigned long lastBlink = 0;
+	static bool ledState = false;
+	if (millis() - lastBlink >= 500) {
+		lastBlink = millis();
+		ledState = !ledState;
+		digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
+	}
+
 	// The legacy WS2812 red/green/blue "light cycle" + USR-toggle handler
-	// + diagnostic per-second pin prints + heartbeat blink have all been
-	// removed from loop() on session/merge-pico-json. The lightCycleTick /
-	// lightCycleToggle / lightCycleIsEnabled functions in src/lighting.{h,cpp}
-	// are kept around in case the perfboard ever wants a background pattern.
-	// See TODO.md.
+	// + diagnostic per-second pin prints were removed from loop() on
+	// session/merge-pico-json. The lightCycleTick / lightCycleToggle /
+	// lightCycleIsEnabled functions in src/lighting.{h,cpp} are kept around
+	// in case the perfboard ever wants a background pattern. See TODO.md.
 }
