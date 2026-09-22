@@ -662,6 +662,8 @@ static void startStaServer() {
 		// the main loop context, after the response has had time
 		// to drain.
 		g_pendingFactoryResetRebootAt = millis() + kFactoryResetRebootDelayMs;
+		Serial.print("net: /factory-reset reboot scheduled at millis()=");
+		Serial.println(g_pendingFactoryResetRebootAt);
 	});
 
 	ws.onEvent(onWsEvent);
@@ -811,11 +813,23 @@ void network_loop() {
 	// to drain before we go down. Doing the restart in the request
 	// handler was racy -- the user saw a spinner until the browser
 	// timed out instead of the success message.
-	if (g_pendingFactoryResetRebootAt &&
-	    (long)(millis() - g_pendingFactoryResetRebootAt) >= 0) {
-		g_pendingFactoryResetRebootAt = 0;
-		Serial.println("net: factory-reset reboot firing now");
-		rp2040.restart();
+	//
+	// Read once at the top so the comparison is consistent if
+	// something else were to write the flag mid-iteration. The
+	// guard is `flag != 0` -- an explicit sentinel prevents the
+	// fire-on-zero edge case (which a previous draft using
+	// `(long)(millis() - 0)` would have triggered once millis()
+	// wrapped past zero).
+	if (const unsigned long deadline = g_pendingFactoryResetRebootAt) {
+		Serial.print("net: factory-reset pending; deadline millis()=");
+		Serial.print(deadline);
+		Serial.print(" now=");
+		Serial.println(millis());
+		if ((long)(millis() - deadline) >= 0) {
+			g_pendingFactoryResetRebootAt = 0;
+			Serial.println("net: factory-reset reboot firing now");
+			rp2040.restart();
+		}
 	}
 }
 
