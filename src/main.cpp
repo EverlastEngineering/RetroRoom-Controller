@@ -17,6 +17,15 @@
 // succeeded without having to look at the WS or run any test.
 
 void setup() {
+	// Give the host USB-CDC driver a full second to enumerate and attach
+	// to /dev/cu.usbmodem* before we touch USB at all. On the RP2350
+	// (Pico 2 W) the CDC-ACM buffer discards writes issued before the
+	// host opens the port, so a 1 s pre-begin delay is the cheapest way
+	// to make sure every subsequent Serial.println() actually lands on
+	// the wire. The delay happens before Serial.begin() because the
+	// USB stack init can race with the host-side enumeration.
+	delay(1000);
+
 	// 115200 on Pico native USB-CDC is conventional. On the RP2350 (Pico 2 W)
 	// the CDC-ACM buffer drops writes issued before the host opens the
 	// port, so we wait briefly for a host connection before printing
@@ -66,6 +75,10 @@ void loop() {
 	if (millis() - lastBlink >= 500) {
 		lastBlink = millis();
 		ledState = !ledState;
+		// output millis() to serial so the user can confirm the firmware is running even
+
+		Serial.print("Heartbeat: ");
+		Serial.println(millis());
 		digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
 	}
 

@@ -2,9 +2,14 @@
 
 #include <ConsoleConfig.h>
 
+#include <string>
+
 #include "lighting.h"
 #if defined(HAS_IR)
 #include "ircontrol.h"
+#endif
+#if defined(HAS_WIFI)
+#include "network.h"
 #endif
 #include "stackselector.h"
 
@@ -116,4 +121,15 @@ void advanceConsole() {
 	// wired (e.g. pico_yd with no external LEDs).
 	lightSingle(currentConsoleIndex);
 	selectConsole(c);
+#if defined(HAS_WIFI)
+	// Mirror the change to any connected web UI over WebSocket so the
+	// page doesn't need to poll /state.json to stay in sync.
+	{
+		std::string msg = "console:";
+		msg += c.name;
+		msg += ":";
+		msg += std::to_string(currentConsoleIndex);
+		broadcastSocketMessage(msg);
+	}
+#endif
 }
