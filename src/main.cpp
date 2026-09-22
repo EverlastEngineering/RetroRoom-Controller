@@ -36,13 +36,16 @@ void setup() {
 		delay(10);
 	}
 	pinMode(LED_BUILTIN, OUTPUT);
-	// Default into the flashing state. flashLed() toggles `flash`
-	// (initialised true in state.cpp) and sets MANUAL_OE_PIN to 50%
-	// PWM; the 1 Hz on-board LED blink is then driven from loop()
-	// while `flash` is true. /flash toggles off cleanly; /ledOn and
-	// /ledOff clear `flash` so a solid-state command stops the
-	// blink immediately.
-	flashLed();
+	// Boot into the flashing state. `flash` is initialised true in
+	// state.cpp and the on-board LED blink is then driven from
+	// loop()'s flashLedTick() call. We deliberately don't call
+	// flashLed() here -- flashLed() toggles `flash`, so calling it
+	// once would DISABLE the boot-time flash. The MANUAL_OE_PIN
+	// ring side effect is sacrificed (the operator can hit /flash
+	// once to engage it if they want the ring OE PWM).
+#ifdef MANUAL_OE_PIN
+	analogWrite(MANUAL_OE_PIN, 127);  // ring OE 50% PWM at boot
+#endif
 #if defined(HAS_LEDS)
 	lighting_init();
 #endif

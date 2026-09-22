@@ -15,6 +15,12 @@ int statusLedActive = 0x0;
 // active board configuration, an optional external output-enable line.
 // On boards without MANUAL_OE_PIN (e.g. Raspberry Pi Pico until a perfboard
 // revision defines the pin) the external drive is a no-op.
+//
+// The Pico 2 W on-board LED (LED_BUILTIN = GP64) is wired active-high:
+// driving HIGH lights it, driving LOW turns it off. Same polarity on
+// the Pico / Pico-W (GP25) and YD-RP2040 (GP25). The function names
+// ledOn() / ledOff() are the user-facing API -- they map to HIGH / LOW
+// here so the labels match what the operator sees.
 void setLed(int state) {
 	digitalWrite(LED_BUILTIN, state);
 #ifdef MANUAL_OE_PIN
@@ -30,12 +36,14 @@ void ledOff() {
 	// shape here so the three top-level callers (ledOn/ledOff/
 	// flashLed) all agree on what `flash` means.
 	flash = false;
-	setLed(0x1);
+	// Active-high on-board LED: LOW = dark.
+	setLed(0x0);
 }
 
 void ledOn() {
 	flash = false;
-	setLed(0x0);
+	// Active-high on-board LED: HIGH = lit.
+	setLed(0x1);
 }
 
 void flashLed() {

@@ -417,8 +417,9 @@ static void onLedOff(AsyncWebServerRequest* req) {
 }
 
 static void onFlash(AsyncWebServerRequest* req) {
+	// flashLed() already toggles the `flash` flag; the caller doesn't
+	// do it again. Broadcast the post-toggle state.
 	flashLed();
-	flash = !flash;
 	broadcastSocketMessage(flash ? "flash on" : "flash off");
 	req->send(200, "text/plain", flash ? "flash on\n" : "flash off\n");
 }
@@ -432,7 +433,7 @@ static void onStateJson(AsyncWebServerRequest* req) {
 	StaticJsonDocument<256> doc;
 	doc["index"]   = currentConsoleIndex;
 	doc["name"]    = CurrentConsole().name.c_str();
-	doc["ledOn"]   = statusLedActive == 0x0;
+	doc["ledOn"]   = statusLedActive != 0x0;
 	doc["flash"]   = flash;
 	const char* mode = inApMode ? "ap" : "sta";
 	doc["mode"]    = mode;
@@ -556,8 +557,11 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
 				} else if (msg == "ledOff") {
 					ledOff();
 				} else if (msg == "flash") {
+					// flashLed() already toggles `flash`. The HTTP
+					// /flash handler used to do `flash = !flash`
+					// after flashLed(), which double-toggled and
+					// made the WS flash path look like a no-op.
 					flashLed();
-					flash = !flash;
 				} else if (msg == "healthcheck") {
 					// No hardware side effect, just ack so the client
 					// knows we're alive.
