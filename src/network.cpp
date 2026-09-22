@@ -43,6 +43,9 @@ constexpr const char* kApSsid        = "RetroRoom-Setup";
 constexpr const char* kApPass        = "";  // open AP; acceptable since the SoftAP only
                                             // exposes a /setup form and we reboot immediately
                                             // after the user POSTs.
+constexpr const char* kHostname      = "RetroRoom";  // DHCP hostname -> RetroRoom.local
+                                                       // on mDNS-aware LANs (avoids the
+                                                       // CYW43 default "PicoW").
 constexpr uint8_t     kStaTimeoutSec = 20;
 constexpr uint8_t     kScanCacheMax  = 24; // CYW43 returns at most 24 per scan
 
@@ -428,6 +431,7 @@ static void startApPortal() {
 	// captive portal. STA has no SSID configured so it doesn't
 	// try to join anything -- it just exists for the scan.
 	WiFi.mode(WIFI_AP_STA);
+	WiFi.setHostname(kHostname);  // visible to DHCP clients as "RetroRoom"
 	// Earle's WiFi.softAP(ssid, password) wrapper does
 	//   cyw43_arch_enable_ap_mode(ssid, password, password ? WPA2 : OPEN)
 	// with a pointer-null check, NOT strlen(). Passing "" falls into the
@@ -730,6 +734,10 @@ void network_init() {
 	Serial.print(ssid);
 	Serial.println("\"");
 	WiFi.mode(WIFI_STA);
+	// Set the DHCP hostname before WiFi.begin() so the mDNS / router
+	// shows "RetroRoom" (not "PicoW") on the LAN. The CYW43 default
+	// is "PicoW" on Pico-W variants and similar on Pico 2 W.
+	WiFi.setHostname(kHostname);
 	WiFi.begin(ssid.c_str(), pass.c_str());
 
 	unsigned long start = millis();
