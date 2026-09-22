@@ -29,6 +29,7 @@
 #include <pico/cyw43_arch.h>
 #include <cyw43.h>
 #include <functional>
+#include <atomic>
 
 #include "html.h"
 #include "state.h"
@@ -67,6 +68,15 @@ bool                 networkUp = false;
 bool                 inApMode  = false;
 unsigned long        dnsSuspendedAt = 0; // millis() when /debug/dns-off was hit;
                                           // network_loop() re-enables after 60 s.
+
+// One-shot CSRF nonce for /factory-reset. The GET handler stores a
+// freshly-generated uint32_t here; the POST handler reads + compares
+// it to the form's hidden nonce field, then zeroes it on a successful
+// match so the same form can't be replayed (browser-back-then-forward,
+// browser-resume after navigation, etc.). std::atomic because AsyncWebServer
+// can run request handlers from a different context than main loop on
+// RPAsyncTCP, and even single-threaded it's a cheap guarantee.
+std::atomic<uint32_t> g_factoryResetNonce(0);
 
 // Boot-time scan cache. Populated by network_scan_cache() before the
 // AP comes up (the CYW43 cannot scan while a client is associated, so
@@ -469,42 +479,110 @@ static void startStaServer() {
 	server.on("/state.json", HTTP_GET, onStateJson);
 	server.on("/wifi", HTTP_GET, onWifiJson);
 
-	// /factory-reset: two-step wipe + reboot. A GET serves a prompt page
-	// asking the operator to confirm; a POST does the actual wipe. This
-	// prevents the legacy GET-immediately behaviour where a stray
-	// browser prefetch, link previewer, or fat-fingered bookmark could
-	// silently wipe the saved credentials. After reboot the device
-	// boots into SoftAP / captive-portal mode (no creds). Useful when
-	// the operator typos a password or wants to move the device to a
-	// different wifi network without reflashing.
+	// /factory-reset: two-step wipe + reboot with a one-shot CSRF nonce
+	// to prevent accidental re-trigger.
+//
+// Why this exists: a previous two-step version had GET /factory-reset
+// serve a confirmation form and POST /factory-reset do the wipe. That
+// *should* have been enough, but the operator found a way to trigger
+// it accidentally: they had the confirmation page open in a browser
+// tab, navigated away, then came back to the network. The browser
+// auto-resubmitted the form's POST, wiping the credentials. The
+// original goal of the two-step design -- "no stray GET can wipe" --
+// was defeated because the browser was smart enough to re-POST.
+//
+// Fix: the GET response embeds a freshly-generated random nonce in
+// the form. The POST handler compares the submitted nonce to the
+// last issued one (stored in module-local g_factoryResetNonce, see
+// the anonymous namespace above) and only proceeds if they match.
+// Auto-resubmitted forms from a stale tab still have the nonce from
+// the page they originally rendered, but the nonce on the server
+// has been rotated -- so the comparison fails and the POST is
+// rejected.
+//
+// Additional hardening: the GET response is sent with
+// `Cache-Control: no-store` so the browser doesn't try to serve the
+// form from its disk cache and resurrect the nonce on its own.
 	server.on("/factory-reset", HTTP_GET, [](AsyncWebServerRequest* req) {
-		const char* page =
-			"<html><head><meta name=\"viewport\" "
-			"content=\"width=device-width,initial-scale=1\"><title>Reset "
-			"RetroRoom?</title>"
-			"<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe "
-			"UI,sans-serif;max-width:420px;margin:3em auto;padding:0 "
-			"1em;color:rgb(34,34,34);line-height:1.4}"
-			"h2{margin:0 0 .25em}p{color:rgb(68,68,68)}"
-			"button{padding:.7em 1.4em;font-size:1em;border:none;border-radius:"
-			"6px;color:white;cursor:pointer;font-weight:600}"
-			"button.yes{background:rgb(200,40,40)}button.no{background:rgb(170,"
-			"170,170);margin-left:.5em}</style></head><body>"
-			"<h2>Factory reset?</h2>"
-			"<p>This will erase the saved WiFi credentials and reboot into "
-			"the setup portal. The device will need to be reconfigured "
-			"before it can join your network again.</p>"
-			"<form method=\"POST\" action=\"/factory-reset\">"
-			"<button type=\"submit\" class=\"yes\">Yes, erase and reboot</button>"
-			"</form>"
-			"<form method=\"GET\" action=\"/\" style=\"margin-top:.5em\">"
-			"<button type=\"submit\" class=\"no\">Cancel</button>"
-			"</form>"
-			"</body></html>";
-		req->send(200, "text/html", page);
+		// Generate a fresh nonce. micros() + a static salt is enough
+		// entropy for a non-security-critical UI confirm; the goal
+		// is just to make stale POST submissions invalid, not to
+		// thwart a determined attacker.
+		const uint32_t nonce = micros() ^ 0xA5A5A5A5;
+		g_factoryResetNonce.store(nonce);
+
+		String page;
+		page.reserve(900);
+		page += "<!DOCTYPE html><html><head>";
+		page += "<meta name=\"viewport\" "
+		        "content=\"width=device-width,initial-scale=1\">";
+		page += "<title>Reset RetroRoom?</title>";
+		page += "<style>body{font-family:-apple-system,BlinkMacSystemFont,"
+		        "Segoe UI,sans-serif;max-width:420px;margin:3em auto;"
+		        "padding:0 1em;color:rgb(34,34,34);line-height:1.4}";
+		page += "h2{margin:0 0 .25em}p{color:rgb(68,68,68)}";
+		page += "button{padding:.7em 1.4em;font-size:1em;border:none;"
+		        "border-radius:6px;color:white;cursor:pointer;font-weight:600}";
+		page += "button.yes{background:rgb(200,40,40)}button.no{background:"
+		        "rgb(170,170,170);margin-left:.5em}</style>";
+		page += "</head><body>";
+		page += "<h2>Factory reset?</h2>";
+		page += "<p>This will erase the saved WiFi credentials and reboot "
+		        "into the setup portal. The device will need to be "
+		        "reconfigured before it can join your network again.</p>";
+		page += "<form method=\"POST\" action=\"/factory-reset\">";
+		page += "<input type=\"hidden\" name=\"nonce\" value=\"";
+		page += String((unsigned long)nonce, 16);
+		page += "\">";
+		page += "<button type=\"submit\" class=\"yes\">Yes, erase and reboot</button>";
+		page += "</form>";
+		page += "<form method=\"GET\" action=\"/\" style=\"margin-top:.5em\">";
+		page += "<button type=\"submit\" class=\"no\">Cancel</button>";
+		page += "</form>";
+		page += "</body></html>";
+
+		AsyncWebServerResponse* resp = req->beginResponse(200, "text/html", page);
+		// Block all caching. A cached copy of this page could be
+		// re-rendered by the browser after a navigation, in which
+		// case the embedded nonce might match a later server-side
+		// rotation by accident -- no-store guarantees the page is
+		// never served from disk cache.
+		resp->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+		resp->addHeader("Pragma", "no-cache");
+		req->send(resp);
 	});
 	server.on("/factory-reset", HTTP_POST, [](AsyncWebServerRequest* req) {
-		Serial.println("net: /factory-reset POST -- wiping /wifi.json and rebooting");
+		// Reject any POST that doesn't echo the nonce we last
+		// served. Auto-resubmitted forms from a stale tab have a
+		// nonce that no longer matches; preflighted requests from
+		// bookmarks, link previewers, or anything that doesn't
+		// render the GET page first have no nonce at all.
+		if (!req->hasParam("nonce", true)) {
+			Serial.println("net: /factory-reset POST rejected: missing nonce");
+			req->send(400, "text/plain",
+			          "factory-reset requires the nonce from the confirmation page. "
+			          "Open /factory-reset in a browser and click the red button.\n");
+			return;
+		}
+		const String submitted = req->getParam("nonce", true)->value();
+		const uint32_t expected = g_factoryResetNonce.load();
+		const uint32_t submittedNum = strtoul(submitted.c_str(), nullptr, 16);
+		if (submittedNum != expected) {
+			Serial.print("net: /factory-reset POST rejected: nonce mismatch (got 0x");
+			Serial.print(submitted);
+			Serial.print(", expected 0x");
+			Serial.print(String((unsigned long)expected, 16));
+			Serial.println(")");
+			req->send(400, "text/plain",
+			          "factory-reset nonce did not match. The confirmation "
+			          "page may have expired; reload /factory-reset and try again.\n");
+			return;
+		}
+		// Rotate the nonce AFTER a successful match so the same form
+		// can't be re-submitted by a browser-back-then-forward.
+		g_factoryResetNonce.store(0);
+
+		Serial.println("net: /factory-reset POST -- nonce OK, wiping /wifi.json and rebooting");
 		if (LittleFS.begin()) {
 			LittleFS.remove(kWifiConfigPath);
 		}
