@@ -31,8 +31,19 @@
 #   ./agent-script/pio-upload-monitor.sh --no-upload           # build only, do NOT flash / monitor
 #   ./agent-script/pio-upload-monitor.sh --monitor-only        # attach to serial only; no build, no flash
 #   ./agent-script/pio-upload-monitor.sh --keep-heartbeats     # don't strip Heartbeat: lines
+#   ./agent-script/pio-upload-monitor.sh --show-progress       # don't strip the per-% Loading/Verifying lines
 #
 # Defaults: ENV=pico2w, MONITOR_SECS=25, LOG=/tmp/pio_upload_monitor.log, DO_BUILD=1, DO_UPLOAD=1
+#
+# Output filtering (operator-visible only; $LOG keeps the raw bytes
+# for post-mortem analysis and the status check below):
+#   - Heartbeats: stripped by default; --keep-heartbeats surfaces them.
+#   - ArduinoJson StaticJsonDocument deprecation warnings: always stripped.
+#   - Picotool "Loading into Flash: " / "Verifying Flash: " per-%
+#     progress lines: always stripped; --show-progress surfaces them.
+#     These are pure noise from an operator's POV (the status summary
+#     already says "upload OK" or "upload FAILED"); they take ~200
+#     lines of agent context window for zero informational value.
 #
 # NOTE on --no-build vs --no-upload:
 #   --no-build   skips the standalone `pio run -e $ENV` pass; upload+monitor still run.
@@ -58,6 +69,7 @@ DO_BUILD=1
 DO_UPLOAD=1
 MONITOR_ONLY=0
 FILTER_HEARTBEATS=1
+FILTER_PROGRESS=1
 
 print_usage() {
     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -73,6 +85,7 @@ while [ $# -gt 0 ]; do
         --no-upload) DO_UPLOAD=0; shift ;;
         --monitor-only) MONITOR_ONLY=1; DO_BUILD=0; DO_UPLOAD=0; shift ;;
         --keep-heartbeats) FILTER_HEARTBEATS=0; shift ;;
+        --show-progress) FILTER_PROGRESS=0; shift ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
@@ -170,21 +183,45 @@ fi  # close the MONITOR_ONLY guard around step 2
 #      cleanup is a separate task from anything that touches the
 #      build / flash / monitor pipeline. Re-introduce the noise by
 #      piping through `cat` yourself if you ever need to see it.
+#    - The picotool "Loading into Flash: " and "Verifying Flash: "
+#      progress lines (one per percent, two per upload) are also
+#      stripped. They're pure noise from an operator's POV -- the
+#      status summary below already tells you whether the upload
+#      reached 100% and the firmware booted. $LOG keeps the raw
+#      lines so the status check below can still grep them; we
+#      just hide them in the human-facing print.
 echo
 echo "================================================================"
 echo "[pio-upload-monitor] log lines from $LOG:"
 echo "================================================================"
+# Apply the heartbeat filter first (gated on --keep-heartbeats) so
+# the heartbeat lines flow through the noise filter in the same
+# shape as everything else. We use a temp file rather than nested
+# process substitution so the chain reads top-to-bottom without
+# anyone having to mentally evaluate pipe priorities.
+FILTERED="$LOG.filtered"
 if [ "$FILTER_HEARTBEATS" = 1 ]; then
-    # Strip heartbeats. The ArduinoJson deprecation block is removed
-    # below via a second pass.
-    grep -v "^Heartbeat:" "$LOG" \
-        | grep -v "^src/.*warning: '.*StaticJsonDocument" \
+    grep -v "^Heartbeat:" "$LOG" > "$FILTERED" || true
+else
+    cp "$LOG" "$FILTERED"
+fi
+# StaticJsonDocument deprecation is always stripped. The flash/verify
+# progress lines are also stripped by default; --show-progress
+# surfaces them (useful when debugging a picotool upload that hangs
+# at a particular percent).
+if [ "$FILTER_PROGRESS" = 1 ]; then
+    grep -v "^src/.*warning: .*StaticJsonDocument" "$FILTERED" \
+        | grep -v "^.*note: declared here" \
+        | grep -v "^.*compatibility.hpp:.*$" \
+        | grep -vE "^(Loading into Flash|Verifying Flash):" \
+        || true
+else
+    grep -v "^src/.*warning: .*StaticJsonDocument" "$FILTERED" \
         | grep -v "^.*note: declared here" \
         | grep -v "^.*compatibility.hpp:.*$" \
         || true
-else
-    cat "$LOG"
 fi
+rm -f "$FILTERED"
 
 # 5. Status summary based on what we saw in the log. We treat the run
 #    as successful if the verify reached 100% AND the firmware booted
