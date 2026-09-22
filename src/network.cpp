@@ -544,14 +544,32 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
 		case WS_EVT_DATA: {
 			AwsFrameInfo* info = (AwsFrameInfo*)arg;
 			if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-				// Treat incoming text as a command. Echo back the same
-				// message prefixed with "echo: " so the JS console.debug
-				// in script.js sees a round-trip.
+				// Treat incoming text as a command. Mirrors the HTTP
+				// /ledOn / /ledOff / /flash / /healthcheck endpoints so
+				// the websocket-driven UI (script.js) and the
+				// HTTP-driven UI do the same thing.
 				std::string msg((const char*)data, len);
 				Serial.print("net: ws rx: ");
 				Serial.println(msg.c_str());
-				std::string reply = std::string("echo: ") + msg;
-				cli->text(reply.c_str(), reply.size());
+				if (msg == "ledOn") {
+					ledOn();
+				} else if (msg == "ledOff") {
+					ledOff();
+				} else if (msg == "flash") {
+					flashLed();
+					flash = !flash;
+				} else if (msg == "healthcheck") {
+					// No hardware side effect, just ack so the client
+					// knows we're alive.
+				} else {
+					// Unknown -- echo so the client sees the round-trip.
+					std::string reply = std::string("echo: ") + msg;
+					cli->text(reply.c_str(), reply.size());
+					break;
+				}
+				// Broadcast the new state to every connected client so
+				// the originating tab and any others stay in sync.
+				broadcastSocketMessage(msg);
 			}
 			break;
 		}
