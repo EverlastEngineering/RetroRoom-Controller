@@ -2,8 +2,12 @@
 # agent-script/e2e-consoles-json.sh
 #
 # End-to-end test for the /consoles.json upload endpoint + the
-# /next / /prev console-cycling endpoints. Drives the live device over
-# HTTP from the host; uses curl for the body POSTs and JSON GETs.
+# /next / /prev console-cycling endpoints. TDD-driven: every
+# assertion reads back the device's actual state (via GET
+# /state.json, GET /consoles.json), not response codes. The
+# firmware surface this depends on landed in commits fc3b293
+# (GET /consoles.json, enriched /state.json, empty-vector guards)
+# and 512397c (onStateJson UB fix on empty vector).
 #
 # Usage:
 #   ./agent-script/e2e-consoles-json.sh                          # run --all against RetroRoom.local
@@ -20,7 +24,7 @@
 #   0   all selected scenarios passed
 #   1   bad CLI args
 #   2   device unreachable (curl --max-time 3 failed)
-#   3   a scenario failed (assert_eq / assert_in failed)
+#   3   a scenario failed (wait_for_state / assert_eq / assert_in / cmp)
 #   4   jq missing (we refuse to parse JSON with regex)
 #
 # Each scenario prints SCENARIO:<name>:PASS or SCENARIO:<name>:FAIL
@@ -31,7 +35,7 @@ set -u
 HOST="${HOST:-RetroRoom.local}"
 PORT="${PORT:-80}"
 CONFIG_DIR="${CONFIG_DIR:-$(cd "$(dirname "$0")/.." && pwd)/example-configurations}"
-BOOT_WAIT_SECS="${BOOT_WAIT_SECS:-15}"
+BOOT_WAIT_SECS="${BOOT_WAIT_SECS:-25}"
 SCENARIO_FILTER=""
 
 print_usage() {
@@ -94,26 +98,24 @@ assert_in() {
 
 # ---------- HTTP helpers ----------
 
-# Wait up to BOOT_WAIT_SECS for the device to respond to /healthcheck.
-# After POST /consoles.json the device reboots within ~1.5 s; the
-# network stack then comes back up within a few seconds (STA mode
-# reconnects to the saved AP).
-wait_for_device() {
-    local i=0
-    while [ "$i" -lt "$BOOT_WAIT_SECS" ]; do
-        if curl -fsS --max-time 2 "$BASE_URL/healthcheck" >/dev/null 2>&1; then
-            return 0
-        fi
-        i=$((i + 1))
-        sleep 1
-    done
-    echo "  FAIL  device did not respond to /healthcheck after ${BOOT_WAIT_SECS}s" >&2
-    return 1
-}
-
-# GET <path> -> echoes body; non-zero on non-2xx.
+# GET <path> -> echoes body; non-zero on non-2xx. Bounded by curl's
+# --max-time so a wedged JSON endpoint doesn't hang the whole suite.
 http_get() {
     curl -fsS --max-time 5 "$BASE_URL$1"
+}
+
+# http_get_code <path> -> echoes "<http_code> <body>"; never fails.
+# Use when you need to assert on a specific non-2xx status (204,
+# 409, etc.) without curl -f aborting the read.
+http_get_code() {
+    local body_file
+    body_file="$(mktemp -t e2e_get.XXXXXX)"
+    local code
+    code="$(curl -sS --max-time 5 -o "$body_file" -w '%{http_code}' "$BASE_URL$1" || echo 000)"
+    local body
+    body="$(cat "$body_file" 2>/dev/null || true)"
+    rm -f "$body_file"
+    printf '%s %s\n' "$code" "$body"
 }
 
 # POST <path> <file> -> echoes body; non-zero on non-2xx.
@@ -122,10 +124,117 @@ http_post_file() {
         -H "Content-Type: application/json" "$BASE_URL$1"
 }
 
-# POST <path> <literal-string> -> echoes body; non-zero on non-2xx.
-http_post_string() {
-    curl -fsS --max-time 8 -X POST --data-binary "$2" \
-        -H "Content-Type: application/json" "$BASE_URL$1"
+# ---------- TDD primitives ----------
+
+# wait_for_device [timeout_secs]
+#   Poll /healthcheck until it answers 200, or until timeout. After
+#   the timeout, also assert /wifi reports mode=sta -- failing fast
+#   if the device came back in SoftAP mode (which would mean the
+#   /wifi.json write was clobbered or something else took the device
+#   back to captive-portal). Default timeout = $BOOT_WAIT_SECS.
+wait_for_device() {
+    local timeout="${1:-$BOOT_WAIT_SECS}"
+    local i=0
+    while [ "$i" -lt "$timeout" ]; do
+        if curl -fsS --max-time 2 "$BASE_URL/healthcheck" >/dev/null 2>&1; then
+            local mode
+            mode="$(http_get /wifi | jq -r .mode 2>/dev/null || echo unknown)"
+            if [ "$mode" != "sta" ]; then
+                echo "  FAIL  device came back but mode=$mode (expected sta); wifi creds probably wiped" >&2
+                return 1
+            fi
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    echo "  FAIL  device did not respond to /healthcheck after ${timeout}s" >&2
+    return 1
+}
+
+# wait_for_state <jq-filter> <expected> <timeout_secs>
+#   The TDD primitive. Polls GET /state.json every 500 ms (so
+#   /next's selectedAtUptimeMs tick is captured within ~one tick),
+#   runs `jq -r "$1"` on each response, and returns 0 the first
+#   time the result equals "$2". Returns 1 on timeout.
+#
+#   Examples:
+#     wait_for_state .total 3 5       # wait up to 5 s for total == 3
+#     wait_for_state .index 1 5       # wait up to 5 s for index == 1
+#     wait_for_state .name '"NES"' 5  # literal-string jq filter
+#
+#   Why 500 ms (not 1 s)? selectedAtUptimeMs ticks every loop()
+#   call (millis() based). 500 ms gives ~4 polls per heartbeat
+#   (2 s), so we don't miss a transition that happens to fall
+#   between two 1-second polls.
+wait_for_state() {
+    local filter="$1"; local expected="$2"; local timeout="$3"
+    local deadline=$((SECONDS + timeout))
+    local last_seen=""
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        local body got
+        body="$(curl -fsS --max-time 2 "$BASE_URL/state.json" 2>/dev/null || true)"
+        if [ -n "$body" ]; then
+            got="$(echo "$body" | jq -r "$filter" 2>/dev/null || echo "<jq error>")"
+            last_seen="$got"
+            if [ "$got" = "$expected" ]; then
+                echo "  ok    state[$filter] = $expected (within ${timeout}s)"
+                return 0
+            fi
+        fi
+        sleep 0.5
+    done
+    echo "  FAIL  state[$filter] never became '$expected' within ${timeout}s; last seen: '$last_seen'" >&2
+    return 1
+}
+
+# post_and_verify_disk <file>
+#   The other TDD primitive. POSTs <file> to /consoles.json, waits
+#   for the reboot to complete (asserting STA mode), and then GETs
+#   /consoles.json to verify the bytes on disk are byte-identical
+#   to what we sent. Prints a diff on mismatch.
+#
+#   Why byte-compare and not JSON re-parse: the firmware never
+#   re-serializes on the read path (see the comment on
+#   onConsolesJsonGet in src/network.cpp). A byte-cmp is the
+#   strongest possible assertion: the operator's exact file landed
+#   on the device, not a re-formatted copy.
+#
+#   Side effects: leaves the device booted into whatever index
+#   currentConsoleIndex is at post-reboot (provably 0 on a fresh
+#   boot thanks to .bss zeroing -- see plan §1).
+post_and_verify_disk() {
+    local file="$1"
+    local rc=0
+    if [ ! -f "$file" ]; then
+        echo "  FAIL  config file missing: $file" >&2
+        return 1
+    fi
+    echo "  posting $file -> POST /consoles.json"
+    if ! http_post_file /consoles.json "$file" >/dev/null; then
+        echo "  FAIL  POST /consoles.json did not return 2xx" >&2
+        return 1
+    fi
+    echo "  POST OK, waiting for reboot..."
+    if ! wait_for_device; then
+        return 1
+    fi
+    local got_file
+    got_file="$(mktemp -t e2e_get_back.XXXXXX)"
+    if ! http_get /consoles.json > "$got_file"; then
+        echo "  FAIL  GET /consoles.json did not return 2xx after POST" >&2
+        rm -f "$got_file"
+        return 1
+    fi
+    if cmp -s "$file" "$got_file"; then
+        echo "  ok    POST bytes == GET bytes ($(wc -c < "$file" | tr -d ' ') bytes)"
+    else
+        echo "  FAIL  POST bytes != GET bytes; diff follows:" >&2
+        diff "$file" "$got_file" | head -40 >&2 || true
+        rc=1
+    fi
+    rm -f "$got_file"
+    return $rc
 }
 
 # ----------- scenarios -----------
@@ -145,11 +254,70 @@ scenario_healthcheck() {
     return $rc
 }
 
-# POST /consoles.json with the multi-console example, wait for the
-# reboot, walk /next and /prev and verify the index + name flip in
-# the expected wraparound pattern. Uses the live /state.json as the
-# ground truth (HTTP-driven cycle endpoints also broadcast a
-# `console:N:idx` WS message, but that only shows on the embedded UI).
+# GET /state.json -- assert the new fields exist and have sane values.
+# Doesn't depend on which console is loaded; just that the schema is
+# right and the mode is sta.
+scenario_state_json_shape() {
+    local rc=0
+    local body
+    body="$(http_get /state.json)" || { echo "  FAIL  GET /state.json failed" >&2; return 1; }
+    # jq -e exits 0 iff the expression is truthy. We use `has(f)`
+    # to assert each field is present (even if its value is empty).
+    local field
+    for field in .index .total .name .ledOn .flash .mode .uptimeMs .selectedAtUptimeMs; do
+        if ! echo "$body" | jq -e "has($field)" >/dev/null 2>&1; then
+            echo "  FAIL  /state.json missing field $field" >&2
+            rc=1
+        fi
+    done
+    [ "$rc" -eq 0 ] && echo "  ok    /state.json has all expected fields"
+    local mode
+    mode="$(echo "$body" | jq -r .mode)"
+    assert_eq "sta" "$mode" "/state.json mode" || rc=1
+    local uptime_ms
+    uptime_ms="$(echo "$body" | jq -r .uptimeMs)"
+    # uptimeMs > 1s (firmware has been up at least a moment), < 1h
+    # (catches wraparound-from-bad-init bugs).
+    if [ "$uptime_ms" -ge 1000 ] 2>/dev/null && [ "$uptime_ms" -le 3600000 ] 2>/dev/null; then
+        echo "  ok    uptimeMs = $uptime_ms (sane)"
+    else
+        echo "  FAIL  uptimeMs = $uptime_ms (out of range [1s, 1h])" >&2
+        rc=1
+    fi
+    return $rc
+}
+
+# GET /consoles.json read-back after a POST. Pure TDD: the harness
+# doesn't trust the POST response, it reads the device's actual
+# state and byte-compares.
+scenario_post_then_read_back() {
+    local rc=0
+    local config_file="$CONFIG_DIR/example1.json"
+    if [ ! -f "$config_file" ]; then
+        echo "  FAIL  config file missing: $config_file" >&2
+        return 1
+    fi
+    post_and_verify_disk "$config_file" || rc=1
+    if [ "$rc" -eq 0 ]; then
+        wait_for_state .total 3 5 || rc=1
+        local name
+        name="$(http_get /state.json | jq -r .name)"
+        case "$name" in
+            "Nintendo Entertainment System"|"Super Nintendo Entertainment System"|"Sega Genesis")
+                echo "  ok    /state.json name = '$name' (matches example1.json)" ;;
+            *)
+                echo "  FAIL  /state.json name = '$name' (not in example1.json)" >&2
+                rc=1 ;;
+        esac
+    fi
+    return $rc
+}
+
+# Walk /next three times with per-step state verification. This is
+# the headline TDD scenario: every step asserts both the response
+# body AND that /state.json matches what the response said. If the
+# response lies (curl got a cached 200 from somewhere, etc.), the
+# state assertion catches it.
 scenario_cycle_three_consoles() {
     local rc=0
     local config_file="$CONFIG_DIR/example1.json"
@@ -157,86 +325,55 @@ scenario_cycle_three_consoles() {
         echo "  FAIL  config file missing: $config_file" >&2
         return 1
     fi
-    echo "  posting $config_file -> POST /consoles.json"
-    if ! http_post_file /consoles.json "$config_file" >/dev/null; then
-        echo "  FAIL  POST /consoles.json did not return 2xx" >&2
-        return 1
-    fi
-    echo "  POST OK, waiting for reboot..."
-    if ! wait_for_device; then
-        echo "  FAIL  device did not come back after reboot" >&2
-        return 1
-    fi
-    # After reboot, currentConsoleIndex retains whatever value it
-    # had pre-reboot (it's a RAM-only global). So the device may
-    # boot into any index in [0, n_consoles). Capture the baseline
-    # the device actually boots into and derive all assertions
-    # from it -- never hardcode "index 0" or "NES".
-    local baseline_idx baseline_name n_consoles
-    n_consoles=3  # example1.json
-    baseline_idx="$(http_get /state.json | jq -r .index)"
-    baseline_name="$(http_get /state.json | jq -r .name)"
-    echo "  baseline after reboot: idx=$baseline_idx name=$baseline_name"
-
-    # Build the index->name table by walking /next from the
-    # baseline through every other index. After n_consoles-1
-    # forward steps we have visited every console and learned its
-    # name; the n_consoles-th step lands us back on baseline,
-    # which we treat as the start of the assertion loop below.
-    declare -A name_table
-    name_table["$baseline_idx"]="$baseline_name"
-    for ((step=1; step<n_consoles; step++)); do
+    post_and_verify_disk "$config_file" || { rc=1; return $rc; }
+    # After reboot, currentConsoleIndex is provably 0 (.bss zeroing
+    # -- see plan §1). We assert that explicitly.
+    wait_for_state .index 0 5 || rc=1
+    # Baseline name = example1.json's first console = NES.
+    # Asserting the absolute name is a stricter check than the
+    # previous "whatever the device boots into" dance, and it
+    # surfaces boot-path regressions (e.g. if config loading
+    # silently falls back to PROGMEM).
+    wait_for_state .name '"Nintendo Entertainment System"' 5 || rc=1
+    local baseline_sel
+    baseline_sel="$(http_get /state.json | jq -r .selectedAtUptimeMs)"
+    echo "  baseline selectedAtUptimeMs = $baseline_sel"
+    local steps=(1 2 3)
+    local exp_names=(
+        "Super Nintendo Entertainment System"
+        "Sega Genesis"
+        "Nintendo Entertainment System"
+    )
+    for ((i=0; i<${#steps[@]}; i++)); do
+        local step="${steps[$i]}"
+        local exp_name="${exp_names[$i]}"
         local body got_idx got_name
-        body="$(http_get /next)" || { echo "  FAIL  GET /next failed (table step=$step)" >&2; rc=1; return $rc; }
+        body="$(http_get /next)" || { echo "  FAIL  GET /next step=$step failed" >&2; rc=1; return $rc; }
         got_idx="$(echo "$body" | jq -r .index)"
         got_name="$(echo "$body" | jq -r .name)"
-        name_table["$got_idx"]="$got_name"
+        assert_eq "$step" "$got_idx" "/next step=$step response index" || rc=1
+        assert_eq "$exp_name" "$got_name" "/next step=$step response name" || rc=1
+        # Cross-check: /state.json should agree with the response.
+        wait_for_state ".index" "$step" 3 || rc=1
+        wait_for_state ".name" "\"$exp_name\"" 3 || rc=1
     done
-    if [ "${#name_table[@]}" -ne "$n_consoles" ]; then
-        echo "  FAIL  name table has ${#name_table[@]} entries, expected $n_consoles; keys: ${!name_table[*]}" >&2
+    # After 3 /next calls we should be back at index 0 (wraparound).
+    # Cross-check selectedAtUptimeMs changed (TDD proof of motion --
+    # if /next silently no-op'd the response would still be 2xx but
+    # selectedAtUptimeMs would not have moved).
+    local final_sel
+    final_sel="$(http_get /state.json | jq -r .selectedAtUptimeMs)"
+    if [ "$final_sel" -gt "$baseline_sel" ] 2>/dev/null; then
+        echo "  ok    selectedAtUptimeMs advanced $baseline_sel -> $final_sel across /next walk"
+    else
+        echo "  FAIL  selectedAtUptimeMs did not advance (baseline=$baseline_sel, final=$final_sel)" >&2
         rc=1
-        return $rc
     fi
-
-    # Now walk /next from baseline once more. After n_consoles
-    # forward steps we must be back at baseline (wraparound proof).
-    local current_idx="$baseline_idx"
-    for ((step=1; step<=n_consoles; step++)); do
-        local exp_idx=$(( (current_idx + 1) % n_consoles ))
-        local exp_name="${name_table[$exp_idx]}"
-        local got_idx got_name body
-        body="$(http_get /next)" || { echo "  FAIL  GET /next failed (assert step=$step)" >&2; rc=1; return $rc; }
-        got_idx="$(echo "$body" | jq -r .index)"
-        got_name="$(echo "$body" | jq -r .name)"
-        assert_eq "$exp_idx" "$got_idx" "/next step=$step index" || rc=1
-        assert_eq "$exp_name" "$got_name" "/next step=$step name" || rc=1
-        current_idx="$got_idx"
-    done
-    assert_eq "$baseline_idx" "$current_idx" "after $n_consoles /next we wrap to baseline" || rc=1
-
-    # Walk /prev n_consoles times; same wraparound rule applies.
-    current_idx="$baseline_idx"
-    for ((step=1; step<=n_consoles; step++)); do
-        local raw=$((current_idx - 1))
-        local exp_idx=$(( (raw % n_consoles + n_consoles) % n_consoles ))
-        local exp_name="${name_table[$exp_idx]}"
-        local got_idx got_name body
-        body="$(http_get /prev)" || { echo "  FAIL  GET /prev failed (step=$step)" >&2; rc=1; return $rc; }
-        got_idx="$(echo "$body" | jq -r .index)"
-        got_name="$(echo "$body" | jq -r .name)"
-        assert_eq "$exp_idx" "$got_idx" "/prev step=$step index" || rc=1
-        assert_eq "$exp_name" "$got_name" "/prev step=$step name" || rc=1
-        current_idx="$got_idx"
-    done
-    assert_eq "$baseline_idx" "$current_idx" "after $n_consoles /prev we wrap to baseline" || rc=1
-
     return $rc
 }
 
-# POST a 4-console config (example2.json) and verify the wraparound
-# bound moves to 4 consoles. Same dynamic-table pattern as the
-# 3-console scenario so the test stays robust to whatever
-# index+name the device boots into.
+# 4-console example2.json, same shape as cycle-three but verifies the
+# count moved and the wraparound bound is now 4.
 scenario_cycle_four_consoles() {
     local rc=0
     local config_file="$CONFIG_DIR/example2.json"
@@ -244,49 +381,73 @@ scenario_cycle_four_consoles() {
         echo "  FAIL  config file missing: $config_file" >&2
         return 1
     fi
-    if ! http_post_file /consoles.json "$config_file" >/dev/null; then
-        echo "  FAIL  POST /consoles.json did not return 2xx" >&2
-        return 1
-    fi
-    echo "  POST OK, waiting for reboot..."
-    if ! wait_for_device; then
-        echo "  FAIL  device did not come back after reboot" >&2
-        return 1
-    fi
-    local baseline_idx baseline_name n_consoles
-    n_consoles=4  # example2.json
-    baseline_idx="$(http_get /state.json | jq -r .index)"
-    baseline_name="$(http_get /state.json | jq -r .name)"
-    echo "  baseline after reboot: idx=$baseline_idx name=$baseline_name"
-
-    declare -A name_table
-    name_table["$baseline_idx"]="$baseline_name"
-    for ((step=1; step<n_consoles; step++)); do
+    post_and_verify_disk "$config_file" || { rc=1; return $rc; }
+    wait_for_state .index 0 5 || rc=1
+    wait_for_state .total 4 5 || rc=1
+    wait_for_state .name '"Nintendo Entertainment System"' 5 || rc=1
+    local steps=(1 2 3 4)
+    local exp_names=(
+        "Sega Master System"
+        "Microsoft Xbox"
+        "MAME Arcade Cabinet"
+        "Nintendo Entertainment System"
+    )
+    for ((i=0; i<${#steps[@]}; i++)); do
+        local step="${steps[$i]}"
+        local exp_name="${exp_names[$i]}"
         local body got_idx got_name
-        body="$(http_get /next)" || { echo "  FAIL  GET /next failed (table step=$step)" >&2; rc=1; return $rc; }
+        body="$(http_get /next)" || { echo "  FAIL  GET /next step=$step failed" >&2; rc=1; return $rc; }
         got_idx="$(echo "$body" | jq -r .index)"
         got_name="$(echo "$body" | jq -r .name)"
-        name_table["$got_idx"]="$got_name"
+        assert_eq "$step" "$got_idx" "/next step=$step response index" || rc=1
+        assert_eq "$exp_name" "$got_name" "/next step=$step response name" || rc=1
+        wait_for_state ".index" "$step" 3 || rc=1
+        wait_for_state ".name" "\"$exp_name\"" 3 || rc=1
     done
-    if [ "${#name_table[@]}" -ne "$n_consoles" ]; then
-        echo "  FAIL  name table has ${#name_table[@]} entries, expected $n_consoles" >&2
-        rc=1
-        return $rc
-    fi
+    return $rc
+}
 
-    local current_idx="$baseline_idx"
-    for ((step=1; step<=n_consoles; step++)); do
-        local exp_idx=$(( (current_idx + 1) % n_consoles ))
-        local exp_name="${name_table[$exp_idx]}"
-        local got_idx got_name body
-        body="$(http_get /next)" || { echo "  FAIL  GET /next failed (assert step=$step)" >&2; rc=1; return $rc; }
+# Walk /prev three times on a 3-console config. Mirror of cycle-three
+# in the other direction. Catches bugs in the -1 wraparound math.
+scenario_cycle_three_consoles_prev() {
+    local rc=0
+    local config_file="$CONFIG_DIR/example1.json"
+    if [ ! -f "$config_file" ]; then
+        echo "  FAIL  config file missing: $config_file" >&2
+        return 1
+    fi
+    post_and_verify_disk "$config_file" || { rc=1; return $rc; }
+    wait_for_state .index 0 5 || rc=1
+    wait_for_state .name '"Nintendo Entertainment System"' 5 || rc=1
+    local baseline_sel
+    baseline_sel="$(http_get /state.json | jq -r .selectedAtUptimeMs)"
+    # /prev from index 0 wraps to index 2 (Sega Genesis).
+    local steps=(2 1 0)
+    local exp_names=(
+        "Sega Genesis"
+        "Super Nintendo Entertainment System"
+        "Nintendo Entertainment System"
+    )
+    for ((i=0; i<${#steps[@]}; i++)); do
+        local exp_idx="${steps[$i]}"
+        local exp_name="${exp_names[$i]}"
+        local body got_idx got_name
+        body="$(http_get /prev)" || { echo "  FAIL  GET /prev step=$((i+1)) failed" >&2; rc=1; return $rc; }
         got_idx="$(echo "$body" | jq -r .index)"
         got_name="$(echo "$body" | jq -r .name)"
-        assert_eq "$exp_idx" "$got_idx" "/next step=$step index" || rc=1
-        assert_eq "$exp_name" "$got_name" "/next step=$step name" || rc=1
-        current_idx="$got_idx"
+        assert_eq "$exp_idx" "$got_idx" "/prev step=$((i+1)) response index" || rc=1
+        assert_eq "$exp_name" "$got_name" "/prev step=$((i+1)) response name" || rc=1
+        wait_for_state ".index" "$exp_idx" 3 || rc=1
+        wait_for_state ".name" "\"$exp_name\"" 3 || rc=1
     done
-    assert_eq "$baseline_idx" "$current_idx" "after $n_consoles /next we wrap to baseline" || rc=1
+    local final_sel
+    final_sel="$(http_get /state.json | jq -r .selectedAtUptimeMs)"
+    if [ "$final_sel" -gt "$baseline_sel" ] 2>/dev/null; then
+        echo "  ok    selectedAtUptimeMs advanced $baseline_sel -> $final_sel across /prev walk"
+    else
+        echo "  FAIL  selectedAtUptimeMs did not advance (baseline=$baseline_sel, final=$final_sel)" >&2
+        rc=1
+    fi
     return $rc
 }
 
@@ -295,26 +456,18 @@ scenario_cycle_four_consoles() {
 # reboot -- if it does, /healthcheck will hang for BOOT_WAIT_SECS.
 scenario_post_rejects_malformed_json() {
     local rc=0
-    local status_body
-    # Use curl -w to capture HTTP status AND body in one call. -f
-    # would make us treat 4xx as error here (good -- we expect 4xx)
-    # but it also suppresses the body, so don't use -f; use -sS
-    # and check status manually.
-    local out
+    local out code body
     out="$(curl -sS --max-time 5 -X POST \
         --data-binary '{ this is not json' \
         -H "Content-Type: application/json" \
         -o /tmp/e2e_post_malformed.body \
         -w '%{http_code}' \
         "$BASE_URL/consoles.json")" || { echo "  FAIL  curl failed" >&2; return 1; }
-    assert_eq "400" "$out" "HTTP status for malformed body" || rc=1
-    local body
+    code="$out"
+    assert_eq "400" "$code" "HTTP status for malformed body" || rc=1
     body="$(cat /tmp/e2e_post_malformed.body 2>/dev/null || true)"
     assert_in '"error"' "$body" "response body is JSON error shape" || rc=1
     assert_in 'JSON parse error' "$body" "parser error string surfaced" || rc=1
-
-    # Critical: confirm the device did NOT reboot. /healthcheck should
-    # still answer immediately.
     local hc
     hc="$(curl -sS --max-time 3 "$BASE_URL/healthcheck" 2>/dev/null || echo DOWN)"
     assert_eq "OK" "$(echo "$hc" | tr -d '\n')" "device still online after rejected POST" || rc=1
@@ -327,19 +480,18 @@ scenario_post_rejects_malformed_json() {
 scenario_post_rejects_unknown_tvinput() {
     local rc=0
     local body_out='{"irCodes":{"Video":"0x430"},"consoleNames":{"NES":"Nintendo Entertainment System"},"consoles":[{"id":"NES","tvInput":"HDMI","selectorPosition":1,"ledPosition":1,"ledWidth":1}]}'
-    local status
-    status="$(curl -sS --max-time 5 -X POST \
+    local out code body
+    out="$(curl -sS --max-time 5 -X POST \
         --data "$body_out" \
         -H "Content-Type: application/json" \
         -o /tmp/e2e_post_unknown.body \
         -w '%{http_code}' \
         "$BASE_URL/consoles.json")" || { echo "  FAIL  curl failed" >&2; return 1; }
-    assert_eq "400" "$status" "HTTP status for unknown-tvInput body" || rc=1
-    local body
+    code="$out"
+    assert_eq "400" "$code" "HTTP status for unknown-tvInput body" || rc=1
     body="$(cat /tmp/e2e_post_unknown.body 2>/dev/null || true)"
     assert_in '"error"' "$body" "response body is JSON error shape" || rc=1
     assert_in 'unknown tvInput' "$body" "core error string surfaced" || rc=1
-
     local hc
     hc="$(curl -sS --max-time 3 "$BASE_URL/healthcheck" 2>/dev/null || echo DOWN)"
     assert_eq "OK" "$(echo "$hc" | tr -d '\n')" "device still online after rejected POST" || rc=1
@@ -347,11 +499,14 @@ scenario_post_rejects_unknown_tvinput() {
 }
 
 # POST a config that is syntactically valid but contains NO consoles
-# (empty consoles array). The boot path should accept this -- there's
-# no structural error, just an empty list. Device should still come
-# back; we don't try to /next through it because CurrentConsole()
-# on an empty vector is UB and the firmware logs "no consoles loaded"
-# instead of advancing.
+# (empty consoles array). Three independent assertions, all backed
+# by device state:
+#   - GET /consoles.json -> 204 (no body); the empty config WAS
+#     written (no missing-file fallback to PROGMEM).
+#   - GET /next -> 409 with "no consoles configured" (the new
+#     empty-vector guard worked, no UB crash).
+#   - GET /state.json -> total == 0 (the device booted with zero
+#     consoles, not a stale count from the previous config).
 scenario_post_empty_config() {
     local rc=0
     local config_file="$CONFIG_DIR/empty.json"
@@ -359,18 +514,78 @@ scenario_post_empty_config() {
         echo "  FAIL  config file missing: $config_file" >&2
         return 1
     fi
+    echo "  posting $config_file -> POST /consoles.json"
     if ! http_post_file /consoles.json "$config_file" >/dev/null; then
         echo "  FAIL  POST /consoles.json (empty config) did not return 2xx" >&2
         return 1
     fi
-    echo "  POST empty config OK, waiting for reboot..."
+    echo "  POST OK, waiting for reboot..."
     if ! wait_for_device; then
-        echo "  FAIL  device did not come back after empty-config POST" >&2
         return 1
     fi
-    local hc
-    hc="$(curl -sS --max-time 3 "$BASE_URL/healthcheck" 2>/dev/null || echo DOWN)"
-    assert_eq "OK" "$(echo "$hc" | tr -d '\n')" "device online after empty-config POST" || rc=1
+    # 1. GET /consoles.json -> 204, no body.
+    local code body
+    read -r code body < <(http_get_code /consoles.json)
+    assert_eq "204" "$code" "GET /consoles.json after POST empty" || rc=1
+    if [ -n "$body" ]; then
+        echo "  FAIL  GET /consoles.json 204 response had body: '$body'" >&2
+        rc=1
+    else
+        echo "  ok    GET /consoles.json 204 response had empty body"
+    fi
+    # 2. GET /next -> 409 with the typed error. The old code would
+    #    UB on CurrentConsole() with an empty vector; the new
+    #    guard returns 409 instead.
+    read -r code body < <(http_get_code /next)
+    assert_eq "409" "$code" "GET /next with empty consoles" || rc=1
+    assert_in "no consoles configured" "$body" "/next 409 body has typed error" || rc=1
+    # 3. GET /state.json -> total == 0.
+    wait_for_state .total 0 5 || rc=1
+    return $rc
+}
+
+# POST -> read-back -> walk /next -> walk /prev -> end on baseline.
+# The "everything works together" scenario. Posts example1.json,
+# verifies the byte-identical round-trip via post_and_verify_disk,
+# then exercises the full cycle in both directions.
+scenario_post_then_read_then_cycle() {
+    local rc=0
+    local config_file="$CONFIG_DIR/example1.json"
+    if [ ! -f "$config_file" ]; then
+        echo "  FAIL  config file missing: $config_file" >&2
+        return 1
+    fi
+    post_and_verify_disk "$config_file" || { rc=1; return $rc; }
+    wait_for_state .total 3 5 || rc=1
+    local forward_steps=(1 2 3)
+    local forward_names=(
+        "Super Nintendo Entertainment System"
+        "Sega Genesis"
+        "Nintendo Entertainment System"
+    )
+    for ((i=0; i<${#forward_steps[@]}; i++)); do
+        local exp_idx="${forward_steps[$i]}"
+        local exp_name="${forward_names[$i]}"
+        http_get /next >/dev/null || { echo "  FAIL  forward step $((i+1)) /next" >&2; rc=1; return $rc; }
+        wait_for_state ".index" "$exp_idx" 3 || rc=1
+        wait_for_state ".name" "\"$exp_name\"" 3 || rc=1
+    done
+    local backward_steps=(2 1 0)
+    local backward_names=(
+        "Sega Genesis"
+        "Super Nintendo Entertainment System"
+        "Nintendo Entertainment System"
+    )
+    for ((i=0; i<${#backward_steps[@]}; i++)); do
+        local exp_idx="${backward_steps[$i]}"
+        local exp_name="${backward_names[$i]}"
+        http_get /prev >/dev/null || { echo "  FAIL  backward step $((i+1)) /prev" >&2; rc=1; return $rc; }
+        wait_for_state ".index" "$exp_idx" 3 || rc=1
+        wait_for_state ".name" "\"$exp_name\"" 3 || rc=1
+    done
+    wait_for_state .index 0 3 || rc=1
+    wait_for_state .name '"Nintendo Entertainment System"' 3 || rc=1
+    wait_for_state .total 3 3 || rc=1
     return $rc
 }
 
@@ -398,11 +613,15 @@ run_scenario() {
 
 ALL_SCENARIOS=(
     healthcheck
+    state-json-shape
+    post-then-read-back
+    cycle-three-consoles
+    cycle-three-consoles-prev
+    cycle-four-consoles
     post-rejects-malformed-json
     post-rejects-unknown-tvinput
-    cycle-three-consoles
-    cycle-four-consoles
     post-empty-config
+    post-then-read-then-cycle
 )
 
 if [ "$SCENARIO_FILTER" = "__list" ]; then
