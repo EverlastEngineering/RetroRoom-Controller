@@ -29,6 +29,7 @@
 #   ./agent-script/pio-upload-monitor.sh -e pico2w -t 60       # 60s monitor window
 #   ./agent-script/pio-upload-monitor.sh --no-build            # skip the standalone build
 #   ./agent-script/pio-upload-monitor.sh --no-upload           # build only, do NOT flash / monitor
+#   ./agent-script/pio-upload-monitor.sh --monitor-only        # attach to serial only; no build, no flash
 #   ./agent-script/pio-upload-monitor.sh --keep-heartbeats     # don't strip Heartbeat: lines
 #
 # Defaults: ENV=pico2w, MONITOR_SECS=25, LOG=/tmp/pio_upload_monitor.log, DO_BUILD=1, DO_UPLOAD=1
@@ -55,6 +56,7 @@ MONITOR_SECS=35
 LOG="/tmp/pio_upload_monitor.log"
 DO_BUILD=1
 DO_UPLOAD=1
+MONITOR_ONLY=0
 FILTER_HEARTBEATS=1
 
 print_usage() {
@@ -69,6 +71,7 @@ while [ $# -gt 0 ]; do
         --timeout=*) MONITOR_SECS="${1#*=}"; shift ;;
         --no-build) DO_BUILD=0; shift ;;
         --no-upload) DO_UPLOAD=0; shift ;;
+        --monitor-only) MONITOR_ONLY=1; DO_BUILD=0; DO_UPLOAD=0; shift ;;
         --keep-heartbeats) FILTER_HEARTBEATS=0; shift ;;
         -h|--help) print_usage; exit 0 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -93,7 +96,32 @@ if [ "$DO_BUILD" = 1 ]; then
     echo "[pio-upload-monitor] build OK" >&2
 fi
 
-if [ "$DO_UPLOAD" = 0 ]; then
+if [ "$MONITOR_ONLY" = 1 ]; then
+    # --monitor-only: attach to the already-flashed device and tail
+    # serial for $MONITOR_SECS seconds. No build, no upload. The point
+    # is to give a clean way to watch the firmware *after* a flash
+    # without re-flashing (the previous "use --no-build to monitor"
+    # hack was a footgun: --no-build skipped the standalone build but
+    # still ran -t upload -t monitor, which re-flashed every time).
+    #
+    # Heartbeats from the firmware (heartbeatTick() in src/state.cpp)
+    # are what make this useful: without them, a stuck radio looks
+    # identical to a crashed firmware and a 30-second monitor window
+    # shows you nothing. With heartbeats at 2 s, a 30-second window
+    # gives you ~15 lines of "Heartbeat: ..." which is enough to
+    # confirm the loop is still running.
+    echo "[pio-upload-monitor] --monitor-only set; attaching to $ENV for ${MONITOR_SECS}s (no build, no upload)." >&2
+    script -q "$LOG" pio device monitor --environment "$ENV" &
+    PIO_PID=$!
+    sleep "$MONITOR_SECS"
+    kill -INT "$PIO_PID" 2>/dev/null || true
+    sleep 2
+    kill -9  "$PIO_PID" 2>/dev/null || true
+    wait "$PIO_PID" 2>/dev/null || true
+    # Fall through to the log-printing + status-summary block below.
+fi
+
+if [ "$DO_UPLOAD" = 0 ] && [ "$MONITOR_ONLY" = 0 ]; then
     # --no-upload: skip the flash + monitor entirely. The standalone build
     # (above) already proved the firmware compiles; nothing more to do.
     # Per AGENT.md §4, flashing requires explicit user permission.
@@ -105,6 +133,13 @@ fi
 #    `script -q` runs the inner command attached to a pseudo-tty and
 #    tees the session transcript to $LOG. `-q` suppresses the
 #    "Script started on..." / "Script done on..." banners.
+#
+#    Skipped when MONITOR_ONLY=1 -- that path is handled above (the
+#    monitor runs but no upload happens) and falls through to the
+#    log-print + status-summary block below.
+if [ "$MONITOR_ONLY" = 1 ]; then
+    :  # no-op; the monitor-only block above already ran the monitor
+else
 echo "[pio-upload-monitor] pio run -e $ENV -t upload -t monitor (capped at ${MONITOR_SECS}s)..." >&2
 script -q "$LOG" pio run -e "$ENV" -t upload -t monitor &
 PIO_PID=$!
@@ -117,6 +152,7 @@ kill -INT "$PIO_PID" 2>/dev/null || true
 sleep 2
 kill -9  "$PIO_PID" 2>/dev/null || true
 wait "$PIO_PID" 2>/dev/null || true
+fi  # close the MONITOR_ONLY guard around step 2
 
 # 4. Print the meaningful part of the log.
 #    - Heartbeats stripped by default (turn off with --keep-heartbeats).
@@ -167,6 +203,21 @@ elif grep -q "FAILED" "$LOG" ; then
     echo
     echo "[pio-upload-monitor] build or upload FAILED; check $LOG"
     exit 3
+elif [ "$MONITOR_ONLY" = 1 ]; then
+    # Monitor-only path: there's no Verifying Flash line and no
+    # PlatformIO [SUCCESS] line to look for. Treat the window as
+    # successful if we captured any output (heartbeats, log lines,
+    # whatever) -- if the log is empty AND the device should have
+    # been producing heartbeats, the operator can dig in.
+    if [ -s "$LOG" ]; then
+        echo
+        echo "[pio-upload-monitor] monitor-only window elapsed; captured output above."
+        exit 0
+    else
+        echo
+        echo "[pio-upload-monitor] monitor-only window elapsed with no output; check $LOG"
+        exit 1
+    fi
 else
     echo
     echo "[pio-upload-monitor] monitor window ended without a clear success line; check $LOG"

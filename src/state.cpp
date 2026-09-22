@@ -90,3 +90,48 @@ void flashLedTick() {
 	ledState = !ledState;
 	digitalWrite(LED_BUILTIN, ledState ? HIGH : LOW);
 }
+
+// Liveness heartbeat. Once every kHeartbeatIntervalMs we print a
+// single line so a host-side observer (a monitor session, a wrapper
+// script, or a future operator UI) can tell at a glance that the
+// firmware main loop is still running. This matters specifically
+// when WiFi is wedged: without the heartbeat, a stuck CYW43 looks
+// identical to a crashed firmware from the host's perspective, and
+// the only way to disambiguate is a power-cycle. With the heartbeat
+// we can say "the firmware is alive but the radio is dead -- power
+// cycle" vs "the firmware is dead -- flash + retry" without
+// unplugging anything.
+//
+// The line starts with `Heartbeat:` (stable prefix) so the wrapper
+// (agent-script/pio-upload-monitor.sh) can strip it from build logs
+// by default while --keep-heartbeats surfaces it for triage. The
+// payload is intentionally the same shape as GET /state.json's
+// fields so a passive observer can read the same mental model from
+// either source.
+void heartbeatTick() {
+#if defined(HAS_WIFI)
+	constexpr unsigned long kHeartbeatIntervalMs = 2000UL;
+	static unsigned long lastBeat = 0;
+	const unsigned long now = millis();
+	if (now - lastBeat < kHeartbeatIntervalMs) {
+		return;
+	}
+	lastBeat = now;
+	// `network_inStaMode()` is the most reliable "is the CYW43
+	// happy?" signal we have -- false means SoftAP / captive-
+	// portal OR no wifi yet. Surface it as `mode=sta|ap` so a
+	// postmortem monitor log can show the operator exactly which
+	// state the device ended up in.
+	Serial.print("Heartbeat: uptime=");
+	Serial.print((unsigned long)now / 1000UL);
+	Serial.print("s selected=");
+	Serial.print((unsigned long)currentConsoleSelectedAtMs / 1000UL);
+	Serial.print("s idx=");
+	Serial.print(currentConsoleIndex);
+	Serial.print(" total=");
+	Serial.print(HowManyConsoles());
+	Serial.print(" mode=");
+	Serial.print(network_inStaMode() ? "sta" : "ap");
+	Serial.println();
+#endif // HAS_WIFI
+}

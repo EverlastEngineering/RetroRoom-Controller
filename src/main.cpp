@@ -89,6 +89,11 @@ void loop() {
 	// No-op when `flash` is false; 1 Hz toggle while it's true.
 	flashLedTick();
 
+	// Liveness heartbeat over Serial. See heartbeatTick() in
+	// src/state.cpp -- without this a stuck radio looks identical
+	// to a crashed firmware from the host's perspective.
+	heartbeatTick();
+
 	// On-board LED is driven exclusively from src/state.cpp:
 	// ledOn / ledOff / flashLed toggle the `flash` flag and drive
 	// the solid state, flashLedTick (above) does the 1 Hz blink
