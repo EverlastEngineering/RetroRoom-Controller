@@ -8,12 +8,12 @@
 ## 0. What this project is
 
 Firmware for a microcontroller that controls a multi-console retro
-gaming switch box. Currently targeted at the **Raspberry Pi Pico 2 W**
-(`[env:pico2w]`, RP2350 + on-board CYW43 WiFi). ESP8266 support was
-dropped on `session/merge-pico-json`. Legacy `session/pico-migration`
-kept the wired-only RP2040 path alive (envs `pico_base`, `picow`,
-`pico_yd`); the active branch is `session/pico-2-wireless` which adds
-the WiFi + AsyncWebServer bring-up.
+gaming switch box. The **only firmware target** is the **Raspberry
+Pi Pico 2 W** (`[env:pico2w]`, RP2350 + on-board CYW43 WiFi) — the
+pre-CYW43 wired-only `pico_base` / `picow` / `pico_yd` environments
+were removed from `platformio.ini` on 2026-09-22 (commit `4b50eaa`).
+ESP8266 support was dropped earlier on `session/merge-pico-json`.
+The active branch is `session/pico-2-wireless`.
 
 Layout: `src/` for shell code, `lib/ConsoleConfig/` for the pure
 functional core (console JSON parser + selection math), `test/`
@@ -42,9 +42,9 @@ pio run -e pico2w -t upload --upload-port /dev/cu.usbmodem11101
 #    wrapper (agent-script/pio-upload-monitor.sh) so the monitor
 #    auto-closes after a timeout instead of running forever:
 ./agent-script/pio-upload-monitor.sh                     # default: pico2w, 25s window
-./agent-script/pio-upload-monitor.sh -e pico_base -t 60  # different env / longer window
-./agent-script/pio-upload-monitor.sh --no-build         # skip the standalone build step
-./agent-script/pio-upload-monitor.sh --keep-heartbeats  # don't strip Heartbeat: lines
+./agent-script/pio-upload-monitor.sh -t 60               # longer monitor window
+./agent-script/pio-upload-monitor.sh --no-build          # skip the standalone build step
+./agent-script/pio-upload-monitor.sh --keep-heartbeats   # don't strip Heartbeat: lines
 
 # 4. Monitor only — split step. Run in a separate terminal:
 pio device monitor -p /dev/cu.usbmodem11101 -b 115200
@@ -126,10 +126,13 @@ Things that burned time and will burn yours if you don't know:
   compiler picks a wrong overload and rejects it. Use
   `textAll(msg.c_str(), msg.size())`. Same for
   `AsyncWebSocketClient::text(...)`.
-- **`monitor_filters = direct`** is required on `pico2w` to see the
-  boot logs without miniterm munging line endings or adding
-  timestamps. Already set in `platformio.ini` for `[env:pico_base]`
-  (was added in commit `c6005c7`) and inherited by every env.
+- **`monitor_filters = direct`** historically suppressed miniterm's
+  line-ending/timestamp munging on the dropped `pico_base` env. The
+  current `[env:pico2w]` block doesn't set it; the
+  `agent-script/pio-upload-monitor.sh` wrapper handles its own
+  filter handling and doesn't rely on the env-level setting. If you
+  ever run `pio device monitor` directly and see mangled output,
+  add `monitor_filters = direct` back to `[env:pico2w]`.
 
 ## 4. Hardware-permission policy
 
