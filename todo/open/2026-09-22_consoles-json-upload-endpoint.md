@@ -2,7 +2,16 @@
 
 ## Status
 
-Open — landed 2026-09-22, awaiting operator verification on Pico 2 W.
+POST path landed 2026-09-22 (commit `3903164`). Read-back path
+landed 2026-09-22 (commits `fc3b293`, `512397c`, `25e9710`).
+TDD harness rewrite landed 2026-09-22 (commit `25e9710`).
+Awaiting live verification on Pico 2 W.
+
+The TDD read-back work is documented in
+[plans/2026-09-22_tdd-e2e-readback.md](../../plans/2026-09-22_tdd-e2e-readback.md)
+and the handoff [plans/2026-09-22_tdd-e2e-readback-HANDOFF.md](../../plans/2026-09-22_tdd-e2e-readback-HANDOFF.md).
+
+## What landed (POST — 2026-09-22, commit `3903164`)
 
 ## Goal
 
@@ -11,7 +20,36 @@ Eventually the operator-facing flow for editing the console config is
 itself." The long-term landing site is a `/config` form; for now an
 external service assembles the JSON and POSTs it to this endpoint.
 
-## What landed
+## What landed (read-back — 2026-09-22, commits `fc3b293` / `512397c` / `25e9710`)
+
+- `GET /consoles.json` — serves raw bytes from LittleFS (200 / 204 /
+  500). No ArduinoJson on the read path so the round-trip is
+  byte-identical to what POST /consoles.json wrote.
+- `POST /consoles.json` — method guards on the onBody middleware so a
+  GET with `Content-Length: 0` no longer writes zero bytes into
+  `_tempObject` and 500s.
+- `GET /state.json` — now includes `total`, `uptimeMs`,
+  `selectedAtUptimeMs`. `StaticJsonDocument<256>` → `<384>` for
+  headroom. Bug fix in `onStateJson` (commit `512397c`) adds an
+  empty-vector guard so `name=""` (and no UB) when no consoles are
+  configured.
+- `GET /next`, `GET /prev` — 409 with typed JSON error if
+  `consoles.empty()`. WS `next` / `prev` commands broadcast
+  `console:noop` instead of advancing into UB.
+- `src/consoles.{cpp,h}` — new `uint32_t currentConsoleSelectedAtMs`
+  global, stamped in `advanceConsole()` / `rewindConsole()`
+  at-the-moment-of-decision. RAM-only; `.bss` zeroing on every boot
+  is documented as the lifetime contract.
+- `agent-script/e2e-consoles-json.sh` — full TDD rewrite. New
+  primitives `wait_for_state` (poll /state.json until jq-filter
+  matches) and `post_and_verify_disk` (POST + reboot + GET +
+  byte-compare). 10 scenarios: healthcheck, state-json-shape,
+  post-then-read-back, cycle-three-consoles,
+  cycle-three-consoles-prev, cycle-four-consoles,
+  post-rejects-malformed-json, post-rejects-unknown-tvinput,
+  post-empty-config, post-then-read-then-cycle.
+
+## What landed (POST — 2026-09-22, commit `3903164`)
 
 - `POST /consoles.json` accepts a JSON body (Content-Type ignored, raw
   bytes collected into a `_tempObject` buffer by an `onBody`
@@ -100,10 +138,12 @@ The boot-time log line now distinguishes the two sources:
       `src/network.cpp` (3 sites). Pre-existing deprecation warnings;
       separate task from this feature. Worth doing before
       ArduinoJson 8 ships and removes the alias.
-- [ ] Run the remaining e2e scenarios against the live device
-      (`cycle-three-consoles`, `cycle-four-consoles`,
-      `post-empty-config`) when convenient — they reboot the device
-      so I've left them for an explicit run.
+- [ ] Run the rewritten harness end-to-end against the live device
+      (`./agent-script/e2e-consoles-json.sh --host 192.168.1.100
+      --all`). All 10 scenarios should pass on the firmware from
+      `512397c`. Deferred to when the operator can power-cycle /
+      confirm the device is stable after the CYW43 wedge incident
+      during this session.
 - [ ] Add a `cycle` scenario to e2e-consoles-json.sh that exercises
       the WebSocket `next` / `prev` commands over `websocat` (or a
       Python fallback). Not gated on anything; skipped here because
@@ -112,8 +152,9 @@ The boot-time log line now distinguishes the two sources:
       back into the last-selected console after the operator power-
       cycles. Pairs naturally with the FS-config boot path but is its
       own item.
-- [ ] Decide what `currentConsoleIndex` should be on an empty
-      config. Today `consoles[currentConsoleIndex]` on an empty vector
-      is UB; the firmware logs "no consoles loaded" and the /next
-      endpoint should (but doesn't yet) return a 409 instead of
-      crashing the assert. Pre-existing bug, separate from this work.
+- [x] Decide what `currentConsoleIndex` should be on an empty
+      config. Fixed in `512397c` (onStateJson empty-vector guard) +
+      `fc3b293` (onConsoleNext/Prev return 409 with typed error).
+      Remaining: WS `next`/`prev` should broadcast `console:noop` for
+      empty consoles (added in `fc3b293`); the WS side hasn't been
+      covered by an e2e scenario yet (see WS follow-up above).
