@@ -636,7 +636,7 @@ static void startStaServer() {
 		// Most swagger-ui builds also accept text/yaml and
 		// application/x-yaml; sending the canonical one avoids
 		// future drift if Swagger UI tightens its parser.
-		req->send(200, "application/yaml", html_openapi_yaml);
+		req->send(200, "plain/text", html_openapi_yaml);
 	});
 	server.on("/ledOn", HTTP_GET, onLedOn);
 	server.on("/ledOff", HTTP_GET, onLedOff);

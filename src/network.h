@@ -47,9 +47,7 @@
 //                         "Try it out" works without CORS. See plans/openapi.yaml
 //                         for the spec source.
 //   GET  /openapi.yaml -> Raw OpenAPI 3.0 spec (24 KB), served byte-for-byte from
-//                         the auto-generated src/html/openapi_yaml_bytes.h PROGMEM
-//                         array. Regenerate after editing plans/openapi.yaml with:
-//                           ./agent-script/encode-openapi.py > src/html/openapi_yaml_bytes.h
+//                         html/openapi.yaml
 //   WS   /ws           -> broadcastSocketMessage() push channel. Recognized text commands: ledOn, ledOff, flash, next, prev, healthcheck (echo for unknown).
 #if defined(HAS_WIFI)
 

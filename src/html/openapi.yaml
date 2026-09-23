@@ -1,4 +1,4 @@
-openapi: 3.0.3
+R""""(openapi: 3.0.3
 info:
   title: RetroRoom-Controller HTTP + WebSocket API
   description: |
@@ -28,7 +28,7 @@ info:
         npx --yes swagger-ui-cli@latest serve plans/openapi.yaml
 
     Or paste the file contents into https://editor.swagger.io/.
-  version: "2026-09-22"
+  version: "2026-09-23"
   contact:
     name: RetroRoom-Controller
     url: https://github.com/jasoncopp/RetroRoom-Controller
@@ -38,8 +38,6 @@ info:
 servers:
   - url: http://retroroom.local
     description: mDNS hostname (default)
-  - url: http://192.168.1.100
-    description: Static IP fallback (no mDNS)
 
 tags:
   - name: health
@@ -704,3 +702,4 @@ x-websocket:
     | `prev`        | `GET /prev` | Broadcasts `console:noop` if empty vector |
     | `healthcheck` | `GET /healthcheck` | No-op echo back                |
     | anything else | (echoed)   | Useful for round-tripping `ws_init_ack`     |
+)""""
