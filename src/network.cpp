@@ -622,6 +622,22 @@ static void startStaServer() {
 	// Wire routes.
 	server.on("/", HTTP_GET, onRoot);
 	server.on("/script.js", HTTP_GET, onScriptJs);
+	// /openapi serves a Swagger UI page that loads /openapi.yaml from
+	// the same origin. See plans/openapi.yaml + src/html/openapi.html
+	// for the spec source. Same-origin matters -- browsers block the
+	// "Try it out" requests when the spec and the API are on different
+	// hosts, and the firmware doesn't send CORS headers. The HTML
+	// page has a yellow hint banner explaining this.
+	server.on("/openapi", HTTP_GET, [](AsyncWebServerRequest* req) {
+		req->send(200, "text/html", html_openapi_html);
+	});
+	server.on("/openapi.yaml", HTTP_GET, [](AsyncWebServerRequest* req) {
+		// application/yaml so Swagger UI recognises the content-type.
+		// Most swagger-ui builds also accept text/yaml and
+		// application/x-yaml; sending the canonical one avoids
+		// future drift if Swagger UI tightens its parser.
+		req->send(200, "application/yaml", html_openapi_yaml);
+	});
 	server.on("/ledOn", HTTP_GET, onLedOn);
 	server.on("/ledOff", HTTP_GET, onLedOff);
 	server.on("/flash", HTTP_GET, onFlash);
