@@ -261,11 +261,16 @@ scenario_state_json_shape() {
     local rc=0
     local body
     body="$(http_get /state.json)" || { echo "  FAIL  GET /state.json failed" >&2; return 1; }
-    # jq -e exits 0 iff the expression is truthy. We use `has(f)`
+    # jq -e exits 0 iff the expression is truthy. We use `has("f")`
     # to assert each field is present (even if its value is empty).
-    local field
+    # NOTE: `has(.f)` is wrong -- .f evaluates to the field's VALUE,
+    # not the key string, and `has()` rejects non-string keys with
+    # "Cannot check whether object has a boolean key". Strip the
+    # leading dot and quote the result.
+    local field key
     for field in .index .total .name .ledOn .flash .mode .uptimeMs .selectedAtUptimeMs; do
-        if ! echo "$body" | jq -e "has($field)" >/dev/null 2>&1; then
+        key="${field#.}"   # .ledOn -> ledOn
+        if ! echo "$body" | jq -e "has(\"$key\")" >/dev/null 2>&1; then
             echo "  FAIL  /state.json missing field $field" >&2
             rc=1
         fi
