@@ -5,6 +5,100 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-22T19:30:00.000Z — TDD read-back path for /consoles.json + single-target platformio.ini
+
+**Context:** The `POST /consoles.json` endpoint that landed in
+commit `3903164` wrote a new console config to LittleFS but
+returned only `{"status":"saved",...}`. There was no way for a
+client (or a test harness) to read back what actually landed on
+disk. A red-agent critique of the prior session's plan also flagged
+several firmware bugs that the existing harness couldn't surface
+(UB in `CurrentConsole()` on an empty vector, ArduinoJson re-serialize
+on the read path is not byte-stable, `.bss` zeroing means
+`currentConsoleIndex` is always 0 after a fresh boot). This pass
+adds the read-back path AND rewrites the harness to be TDD-driven —
+every assertion reads back the device's actual state, not response
+codes.
+
+**Decision:**
+
+1. **`GET /consoles.json` handler in `src/network.cpp::onConsolesJsonGet`.**
+   Reads raw bytes via the existing `retroroom_store::loadLiveConsoleConfig`
+   helper — no ArduinoJson on the read path. Tri-state:
+   - **200** + `Content-Length: <bytes>` + raw body when file present.
+   - **204** when `loadLiveConsoleConfig` returns `false` (missing file).
+   - **500** + `{"error":"fs mount failed"}` when `ensureMounted()` fails.
+   Method guard added to `consolesJsonOnBody` / `consolesJsonOnRequest`
+   so a GET with `Content-Length: 0` no longer trips the onBody
+   middleware into the `_tempObject` write path.
+2. **`GET /state.json` enriched** with three new fields: `total`
+   (current console count), `uptimeMs` (millis at response time),
+   `selectedAtUptimeMs` (millis at the moment the current console
+   was selected by `advanceConsole()` / `rewindConsole()`).
+   `StaticJsonDocument<256>` bumped to `<384>` for the extra fields.
+   Empty-vector guard added so `name=""` instead of UB when no
+   consoles are configured.
+3. **`uint32_t currentConsoleSelectedAtMs`** new global in
+   `src/consoles.{cpp,h}`, assigned at-the-moment-of-decision in
+   `advanceConsole()` / `rewindConsole()` — immediately after
+   `wraparoundNext()` returns, before any side effects
+   (`lightSingle` / `selectConsole` / broadcast). The contract is
+   documented in a comment so future readers know why the assignment
+   sits where it does. RAM-only; `.bss` zeroing on every RP2350 boot
+   is the lifetime contract.
+4. **Empty-vector guards** on `onConsoleNext` / `onConsolePrev` —
+   409 + `{"error":"no consoles configured"}\n` instead of UB on
+   `CurrentConsole().name.c_str()`. WS `next` / `prev` handlers
+   broadcast `"console:noop"` for the same case so a browser client
+   doesn't loop on a phantom advance.
+5. **Harness rewrite** in `agent-script/e2e-consoles-json.sh`. Two
+   new TDD primitives:
+   - `wait_for_state <jq-filter> <expected> <timeout_s>` — polls
+     `/state.json` every 500 ms and asserts a jq expression equals
+     the expected value. 500 ms cadence so a transition that falls
+     between two 1-second polls isn't missed.
+   - `post_and_verify_disk <file>` — POST + wait for `/healthcheck`
+     (asserting `mode==sta` after the reboot) + GET `/consoles.json`
+     + `cmp -s` against the POSTed file. The byte compare is the
+     strongest possible assertion: the operator's exact bytes landed
+     on disk, not a re-serialized copy (ArduinoJson v7
+     `serializeJson` is not byte-stable — minified, `\uXXXX` for
+     non-ASCII, no hex, numeric reformat). No minifier on the
+     harness side either.
+   `BOOT_WAIT_SECS` default bumped to 25 to cover STA reconnect.
+   Cycle scenarios simplified — `baseline_idx=0` hardcoded
+   (provable from `.bss` zeroing). Per-step `wait_for_state .index`
+   / `wait_for_state .name` after each `/next` / `/prev` so a
+   lying response can't pass. New `scenario_post_then_read_then_cycle`
+   runs the full POST + verify + forward + backward walk.
+6. **`platformio.ini` simplified to a single firmware target.** Dropped
+   `[env:pico_base]`, `[env:picow]`, `[env:pico_yd]` per the user's
+   "We no longer need to build for anything but the pico2w!". Only
+   `[env:pico2w]` (firmware) and `[env:test_native]` (host-side
+   Unity tests for the `lib/ConsoleConfig` functional core) remain.
+   `pio run` (no `-e`) now iterates just `pico2w`.
+
+**Consequences:**
+
+- All firmware changes compile cleanly on `[env:pico2w]` (RAM 14.5%,
+  Flash 14.2%). Host tests stay green: `pio test -e test_native`
+  35/35 pass.
+- `bash -n agent-script/e2e-consoles-json.sh` clean. Harness has
+  10 scenarios: `healthcheck`, `state-json-shape`,
+  `post-then-read-back`, `cycle-three-consoles`,
+  `cycle-three-consoles-prev`, `cycle-four-consoles`,
+  `post-rejects-malformed-json`, `post-rejects-unknown-tvinput`,
+  `post-empty-config`, `post-then-read-then-cycle`.
+- Live device verification deferred — the previous session's
+  CYW43 wedge incidents (suspected `CurrentConsole()` UB root cause
+  in `512397c`) need the operator's eyes on the bench. Harness is
+  ready to run as `./agent-script/e2e-consoles-json.sh --host
+  192.168.1.100 --all` whenever the device is reachable.
+- All work documented in `todo/open/2026-09-22_consoles-json-upload-endpoint.md`
+  (now updated to mark the readback path as done) + the handoff
+  `plans/2026-09-22_tdd-e2e-readback-HANDOFF.md`. The drop-envs
+  follow-up moved to `todo/done/2026-09-22_drop-non-pico2w-envs-done.md`.
+
 ## 2026-09-22T18:00:00.000Z — Pico 2 W CYW43 AsyncWebServer + SoftAP setup portal
 
 **Context:** The Pico 2 W (RP2350 + on-board CYW43) had a working
