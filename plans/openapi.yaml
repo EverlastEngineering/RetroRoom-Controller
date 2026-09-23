@@ -1,0 +1,706 @@
+openapi: 3.0.3
+info:
+  title: RetroRoom-Controller HTTP + WebSocket API
+  description: |
+    HTTP + WebSocket API served by the RetroRoom-Controller firmware on
+    the Raspberry Pi Pico 2 W (RP2350 + on-board CYW43 WiFi). The
+    firmware is built from this repo (`[env:pico2w]`); the single
+    firmware target as of 2026-09-22.
+
+    Two endpoint families:
+
+    1. **STA mode** (device joined the saved WiFi network): full surface
+       under `/`, including the read/write endpoints for console config
+       (`/consoles.json`), state polling (`/state.json`), console cycle
+       (`/next`, `/prev`), and the WebSocket push channel (`/ws`).
+    2. **SoftAP mode** (`RetroRoom-Setup`, no credentials yet): the
+       device serves only `/setup` (GET form, POST to write creds and
+       reboot) plus `/scan.json` (cached WiFi scan). All other STA
+       endpoints 404 until the device reboots into STA.
+
+    The `mode` field on `/state.json` and `/wifi` reports which family
+    is currently active ("sta" or "ap"). The e2e harness at
+    `agent-script/e2e-consoles-json.sh` only exercises the STA
+    surface; the SoftAP surface is documented here for completeness.
+
+    To browse this spec in Swagger UI:
+
+        npx --yes swagger-ui-cli@latest serve plans/openapi.yaml
+
+    Or paste the file contents into https://editor.swagger.io/.
+  version: "2026-09-22"
+  contact:
+    name: RetroRoom-Controller
+    url: https://github.com/jasoncopp/RetroRoom-Controller
+  license:
+    name: Project-internal
+
+servers:
+  - url: http://retroroom.local
+    description: mDNS hostname (default)
+  - url: http://192.168.1.100
+    description: Static IP fallback (no mDNS)
+
+tags:
+  - name: health
+    description: Liveness + WiFi status probes
+  - name: state
+    description: Polled state (LED, console selection, uptime)
+  - name: console
+    description: Console config read/write + cycle commands
+  - name: led
+    description: On-board LED control (also broadcast over WS)
+  - name: setup
+    description: SoftAP-mode first-boot WiFi configuration
+  - name: admin
+    description: Factory reset (CSRF-protected)
+  - name: ws
+    description: WebSocket push channel + text commands
+
+paths:
+  /healthcheck:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: |
+        Returns the literal string "OK\n". No auth, no side effects.
+        The e2e harness polls this until the device finishes booting
+        before issuing any other request.
+      responses:
+        "200":
+          description: Device is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK\n"
+
+  /wifi:
+    get:
+      tags: [health]
+      summary: Current WiFi status
+      description: |
+        Reports the device's current WiFi mode (STA vs SoftAP), IP, SSID,
+        and (in STA mode) RSSI.
+      responses:
+        "200":
+          description: WiFi status JSON.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/WifiSta"
+                  - $ref: "#/components/schemas/WifiAp"
+              examples:
+                sta:
+                  value: { mode: "sta", ip: "192.168.1.100", ssid: "GreyStoneManor24", rssi: -35 }
+                ap:
+                  value: { mode: "ap", ip: "192.168.4.1", ssid: "RetroRoom-Setup" }
+
+  /state.json:
+    get:
+      tags: [state]
+      summary: Current device state (for polling)
+      description: |
+        Snapshot of the device's runtime state. Used by the browser
+        UI's xhrget fallback path and by the e2e harness's
+        `wait_for_state` helper. All fields are populated on every
+        request; `name` is `""` (empty string) when no consoles are
+        configured, **not** omitted.
+
+        `uptimeMs` and `selectedAtUptimeMs` are both `millis()`
+        snapshots and wrap at ~49.7 days. The harness compares them
+        to prove /next / /prev actually advanced (the response body
+        could lie; `selectedAtUptimeMs` can't).
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceState"
+
+  /consoles.json:
+    get:
+      tags: [console]
+      summary: Read the live console config from LittleFS (raw bytes)
+      description: |
+        Serves the live `/consoles.json` byte-for-byte as it was
+        POSTed. No ArduinoJson re-serialization on the read path —
+        round-trip with `POST /consoles.json` is byte-identical.
+
+        Three response shapes:
+
+        | Status | Body                     | Meaning                          |
+        |--------|--------------------------|----------------------------------|
+        | 200    | raw config JSON          | File present                     |
+        | 204    | (empty)                  | File missing (factory-fresh)     |
+        | 500    | `{"error":"fs mount failed"}` | LittleFS mount failed        |
+
+        The e2e harness's `post_and_verify_disk` helper asserts the
+        200-body bytes match the POSTed file via `cmp -s`.
+      responses:
+        "200":
+          description: Live console config (any valid `ConsoleConfig`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsoleConfig"
+        "204":
+          description: No console config on disk yet.
+        "500":
+          description: LittleFS mount failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: "fs mount failed" }
+
+    post:
+      tags: [console]
+      summary: Replace the console config (validates + writes + reboots)
+      description: |
+        Accepts a JSON body matching `ConsoleConfig`. The firmware:
+
+        1. Reads the body via an `onBody` middleware (8 KB cap).
+        2. Validates it with the functional core
+           (`retroroom_core::validateConsoleConfigJson`).
+        3. Writes to LittleFS at `/consoles.json`, rotating two
+           rolling backups (`/consoles.json.bak1`, `/consoles.json.bak2`).
+        4. Schedules a reboot ~1.5 s later (so the 200 response drains
+           first).
+
+        On validation failure: 400 with `{"error": "<parser message>"}`.
+        The device does **not** reboot on a 400.
+
+        The body is written verbatim — bytes on disk == bytes from the
+        wire. Whitespace, ordering, and indentation are preserved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsoleConfig"
+            examples:
+              example1:
+                summary: Three consoles (NES/SNES/GEN)
+                externalValue: ../example-configurations/example1.json
+              example2:
+                summary: Four consoles
+                externalValue: ../example-configurations/example2.json
+              empty:
+                summary: Empty consoles array (harness uses this to test 409 paths)
+                externalValue: ../example-configurations/empty.json
+      responses:
+        "200":
+          description: Saved. Reboot scheduled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveResult"
+        "400":
+          description: Validation failed. Body is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                parse_error:
+                  value: { error: "JSON parse error: ..." }
+                unknown_tvinput:
+                  value: { error: "unknown tvInput 'HDMI' (no matching entry in irCodes)" }
+        "413":
+          description: Request body exceeds the 8 KB cap.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "body too large\n"
+
+  /next:
+    get:
+      tags: [console]
+      summary: Advance to the next console (wrap-around)
+      description: |
+        Increments `currentConsoleIndex` mod `HowManyConsoles()` and
+        returns the new index + name. Also broadcasts
+        `console:<name>:<index>` over the WebSocket push channel so
+        every connected browser sees the transition.
+
+        409 if no consoles are configured (no UB on the empty vector).
+      responses:
+        "200":
+          description: Advanced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsoleSelection"
+              example: { index: 1, name: "Super Nintendo Entertainment System" }
+        "409":
+          description: No consoles configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: "no consoles configured" }
+
+  /prev:
+    get:
+      tags: [console]
+      summary: Rewind to the previous console (wrap-around)
+      description: |
+        Decrements `currentConsoleIndex` mod `HowManyConsoles()` and
+        returns the new index + name. Also broadcasts
+        `console:<name>:<index>` over the WebSocket push channel.
+
+        409 if no consoles are configured.
+      responses:
+        "200":
+          description: Rewound.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsoleSelection"
+        "409":
+          description: No consoles configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: "no consoles configured" }
+
+  /ledOn:
+    get:
+      tags: [led]
+      summary: Turn the on-board LED on
+      description: |
+        Sets `statusLedActive = 0x1` and broadcasts `ledOn` over WS.
+        Idempotent.
+      responses:
+        "200":
+          description: Acknowledged.
+          content:
+            text/plain:
+              schema: { type: string, example: "OK\n" }
+
+  /ledOff:
+    get:
+      tags: [led]
+      summary: Turn the on-board LED off
+      description: |
+        Sets `statusLedActive = 0x0` and broadcasts `ledOff` over WS.
+        Idempotent.
+      responses:
+        "200":
+          description: Acknowledged.
+          content:
+            text/plain:
+              schema: { type: string, example: "OK\n" }
+
+  /flash:
+    get:
+      tags: [led]
+      summary: Toggle the flash state
+      description: |
+        Flips the `flash` flag and broadcasts `flash on` or
+        `flash off` over WS.
+      responses:
+        "200":
+          description: New flash state.
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum: ["flash on\n", "flash off\n"]
+
+  /setup:
+    get:
+      tags: [setup]
+      summary: SoftAP-mode - serve the WiFi-setup HTML form
+      description: |
+        Available only while the device is in SoftAP mode (no
+        `/wifi.json` on first boot, or saved creds failed). Returns
+        the setup form HTML.
+      responses:
+        "200":
+          description: Setup form.
+          content:
+            text/html:
+              schema: { type: string }
+
+    post:
+      tags: [setup]
+      summary: SoftAP-mode - write credentials and reboot
+      description: |
+        Accepts `application/x-www-form-urlencoded` fields `ssid` and
+        `pass`, writes them to `/wifi.json` on LittleFS, and schedules
+        a reboot. The new credentials take effect on the next boot;
+        the device transitions from SoftAP to STA mode and joins the
+        named network.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [ssid]
+              properties:
+                ssid:
+                  type: string
+                  description: WiFi SSID (2..32 chars).
+                pass:
+                  type: string
+                  description: WiFi password (0..63 chars). Empty string = open network.
+      responses:
+        "200":
+          description: Credentials written; reboot scheduled.
+          content:
+            text/html:
+              schema: { type: string }
+        "400":
+          description: Missing or empty SSID.
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum: ["missing ssid\n", "empty ssid\n"]
+
+  /scan.json:
+    get:
+      tags: [setup]
+      summary: Cached WiFi scan results
+      description: |
+        Returns the WiFi networks discovered during a single boot-time
+        scan. The scan runs once before the SoftAP comes up (the
+        CYW43 can't scan while a client is associated with an AP),
+        and the result is cached for the lifetime of the firmware.
+        Available in both SoftAP and STA modes.
+      responses:
+        "200":
+          description: Cached scan results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+
+  /factory-reset:
+    get:
+      tags: [admin]
+      summary: Serve the factory-reset confirmation page
+      description: |
+        Renders `src/html/factory-reset.html` with a freshly
+        generated random nonce injected into the `__NONCE__`
+        placeholder. The nonce is required for the POST.
+
+        Response carries `Cache-Control: no-store` to defeat
+        browser-driven auto-resubmit (the original two-step design
+        was defeated by a browser re-POST after navigation).
+      responses:
+        "200":
+          description: Confirmation page with embedded nonce.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "no-store, no-cache, must-revalidate, max-age=0" }
+          content:
+            text/html:
+              schema: { type: string }
+
+    post:
+      tags: [admin]
+      summary: Wipe /wifi.json and reboot
+      description: |
+        Removes `/wifi.json` from LittleFS and schedules a reboot.
+        On reboot, the device comes back up in SoftAP mode (no creds).
+
+        Requires the `nonce` form field to match the most recently
+        issued one (see `GET /factory-reset`). The nonce is rotated
+        on each successful POST to prevent replay.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [nonce]
+              properties:
+                nonce:
+                  type: string
+                  description: Hex nonce from the confirmation page (must match the server's last-issued value).
+      responses:
+        "200":
+          description: Reset triggered; reboot scheduled.
+          content:
+            text/html:
+              schema: { type: string }
+        "400":
+          description: Missing or non-matching nonce.
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /:
+    get:
+      tags: [state]
+      summary: Legacy iframe-wrapper UI (index.html)
+      responses:
+        "200":
+          description: HTML.
+          content:
+            text/html:
+              schema: { type: string }
+
+  /script.js:
+    get:
+      tags: [state]
+      summary: Legacy WebSocket client script
+      responses:
+        "200":
+          description: JavaScript.
+          content:
+            application/javascript:
+              schema: { type: string }
+
+  /setup.js:
+    get:
+      tags: [setup]
+      summary: SoftAP setup form's JavaScript
+      responses:
+        "200":
+          description: JavaScript.
+          content:
+            application/javascript:
+              schema: { type: string }
+
+components:
+  schemas:
+    DeviceState:
+      type: object
+      description: Runtime state snapshot from `GET /state.json`.
+      required:
+        - index
+        - total
+        - name
+        - ledOn
+        - flash
+        - mode
+        - uptimeMs
+        - selectedAtUptimeMs
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: Currently selected console index.
+        total:
+          type: integer
+          minimum: 0
+          description: Number of configured consoles. 0 means no consoles.
+        name:
+          type: string
+          description: |
+            Currently selected console name. Empty string (`""`) when
+            `total == 0`. The `onStateJson` handler's empty-vector
+            guard returns this rather than UB-deref'ing the empty
+            vector.
+        ledOn:
+          type: boolean
+          description: On-board LED state.
+        flash:
+          type: boolean
+          description: Flash flag (cycles the LED at 1 Hz when true).
+        mode:
+          type: string
+          enum: [sta, ap]
+          description: WiFi mode (`sta` = joined the saved network, `ap` = SoftAP portal).
+        uptimeMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            `millis()` at handler time. Wraps at ~49.7 days.
+            The harness asserts `[1000, 3_600_000]` for sanity.
+        selectedAtUptimeMs:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            `millis()` at the moment the current console was
+            selected by /next or /prev. Advances on every cycle;
+            the harness compares it to prove motion really happened.
+
+    ConsoleConfig:
+      type: object
+      description: |
+        The firmware's console config schema, validated by
+        `lib/ConsoleConfig::validateConsoleConfigJson`. The body is
+        persisted byte-verbatim, so any field order, indentation, or
+        whitespace works. Required: `irCodes`, `consoleNames`,
+        `consoles`. The `consoles` array may be empty.
+      required: [irCodes, consoleNames, consoles]
+      properties:
+        irCodes:
+          type: object
+          description: |
+            Map from a logical TV-input name (e.g. `"Video"`,
+            `"SVideo"`) to a 12-bit SIRC hex string (e.g. `"0x430"`).
+            Each `consoles[].tvInput` must be a key here.
+          additionalProperties:
+            type: string
+            pattern: "^0x[0-9a-fA-F]{1,4}$"
+            example: "0x430"
+        consoleNames:
+          type: object
+          description: |
+            Map from a console id (`consoles[].id`) to a human-readable
+            display name. Used in `/state.json.name`, the WebSocket
+            `console:<name>:<idx>` broadcast, and the operator UI.
+          additionalProperties:
+            type: string
+            example: "Nintendo Entertainment System"
+        consoles:
+          type: array
+          description: |
+            Ordered list of consoles. The first entry becomes the
+            boot-time selection (after the `.bss`-zeroed index
+            starts at 0). An empty array is legal and exercises the
+            409-on-/next path.
+          items:
+            $ref: "#/components/schemas/Console"
+
+    Console:
+      type: object
+      required: [id, tvInput, selectorPosition, ledPosition, ledWidth]
+      properties:
+        id:
+          type: string
+          description: Short console identifier; must be a key in `consoleNames`.
+          example: "NES"
+        tvInput:
+          type: string
+          description: TV-input name; must be a key in `irCodes`.
+          example: "Video"
+        selectorPosition:
+          type: integer
+          minimum: 1
+          description: StackSelector pin to assert for this console (1-based).
+        ledPosition:
+          type: integer
+          minimum: 0
+          description: First LED index in the WS2812 ring to light for this console.
+        ledWidth:
+          type: integer
+          minimum: 1
+          description: How many LEDs to light (the segment width).
+
+    SaveResult:
+      type: object
+      description: 200 response from `POST /consoles.json`.
+      required: [status, consoles, irCodes]
+      properties:
+        status:
+          type: string
+          enum: [saved]
+        consoles:
+          type: integer
+          description: Count of `consoles[]` entries in the saved payload.
+        irCodes:
+          type: integer
+          description: Count of `irCodes` entries in the saved payload.
+
+    ConsoleSelection:
+      type: object
+      description: 200 response from `GET /next` / `GET /prev`.
+      required: [index, name]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        name:
+          type: string
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message (not localized).
+
+    WifiSta:
+      type: object
+      required: [mode, ip, ssid, rssi]
+      properties:
+        mode: { type: string, enum: [sta] }
+        ip: { type: string, example: "192.168.1.100" }
+        ssid: { type: string, example: "GreyStoneManor24" }
+        rssi:
+          type: integer
+          description: Received signal strength in dBm (negative; closer to 0 = stronger).
+
+    WifiAp:
+      type: object
+      required: [mode, ip, ssid]
+      properties:
+        mode: { type: string, enum: [ap] }
+        ip: { type: string, example: "192.168.4.1" }
+        ssid: { type: string, example: "RetroRoom-Setup" }
+
+    ScanResult:
+      type: object
+      required: [_count, networks]
+      properties:
+        _count:
+          type: integer
+          description: Number of networks in the cached scan.
+        networks:
+          type: array
+          items:
+            type: object
+            required: [ssid, rssi, open, auth, channel]
+            properties:
+              ssid: { type: string }
+              rssi: { type: integer, description: dBm }
+              open: { type: boolean, description: True if no encryption. }
+              auth: { type: integer, description: WiFi auth mode (numeric enum from the CYW43 driver). }
+              channel: { type: integer, minimum: 1, maximum: 14 }
+
+  responses:
+    NotFound:
+      description: SoftAP-mode handler not available (404 in STA mode too, for unknown paths).
+      content:
+        text/plain:
+          schema: { type: string }
+
+# WebSocket is not a first-class OpenAPI 3.0 construct. Documented here
+# out-of-band for human readers; not consumed by Swagger UI.
+x-websocket:
+  endpoint: /ws
+  description: |
+    AsyncWebServer WebSocket push channel. The browser UI's
+    `src/html/script.js` opens `ws://<host>/ws` and listens for
+    server-pushed events. The harness does NOT cover this surface
+    (would need `websocat` or a Python fallback); see
+    `todo/open/2026-09-22_consoles-json-upload-endpoint.md` for the
+    open follow-up.
+
+    **Server -> Client** (text frames broadcast by the firmware):
+    | Frame              | Trigger                                              |
+    |--------------------|------------------------------------------------------|
+    | `ledOn`            | After `GET /ledOn` or WS `ledOn` command             |
+    | `ledOff`           | After `GET /ledOff` or WS `ledOff` command           |
+    | `flash on`         | After `GET /flash` flip (or WS `flash` command)      |
+    | `flash off`        | After `GET /flash` flip (or WS `flash` command)      |
+    | `healthcheck`      | After `GET /healthcheck` or WS `healthcheck` command |
+    | `console:<n>:<i>`  | After `GET /next` / `GET /prev` advance               |
+    | `console:noop`     | After WS `next` / `prev` if no consoles configured   |
+    | `ws_init_ack`      | Echo on every new client connection                  |
+
+    **Client -> Server** (text frames the firmware recognizes):
+    | Frame         | Equivalent | Notes                                       |
+    |---------------|------------|---------------------------------------------|
+    | `ledOn`       | `GET /ledOn` | |
+    | `ledOff`      | `GET /ledOff` | |
+    | `flash`       | `GET /flash` | Toggles (the GET takes no arg; same here) |
+    | `next`        | `GET /next` | Broadcasts `console:noop` if empty vector |
+    | `prev`        | `GET /prev` | Broadcasts `console:noop` if empty vector |
+    | `healthcheck` | `GET /healthcheck` | No-op echo back                |
+    | anything else | (echoed)   | Useful for round-tripping `ws_init_ack`     |

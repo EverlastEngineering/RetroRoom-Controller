@@ -1,0 +1,83 @@
+R""""(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RetroRoom API — Swagger UI</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
+<style>
+  /* Hide the default top bar; the page title is enough and the
+     default "Select a definition" dropdown is noise on a single-spec
+     page. Keeps the layout focused on operations. */
+  body { margin: 0; background: #fafafa; }
+  .swagger-ui .topbar { display: none; }
+  /* Soften the brand bar; we still want the page recognisable. */
+  .swagger-ui .info { margin: 1.5em 1.5em 0.5em; }
+  .swagger-ui .scheme-container { padding: 0.5em 1.5em; }
+  /* "Try it out" sends cross-origin to the device. The browser blocks
+     that unless the device sends the right CORS headers (it does not
+     by default -- see the note at the bottom of this file). The
+     swagger-ui config below sets `withCredentials: false` so the
+     preflight is just an OPTIONS, but if the device replies 200 to
+     OPTIONS without ACAO headers the actual request will still be
+     blocked. Workaround: open the swagger page from the device
+     itself (http://<device>/openapi), not from editor.swagger.io,
+     so the browser treats the spec + the API as same-origin. */
+  .cors-hint {
+    margin: 0.5em 1.5em 1em; padding: 0.75em 1em;
+    background: rgb(255, 248, 220); border-left: 4px solid rgb(204, 170, 0);
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 0.9em; color: rgb(60, 50, 0);
+  }
+  .cors-hint code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="cors-hint">
+  <strong>For "Try it out" to work, open this page <em>from the device itself</em>:</strong>
+  navigate to <code>http://&lt;device&gt;/openapi</code> (same origin as the API).
+  Loading this URL from <code>editor.swagger.io</code> or any other host will
+  cause browsers to block the cross-origin request, even if the device is
+  reachable.
+</div>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
+<script>
+  window.onload = () => {
+    window.ui = SwaggerUIBundle({
+      // Same-origin fetch -- the firmware serves the spec from
+      // GET /openapi.yaml, so the browser will use the device's IP
+      // for both the spec and the "Try it out" calls without
+      // needing CORS headers.
+      url: "openapi.yaml",
+      dom_id: "#swagger-ui",
+      // Deep-linking via operationId so a specific call can be
+      // bookmarked / shared.
+      deepLinking: true,
+      // Display the operationId / tags from plans/openapi.yaml.
+      displayOperationId: true,
+      defaultModelsExpandDepth: 1,
+      defaultModelExpandDepth: 1,
+      // Don't try to validate against any spec beyond what we ship.
+      validatorUrl: null,
+      // No "persist authorization" -- there is no auth in the
+      // firmware's HTTP surface. Saves the user a misleading UI
+      // affordance.
+      persistAuthorization: false,
+      // Try-it-out starts collapsed; the user has to opt in per
+      // operation. Safer default for a device-facing page.
+      tryItOutEnabled: false,
+      // Layout: stack (vertical). The default "BaseLayout" puts
+      // the operations list in a fixed sidebar, which is awkward
+      // on a phone.
+      layout: "BaseLayout",
+      // Pre-select the same-origin server (the spec already lists
+      // `http://retroroom.local` and `http://192.168.1.100`).
+      // Swagger UI picks the first by default; that's fine.
+    });
+  };
+</script>
+</body>
+</html>
+)""""
