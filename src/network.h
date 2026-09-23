@@ -35,7 +35,21 @@
 //   POST /consoles.json-> accept a console-config JSON body, validate it, save to LittleFS with two backups, reboot (see src/network.cpp for details)
 //   GET  /setup        -> SoftAP-only: HTML form to set SSID + password
 //   POST /setup        -> SoftAP-only: write creds to LittleFS, reboot
+//   GET  /scan.json    -> Cached WiFi scan results (cached at boot; the CYW43
+//                         can't scan while a client is associated with the SoftAP).
+//                         Available in both AP and STA modes.
+//   GET  /factory-reset-> Two-step wipe with a CSRF nonce embedded in the form.
+//                         GET serves the confirmation page; POST must echo the
+//                         nonce back (auto-resubmitted forms from stale tabs fail
+//                         the nonce check). On success: removes /wifi.json and reboots.
 //   GET  /wifi         -> JSON of current WiFi status (IP, RSSI, mode)
+//   GET  /openapi      -> Swagger UI page. Loads /openapi.yaml same-origin so
+//                         "Try it out" works without CORS. See plans/openapi.yaml
+//                         for the spec source.
+//   GET  /openapi.yaml -> Raw OpenAPI 3.0 spec (24 KB), served byte-for-byte from
+//                         the auto-generated src/html/openapi_yaml_bytes.h PROGMEM
+//                         array. Regenerate after editing plans/openapi.yaml with:
+//                           ./agent-script/encode-openapi.py > src/html/openapi_yaml_bytes.h
 //   WS   /ws           -> broadcastSocketMessage() push channel. Recognized text commands: ledOn, ledOff, flash, next, prev, healthcheck (echo for unknown).
 #if defined(HAS_WIFI)
 
