@@ -27,4 +27,4 @@ perfboard header so the wiring is straightforward.
 ## Related
 - [todo/open/2026-09-12_cyw43-picow-wifi.md](../open/2026-09-12_cyw43-picow-wifi.md) -- once
   WiFi lands the OLED is the natural place to show IP + status.
-- [pico-pin-mapping.md](../../pico-pin-mapping.md) Section 2 -- I2C pins reserved for this.
+- [pin-map-chart.md](../../pin-map-chart.md) -- I2C pins (GP2/GP3 I2C1, GP4/GP5 I2C0) reserved for this.

@@ -22,22 +22,38 @@
 	// for the CYW43 / webserver bring-up.
 	//
 	// MANUAL_OE_PIN: drives an external output-enable MOSFET (high = LED
-	// ring blanked for power-saving / standby). GP12 is free on the
-	// standard Pico header, away from UART0 (GP0/GP1) and I2C0 (GP4/GP5).
-	// The `#ifdef MANUAL_OE_PIN` guards in src/state.cpp and src/main.cpp
-	// activate automatically once this define is set. To temporarily
-	// disable, comment the line out -- the firmware falls back to
-	// FastLED.setBrightness(0) for the off path.
-	#define MANUAL_OE_PIN     12
-	#define ROTARY_PIN_IN1    2
-	#define ROTARY_PIN_IN2    3
-	#define DATA_PIN          4   // FastLED ring on GP4
-	#define TOUCH_SENSOR_PIN  5
-	#define ROTARY_SELECTOR_PIN 6
-	#define IR_CONTROL_PIN    7
+	// ring blanked for power-saving / standby). GP11 sits at the end of
+	// the StackSelector cluster (GP8/9/10 + OE on GP11 = contiguous 4-pin
+	// functional block). The `#ifdef MANUAL_OE_PIN` guards in src/state.cpp
+	// and src/main.cpp activate automatically once this define is set. To
+	// temporarily disable, comment the line out -- the firmware falls back
+	// to FastLED.setBrightness(0) for the off path.
+	//
+	// SELECTED_CONSOLE_LED_STRING_DATA / NUM_SELECTED_CONSOLE_LED_STRING_LEDS
+	// reserve the second FastLED strip's data pin + length for the future
+	// JSON-driven "above-console" LED segment (c.led_position /
+	// c.led_width in lib/ConsoleConfig). Defined but not yet referenced by
+	// any .cpp -- the second-strip wiring lands in a follow-up commit.
+	// Sized for the largest example config (example2.json MAME entry:
+	// ledPosition=27 + ledWidth=15 = 42 LEDs, rounded up to 64 for headroom).
+	//
+	// Pin reshuffle rationale lives at pin-map-chart.md (source of truth).
+	// Key choices: I2C0 (GP4/GP5) + I2C1 (GP2/GP3) + SPI0 (GP16..GP19) +
+	// ADC (GP26..GP28) blocks are all fully free for future expansion.
+	#define MANUAL_OE_PIN     11
+	#define NEXT_CONSOLE_PIN  6   // Hardware "next console" push-button (active-low, INPUT_PULLUP). Wired in src/controls.cpp via EasyButton.
+	#define PREV_CONSOLE_PIN  7   // Hardware "previous console" push-button (active-low, INPUT_PULLUP). Wired in src/controls.cpp via EasyButton.
 	#define ARM_PIN           8
 	#define CYCLE_PIN         9
 	#define ENABLE_PIN        10  // StackSelector ENABLE on GP10; revise on perfboard
+	#define TOUCH_SENSOR_PIN  12  // Capacitive touch; on perfboard connects to rotary encoder ground body for a clean common-ground reference.
+	#define ROTARY_SELECTOR_PIN 13
+	#define ROTARY_PIN_IN1    14
+	#define ROTARY_PIN_IN2    15
+	#define DATA_PIN          20  // FastLED ring (above-console selection ring) on GP20
+	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Reserved for the second FastLED strip; wiring lands in a follow-up commit.
+	#define IR_CONTROL_PIN    22
+	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
 #elif defined(ARDUINO_YD_RP2040)
 	// VCC-GND Studio YD-RP2040 (dev board currently on the desk). Distinct
 	// from the standard Pico block above because:
@@ -58,15 +74,19 @@
 	// from anything else; the rest of the GPIO assignments are placeholders
 	// that compile but don't connect to anything real until a perfboard
 	// revision lands.
-	#define ROTARY_PIN_IN1    2
-	#define ROTARY_PIN_IN2    3
-	#define DATA_PIN          23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
-	#define TOUCH_SENSOR_PIN  24  // YD-RP2040 USR button (PIN_USRKEY)
-	#define ROTARY_SELECTOR_PIN 6
-	#define IR_CONTROL_PIN    7
+	#define NEXT_CONSOLE_PIN  6   // Placeholder; the YD dev board has no physical next/prev buttons.
+	#define PREV_CONSOLE_PIN  7
 	#define ARM_PIN           8
 	#define CYCLE_PIN         9
 	#define ENABLE_PIN        10
+	#define TOUCH_SENSOR_PIN  24  // YD-RP2040 USR button (PIN_USRKEY)
+	#define ROTARY_SELECTOR_PIN 13
+	#define ROTARY_PIN_IN1    14
+	#define ROTARY_PIN_IN2    15
+	#define DATA_PIN          23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
+	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Placeholder; no second strip wired on the YD.
+	#define IR_CONTROL_PIN    22
+	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
 #endif
 
 /** Consoles */

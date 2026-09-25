@@ -4,7 +4,7 @@
 **Deferred on:** 2026-09-23
 **Branch:** session/pico-2-wireless
 **File anchor:** [src/stackselector.h](../../src/stackselector.h), [src/stackselector.cpp](../../src/stackselector.cpp), [src/configuration.h](../../src/configuration.h)
-**Related doc:** [pico-pin-mapping.md](../../pico-pin-mapping.md) Section 5
+**Related doc:** [pin-map-chart.md](../../pin-map-chart.md)
 
 ## What
 When the StackSelector perfboard revision lands, settle on the actual
@@ -30,7 +30,7 @@ perfboard will have specific GPIO assignments that may differ.
 3. Update the `#define` values in [src/configuration.h](../../src/configuration.h).
 4. If anything on the perfboard overlaps with GP0/GP1 (UART0) or GP25
    (LED_BUILTIN), document the conflict and pick a different pin.
-5. Update [pico-pin-mapping.md](../../pico-pin-mapping.md) Section 2 + KiCad net list.
+5. Update [pin-map-chart.md](../../pin-map-chart.md) + KiCad net list if any pins change.
 6. Smoke test: load the firmware on the perfboard, run
    `advanceConsole()` (USR button → wraps `currentConsoleIndex`), and
    confirm the LEDs track on the actual hardware.

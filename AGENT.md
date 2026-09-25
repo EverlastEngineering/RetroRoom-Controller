@@ -18,8 +18,9 @@ The active branch is `session/pico-2-wireless`.
 Layout: `src/` for shell code, `lib/ConsoleConfig/` for the pure
 functional core (console JSON parser + selection math), `test/`
 for host-side Unity tests, `todo/` for per-item open/done/deferred
-files, `pinouts/` for hardware notes, `pico-pin-mapping.md` for the
-authoritative per-role pin table.
+files, `pinouts/` for hardware notes, `pin-map-chart.md` for the
+authoritative per-pin table (per-role `#define` comments live in
+`src/configuration.h`).
 
 ## 1. Build / Flash / Monitor (PlatformIO)
 
@@ -188,7 +189,7 @@ declared in `platformio.ini` — no Arduino toolchain required.
 
 ## 7. When in doubt
 
-Read `readme.md` (high-level feature checklist), `pico-pin-mapping.md`
+Read `readme.md` (high-level feature checklist), `pin-map-chart.md`
 (authoritative pin table), `LOG.md` (recent decisions), and the
 relevant file in `todo/open/` (current work). Don't read
 `todo/done/` unless you're trying to understand history; everything
