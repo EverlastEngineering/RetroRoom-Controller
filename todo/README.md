@@ -69,7 +69,6 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-- `2026-09-24_pin-map-consolidation` — make `pin-map-chart.md` the single source of truth; delete `pico-pin-mapping.md` + `pin-map-plan.md`; rewire all references
 - `2026-09-24_i2c-lcd-console-name` — 16×2 I2C LCD on GP4/GP5 shows console name + tagline (scrolls if >16 chars), `RetroRoom` / `Sit and Play` welcome, backlight auto-off after `lcd.backlightOffAfterMs`
 - `2026-09-24_console-config-lcd-fields` — JSON schema change: per-console `tagline` + top-level `lcd.backlightOffAfterMs`; backfill `example1.json` + `example2.json` from `tag-lines.md`
 
@@ -84,6 +83,7 @@ with current ones. Per-file gives:
 - `b603d4b` — pinout doc
 - `41c73e5` — `TODO.md` update bookkeeping
 - `643be7c` — IR restore via `z3t0/IRremote@^4.7.1` + `MANUAL_OE_PIN = GP12`
+- `ca03bc0` — `pin-map-chart.md` promoted to source of truth; `pico-pin-mapping.md` + `pin-map-plan.md` deleted; references rewired
 - `2026-09-22_drop-non-pico2w-envs` — single-target `platformio.ini` ([env:pico2w] only)
 - `2026-09-21_pico-2-w-platform` — Pico 2 W bring-up + CYW43 webserver
 - `2026-09-22_consoles-json-upload-endpoint` — POST/GET `/consoles.json` + TDD harness
