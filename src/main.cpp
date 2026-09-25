@@ -11,6 +11,8 @@
 
 #include "main.h"
 
+#include "display.h"
+
 // consoleDefinitions() is defined in src/consoles.cpp and reads the embedded
 // JSON via the functional core (lib/ConsoleConfig). On boot it prints the
 // number of consoles loaded so the user can confirm the JSON parser
@@ -64,6 +66,16 @@ void setup() {
 #endif
 	consoleDefinitions();
 	selectStack_init();
+#if defined(HAS_LCD)
+	// 16x2 I2C LCD -- welcome screen + live console name. Must come
+	// AFTER consoleDefinitions() so the live display can show the
+	// current console from the start.
+	display_init();
+	// Arm the backlight-off timer now (no selectConsole() call has
+	// happened yet, so without this the backlight would stay on
+	// forever).
+	display_wake();
+#endif
 	Serial.println("Setup Complete.");
 	Serial.flush();
 }
@@ -88,6 +100,12 @@ void loop() {
 	// OE internally; main.cpp never touches the LED pin directly.
 	// No-op when `flash` is false; 1 Hz toggle while it's true.
 	flashLedTick();
+
+	// Pump the LCD driver -- welcome -> live transition, scrolling,
+	// backlight auto-off. No-op when HAS_LCD is undefined.
+#if defined(HAS_LCD)
+	display_loop();
+#endif
 
 	// Liveness heartbeat over Serial. See heartbeatTick() in
 	// src/state.cpp -- without this a stuck radio looks identical

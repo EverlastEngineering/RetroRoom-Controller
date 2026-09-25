@@ -6,6 +6,7 @@
 
 #include "lighting.h"
 #include "consoleconfig_store.h"
+#include "display.h"
 #if defined(HAS_IR)
 #include "ircontrol.h"
 #endif
@@ -154,6 +155,10 @@ void selectConsole(const Console& c) {
 #if defined(HAS_IR)
 	setInput(c.tvinput);
 #endif
+	// LCD update + backlight wake. The display_* calls are inline
+	// no-ops when HAS_LCD is undefined (see display.h).
+	display_show_console(c.name.c_str(), c.tagline.c_str());
+	display_wake();
 }
 
 void advanceConsole() {
