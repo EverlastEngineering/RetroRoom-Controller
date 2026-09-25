@@ -13,6 +13,14 @@
 RotaryEncoder *encoder = nullptr;
 EasyButton rotarySelector(ROTARY_SELECTOR_PIN);
 EasyButton touchSensor(TOUCH_SENSOR_PIN,35,true,false);
+// Hardware next/prev console buttons. Mirrors the touchSensor wiring:
+// EasyButton handles debounce + (where supported) interrupt-driven
+// detection. Both pins are active-low with internal pull-up enabled
+// via the EasyButton constructor's debounce_ms / pullup flags. Pin
+// numbers come from src/configuration.h (NEXT_CONSOLE_PIN, PREV_CONSOLE_PIN);
+// see pin-map-chart.md for the authoritative perfboard layout.
+EasyButton nextConsoleButton(NEXT_CONSOLE_PIN);
+EasyButton prevConsoleButton(PREV_CONSOLE_PIN);
 
 bool isTouched = false;
 volatile bool hasTouchInterruptFired = false;
@@ -58,6 +66,31 @@ void controls_init() {
 		attachInterrupt(digitalPinToInterrupt(TOUCH_SENSOR_PIN), touchSensorISR, CHANGE);
 		Serial.println("Button will be used through interrupts");
 	}
+
+	// next / prev console push-buttons. These are the hardware counterpart
+	// to the /next + /prev HTTP endpoints (src/network.cpp::onConsoleNext /
+	// onConsolePrev) and the "next" / "prev" WebSocket commands. Same
+	// shell functions as the HTTP path -- advanceConsole() / rewindConsole()
+	// in src/consoles.cpp -- so the LED ring paint, WS broadcast, and
+	// `selectedAtUptimeMs` stamp all happen once whether the trigger is
+	// a button press, an HTTP GET, or a WS frame.
+	//
+	// IMPORTANT: register via onPressed() only -- same caveat as the
+	// touch sensor above. Registering onPressedFor would set _was_btn_held
+	// = true on any press longer than that threshold and silently swallow
+	// advanceConsole() / rewindConsole() on release.
+	nextConsoleButton.begin();
+	nextConsoleButton.onPressed(nextConsolePressed);
+	if (nextConsoleButton.supportsInterrupt()) {
+		attachInterrupt(digitalPinToInterrupt(NEXT_CONSOLE_PIN), nextConsoleISR, CHANGE);
+		Serial.println("Next-button will be used through interrupts");
+	}
+	prevConsoleButton.begin();
+	prevConsoleButton.onPressed(prevConsolePressed);
+	if (prevConsoleButton.supportsInterrupt()) {
+		attachInterrupt(digitalPinToInterrupt(PREV_CONSOLE_PIN), prevConsoleISR, CHANGE);
+		Serial.println("Prev-button will be used through interrupts");
+	}
 }
 
 
@@ -83,6 +116,35 @@ void rotarySelectorISR() {
 
 void touchSensorISR() {
 	hasTouchInterruptFired = true;
+}
+
+void nextConsolePressed() {
+	// Forward step. Same shell function as the /next HTTP handler and
+	// the "next" WebSocket command -- see the comment in controls_init()
+	// for the contract. advanceConsole() logs the new index, paints
+	// lightSingle() on the ring, broadcasts "console:<name>:<idx>" over
+	// WS, and stamps currentConsoleSelectedAtMs for the e2e harness.
+	advanceConsole();
+}
+
+void prevConsolePressed() {
+	// Backward step. Same shell function as the /prev HTTP handler and
+	// the "prev" WebSocket command -- see advanceConsole() for the
+	// contract. rewindConsole() mirrors advanceConsole() exactly except
+	// the wraparound direction is -1 instead of +1.
+	rewindConsole();
+}
+
+void nextConsoleISR() {
+	// Defer the read to next loop() iteration so we don't do anything
+	// non-trivial in an ISR. EasyButton's read() walks its own
+	// debounce state machine and may invoke _pressed_callback(); both
+	// are fine off-ISR.
+	nextConsoleButton.read();
+}
+
+void prevConsoleISR() {
+	prevConsoleButton.read();
 }
 
 void touchDetected() {

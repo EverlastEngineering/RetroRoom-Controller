@@ -15,6 +15,15 @@
 // perfboard lands, the same pin is the capacitive touch input.
 extern EasyButton touchSensor;
 
+// nextConsoleButton / prevConsoleButton are the hardware counterpart to
+// the /next + /prev HTTP endpoints and the "next" / "prev" WebSocket
+// commands. Wired via EasyButton (same library as touchSensor) so the
+// debounce / interrupt-or-poll path is identical to the existing buttons.
+// Pin numbers come from src/configuration.h (NEXT_CONSOLE_PIN, PREV_CONSOLE_PIN);
+// see pin-map-chart.md for the authoritative perfboard layout.
+extern EasyButton nextConsoleButton;
+extern EasyButton prevConsoleButton;
+
 extern void controls_init();
 extern void rotaryEncoderTick();
 extern int currentConsoleIndex;
@@ -23,6 +32,10 @@ void rotarySelectorPressed();
 void sequenceElapsed();
 void rotarySelectorISR();
 void touchSensorISR();
+void nextConsolePressed();
+void prevConsolePressed();
+void nextConsoleISR();
+void prevConsoleISR();
 // Kept as stubs (no caller in src/main.cpp right now); these will be
 // re-wired to drive console advance from the YD USR button when the perfboard
 // capacitive-touch input is brought up (see TODO.md).
