@@ -1,7 +1,8 @@
 # StackSelector perfboard pin map
 
-**Status:** open
-**Branch:** session/merge-pico-json
+**Status:** deferred (blocked on perfboard schematic)
+**Deferred on:** 2026-09-23
+**Branch:** session/pico-2-wireless
 **File anchor:** [src/stackselector.h](../../src/stackselector.h), [src/stackselector.cpp](../../src/stackselector.cpp), [src/configuration.h](../../src/configuration.h)
 **Related doc:** [pico-pin-mapping.md](../../pico-pin-mapping.md) Section 5
 
@@ -33,6 +34,13 @@ perfboard will have specific GPIO assignments that may differ.
 6. Smoke test: load the firmware on the perfboard, run
    `advanceConsole()` (USR button → wraps `currentConsoleIndex`), and
    confirm the LEDs track on the actual hardware.
+
+## Resolution (2026-09-23)
+**Deferred.** No perfboard schematic has landed; `ARM_PIN=8`,
+`CYCLE_PIN=9`, `ENABLE_PIN=10` in
+[src/configuration.h](../../src/configuration.h) remain the
+placeholder values from the original 2026-09-12 plan. Will move back
+to `open/` once the perfboard is on the bench.
 
 ## Related
 - [src/stackselector.cpp](../../src/stackselector.cpp): `selectStack(int position)`

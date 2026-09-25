@@ -1,9 +1,10 @@
 # CYW43 (Pico-W) WiFi
 
-**Status:** open
-**Branch:** session/merge-pico-json
+**Status:** done (superseded)
+**Completed:** 2026-09-23
+**Branch:** session/pico-2-wireless
 **File anchor:** [src/network.h](../../src/network.h), [src/network.cpp](../../src/network.cpp)
-**Related doc:** [pico-pin-mapping.md](../../pico-pin-mapping.md) (no entry yet — add when implementation lands)
+**Related doc:** [pico-pin-mapping.md](../../pico-pin-mapping.md), `todo/done/2026-09-21_pico-2-w-platform.md`
 
 ## What
 Pico-W (RP2040 + CYW43 WiFi) gets a real AsyncWebServer stack like the
@@ -43,6 +44,17 @@ commands.
 The picow board variant in Earle Philhower's core is `rpipicow` so
 the same `vccgnd_yd_rp2040`-style auto-detect isn't needed for
 hardware; the firmware's just waiting on the CYW43 driver to land.
+
+## Resolution (2026-09-23)
+**Superseded by [todo/open/2026-09-21_pico-2-w-platform.md](./2026-09-21_pico-2-w-platform.md)** — the same CYW43 + AsyncWebServer-style
+architecture landed, but on the Pico 2 W (`rpipico2w`, RP2350A) instead
+of the original Pico-W (`rpipicow`, RP2040 + CYW43). The `[env:picow]`
+target itself was never added to `platformio.ini`; on 2026-09-22
+(commit `4b50eaa`) the only remaining firmware env became `[env:pico2w]`.
+
+The CYW43 webserver work that was "waiting on the driver to land"
+landed during the `session/pico-2-wireless` bring-up — see
+`todo/done/2026-09-21_pico-2-w-platform.md` for the full commit list.
 
 ## Dependencies
 - [z3t0/IRremote@^4.7.1](../../platformio.ini) — IR sender is independent

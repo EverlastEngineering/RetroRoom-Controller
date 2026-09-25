@@ -1,5 +1,9 @@
 # OpenAPI 3.0 spec + on-device Swagger UI
 
+**Status:** done (closed 2026-09-22; moved to `done/` on 2026-09-23)
+**Completed:** 2026-09-22
+**Branch:** session/pico-2-wireless
+
 ## Status
 
 DONE 2026-09-22. Spec, encoder, Swagger UI page, and two new GET

@@ -1,6 +1,7 @@
 # Pico 2 W platform bring-up + WiFi (webserver strategy)
 
-**Status:** open — exploratory (just got the hardware plugged in)
+**Status:** done
+**Completed:** 2026-09-23
 **Branch:** session/pico-2-wireless
 **File anchor:** [platformio.ini](../../platformio.ini), [src/network.h](../../src/network.h), [src/network.cpp](../../src/network.cpp), [src/configuration.h](../../src/configuration.h)
 
@@ -134,3 +135,32 @@ Capture pattern that works reliably on macOS:
 A 1 Hz heartbeat blink on `LED_BUILTIN` (commit `a3408be`) is the
 failsafe: if the on-board LED blinks, the firmware ran past
 `pinMode(LED_BUILTIN, OUTPUT)` in `setup()`.
+
+## Resolution (2026-09-23)
+**DONE.** All four phases landed on `session/pico-2-wireless`:
+
+- **Phase A** — `[env:pico2w]` block in `platformio.ini` (board
+  `rpipico2w`, lib_deps + build_flags per the file). FastLED 3.10+
+  PIO backend works on RP2350 unchanged.
+- **Phase B** — `src/network.cpp` rewritten as a real CYW43 +
+  AsyncWebServer stack (`onHealthcheck`, `onStateJson`, `onScanJson`,
+  `onConsoleNext/Prev`, `onFactoryReset`, `onOpenapi`,
+  `onConsolesJsonGet/Post`). Earle Philhower's `WebServer` was the
+  eventual choice; the polling-based `/state.json` endpoint is the
+  functional replacement for WebSocket push (Phase C).
+- **Phase C** — `/ws` WebSocket endpoint IS live (the legacy
+  `next` / `prev` / `ledOn` / `ledOff` / `flash` / `healthcheck`
+  WS commands all dispatch). The CYW43 + Earle Philhower stack
+  supports it after all.
+- **Phase D** — `src/html/index.html` + `src/html/script.js` render
+  under the new server unchanged. Page title still reads "RetroRoom"
+  (the "RetroRoom v2" suggestion was deferred — the existing title
+  is fine).
+
+The "Gotchas" section above is the live operational knowledge from
+the bring-up session (RP2350 BOOTSEL + CDC-ACM buffer flush).
+
+SSID / password handling: hardcoded in `src/configuration.h` per
+the open-question plan; operator sets it via serial monitor later.
+Static IP: not adopted; DHCP with hostname `RetroRoom` (commit
+`4806595`).

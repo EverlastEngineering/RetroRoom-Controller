@@ -1,5 +1,9 @@
 # POST /consoles.json — upload + persist console config
 
+**Status:** done (core feature complete; follow-ups remain — see below)
+**Completed:** 2026-09-23
+**Branch:** session/pico-2-wireless
+
 ## Status
 
 POST path landed 2026-09-22 (commit `3903164`). Read-back path
