@@ -262,6 +262,96 @@ void test_clamp_index_empty(void) {
 	TEST_ASSERT_EQUAL(0, clampIndex(-1, 0));
 }
 
+void test_loads_per_console_tagline(void) {
+	// Per-console `tagline` is optional. When present it surfaces on
+	// the Console struct; when absent it defaults to "".
+	const char* with_tagline =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1, "tagline": "Now you're playing with power!"}
+            ]
+        })";
+	LoadResult r1 = retroroom_core::loadFromJson(with_tagline);
+	TEST_ASSERT_TRUE_MESSAGE(r1.ok, r1.error.c_str());
+	TEST_ASSERT_EQUAL_STRING("Now you're playing with power!", r1.consoles[0].tagline.c_str());
+
+	const char* without_tagline =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1}
+            ]
+        })";
+	LoadResult r2 = retroroom_core::loadFromJson(without_tagline);
+	TEST_ASSERT_TRUE_MESSAGE(r2.ok, r2.error.c_str());
+	TEST_ASSERT_EQUAL_STRING("", r2.consoles[0].tagline.c_str());
+}
+
+void test_loads_lcd_backlight_default_when_absent(void) {
+	// No top-level `lcd` block: backlightOffAfterMs defaults to 30000 ms.
+	const char* json =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1}
+            ]
+        })";
+	LoadResult result = retroroom_core::loadFromJson(json);
+	TEST_ASSERT_TRUE_MESSAGE(result.ok, result.error.c_str());
+	TEST_ASSERT_EQUAL_UINT32(30000, result.lcdBacklightOffAfterMs);
+}
+
+void test_loads_lcd_backlight_explicit_value(void) {
+	// Top-level `lcd.backlightOffAfterMs` honored when present.
+	const char* json =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1}
+            ],
+            "lcd": {"backlightOffAfterMs": 60000}
+        })";
+	LoadResult result = retroroom_core::loadFromJson(json);
+	TEST_ASSERT_TRUE_MESSAGE(result.ok, result.error.c_str());
+	TEST_ASSERT_EQUAL_UINT32(60000, result.lcdBacklightOffAfterMs);
+}
+
+void test_loads_lcd_backlight_clamps_out_of_range(void) {
+	// Out-of-range values are clamped (0 = never off is legal;
+	// 600000 = 10 min is the upper bound). Operator typos shouldn't
+	// brick the device.
+	const char* too_high =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1}
+            ],
+            "lcd": {"backlightOffAfterMs": 99999999}
+        })";
+	LoadResult high = retroroom_core::loadFromJson(too_high);
+	TEST_ASSERT_TRUE_MESSAGE(high.ok, high.error.c_str());
+	TEST_ASSERT_EQUAL_UINT32(600000, high.lcdBacklightOffAfterMs);
+
+	const char* negative =
+		R"({
+            "irCodes": {"Video": "0x430"},
+            "consoleNames": {"NES": "Nintendo Entertainment System"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1, "ledPosition": 5, "ledWidth": 1}
+            ],
+            "lcd": {"backlightOffAfterMs": -1000}
+        })";
+	LoadResult neg = retroroom_core::loadFromJson(negative);
+	TEST_ASSERT_TRUE_MESSAGE(neg.ok, neg.error.c_str());
+	TEST_ASSERT_EQUAL_UINT32(0, neg.lcdBacklightOffAfterMs);
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -290,5 +380,9 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_clamp_index_in_bounds);
 	RUN_TEST(test_clamp_index_out_of_bounds);
 	RUN_TEST(test_clamp_index_empty);
+	RUN_TEST(test_loads_per_console_tagline);
+	RUN_TEST(test_loads_lcd_backlight_default_when_absent);
+	RUN_TEST(test_loads_lcd_backlight_explicit_value);
+	RUN_TEST(test_loads_lcd_backlight_clamps_out_of_range);
 	return UNITY_END();
 }

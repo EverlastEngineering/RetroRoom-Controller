@@ -57,6 +57,7 @@ int currentConsoleIndex = 0;
 // RAM-only; resets to 0 on every boot (RP2350 .bss is zeroed by crt0
 // on every boot, warm or cold -- same lifetime as currentConsoleIndex).
 uint32_t currentConsoleSelectedAtMs = 0;
+uint32_t lcdBacklightOffAfterMs = 30000;  // default; overwritten by consoleDefinitions()
 std::vector<Console> consoles;
 
 void addConsole(const Console& console) {
@@ -106,6 +107,7 @@ void consoleDefinitions() {
 		Serial.println(result.error.c_str());
 		return;
 	}
+	lcdBacklightOffAfterMs = result.lcdBacklightOffAfterMs;  // RAM-only; loaded per boot
 	for (const auto& c : result.consoles) {
 		addConsole(c);
 	}
@@ -113,7 +115,8 @@ void consoleDefinitions() {
 	Serial.print(result.consoles.size());
 	Serial.print(" consoles from ");
 	Serial.print(source_label.c_str());
-	Serial.print(":");
+	Serial.print("; LCD backlight off after ");
+	Serial.print(lcdBacklightOffAfterMs);
 	for (const auto& c : consoles) {
 		Serial.print(" [");
 		Serial.print(c.id.c_str());
@@ -130,6 +133,9 @@ void consoleDefinitions() {
 		Serial.print("]");
 	}
 	Serial.println();
+	Serial.print("LCD backlight off after ");
+	Serial.print(lcdBacklightOffAfterMs);
+	Serial.println(" ms");
 }
 
 void selectConsole(const Console& c) {

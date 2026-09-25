@@ -11,6 +11,11 @@ extern std::vector<Console> consoles;
 // RAM-only (zeroed on every boot along with currentConsoleIndex).
 // Exposed so GET /state.json can surface `selectedAtUptimeMs`.
 extern uint32_t currentConsoleSelectedAtMs;
+// LCD backlight-off timeout in ms, populated from the top-level
+// `lcd.backlightOffAfterMs` field in /consoles.json (default 30000).
+// 0 means "never off". Consumed by src/display.cpp. RAM-only --
+// reloaded from the config on every boot.
+extern uint32_t lcdBacklightOffAfterMs;
 
 void addConsole(const Console& console);
 int HowManyConsoles();

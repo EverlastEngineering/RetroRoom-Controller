@@ -13,9 +13,12 @@
         
     },
     "consoles": [
-        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1},
-        {"id": "SMS", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5},
-        {"id": "XBOX",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 17, "ledWidth": 5},
+        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1, "tagline": "Now you're playing with power!"},
+        {"id": "SMS", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5, "tagline": "The challenge will always be there."},
+        {"id": "XBOX",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 17, "ledWidth": 5, "tagline": "It's good to play together."},
         {"id": "MAME", "tvInput": "SVideo","selectorPosition": 4, "ledPosition": 27, "ledWidth": 15}
-    ]
+    ],
+    "lcd": {
+        "backlightOffAfterMs": 30000
+    }
 }

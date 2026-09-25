@@ -27,6 +27,10 @@ struct Console {
 	int selector_position;
 	int led_position;
 	int led_width;
+	// Per-console tagline (e.g. "Now you're playing with power!"). Optional
+	// in the JSON; default empty string. Consumed by the LCD driver to
+	// render line 2 on the 16x2 character display.
+	std::string tagline;
 };
 
 struct LoadResult {
@@ -34,6 +38,13 @@ struct LoadResult {
 	std::string error;
 	std::vector<IrCode> irCodes;
 	std::vector<Console> consoles;
+	// Top-level LCD config. Default 30000 ms (30 s) when the `lcd` block
+	// is absent or when the field is missing. The shell exposes this to
+	// the LCD driver via retroroom_store::getLcdBacklightOffAfterMs().
+	// Bounds-checked on parse: out-of-range values are accepted but logged
+	// (validation shouldn't be a hard error -- operators with weird
+	// configs shouldn't have their devices bricked).
+	std::uint32_t lcdBacklightOffAfterMs = 30000;
 };
 
 LoadResult loadFromJson(const char* json, std::size_t len);

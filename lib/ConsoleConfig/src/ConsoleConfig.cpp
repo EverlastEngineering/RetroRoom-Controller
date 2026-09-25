@@ -101,8 +101,31 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 		con.selector_position = c["selectorPosition"] | 0;
 		con.led_position = c["ledPosition"] | 0;
 		con.led_width = c["ledWidth"] | 0;
+		// Optional tagline. as<std::string>() on a null variant returns
+		// "null" (ArduinoJson quirk) so we have to check isNull() first
+		// and default to empty.
+		JsonVariantConst taglineVar = c["tagline"];
+		if (!taglineVar.isNull()) {
+			con.tagline = taglineVar.as<std::string>();
+		}
 
 		result.consoles.push_back(con);
+	}
+
+	// Top-level lcd block (optional). Default backlight timeout is 30 s.
+	// Bounds-checked: 0 means "never off" (legal); max is 10 min
+	// (600000 ms) to prevent typos that would lock the LCD on for hours.
+	// Out-of-range values are accepted but clamped -- the operator's
+	// device should still boot.
+	JsonObjectConst lcdObj = doc["lcd"];
+	if (!lcdObj.isNull()) {
+		JsonVariantConst v = lcdObj["backlightOffAfterMs"];
+		if (!v.isNull()) {
+			long long ms = v.as<long long>();
+			if (ms < 0) ms = 0;
+			if (ms > 600000) ms = 600000;
+			result.lcdBacklightOffAfterMs = static_cast<std::uint32_t>(ms);
+		}
 	}
 
 	result.ok = true;
