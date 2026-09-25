@@ -18,7 +18,17 @@
 
 #include "consoles.h"
 
-LiquidCrystal_I2C lcd(LCD_I2C_ADDR, LCD_COLS, LCD_ROWS);
+// Construct the LCD with the library's default PCF8574-pin mapping
+// (P0..P7 = 4,5,6,16,11,12,13,14). The constructor switches on each
+// pin number to fill the _lcdToPCF8574[] lookup; passing the wrong
+// pin numbers (e.g. LCD_COLS=16, LCD_ROWS=2) makes the lookup fall
+// through to the `default:` arm and sets _pcf8574PortsMaping=false,
+// which makes lcd.begin() bail out on its safety check -- meaning
+// every subsequent LCD call would silently fail. The default pin
+// mapping matches the HD44780 + PCF8574 backpack pinout used by the
+// enjoyneering library and is what the library tests against; we
+// pass LCD_COLS / LCD_ROWS to lcd.begin() instead.
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR);
 
 // State machine phases. Boot -> welcome -> live; the welcome phase
 // just paints the static "RetroRoom" / "Sit and Play" lines and
@@ -60,6 +70,16 @@ static LineScroll scroll2{0, 0, currentLine2};
 // PCF8574 backpack's BL bit.
 static bool backlightOn = false;
 static uint32_t backlightOffAtMs = 0;
+
+// Probed in display_init(). When false, every public display_*
+// function short-circuits -- the firmware stays usable on the bench
+// without the perfboard wired up. We can't just rely on lcd.begin()'s
+// return value because the HD44780 init sequence keeps doing I2C
+// writes via Wire.endTransmission() (each one timing out at ~25 ms
+// when NAKed), so on a missing device the whole boot sequence can
+// block for 1-2 s before returning -- enough to look like a wedge
+// when the device is supposed to come up in <1 s.
+static bool lcdPresent = false;
 
 static void lcd_print_padded(const String& s, int offset, char row) {
 	// Paint `LCD_COLS` chars from `s` starting at `offset`. When the
@@ -110,25 +130,50 @@ static void enter_phase(DisplayPhase next, uint32_t nowMs) {
 
 void display_init() {
 	// Wire defaults to GP4/GP5 on the rpipico2w variant, but we set
-	// the pins explicitly so this code survives a variant swap. The
-	// rp2040 Wire library doesn't expose a 2-arg begin(SDA, SCL)
+	// the pins explicitly so the intent is visible at the call site.
+	// The rp2040 Wire library doesn't expose a 2-arg begin(SDA, SCL)
 	// overload -- only setSDA/setSCL + the 0/1-arg begin().
 	Wire.setSDA(LCD_I2C_SDA_PIN);
 	Wire.setSCL(LCD_I2C_SCL_PIN);
 	Wire.begin();
-	// lcd.begin() returns silently even when no device is at the
-	// address (I2C just NAKs); subsequent writes are no-ops. This
-	// means the firmware stays usable on the bench without the
-	// perfboard wired up.
+
+	// Probe the bus for the LCD before letting lcd.begin() run.
+	// Without this guard, lcd.begin() runs the HD44780 init sequence
+	// (delay(500) + 11 _send() calls + multiple LCD_CLEAR_DISPLAY
+	// writes) even when no PCF8574 is at the address. Each I2C write
+	// then waits the full Wire._timeout (25 ms by default) before
+	// returning NAK, so the whole sequence can block for 1-2 s and
+	// the firmware appears wedged during boot. With the probe guard,
+	// bench testing without the perfboard wired boots in milliseconds
+	// and the rest of the driver becomes a no-op via the
+	// `lcdPresent` flag.
+	Wire.beginTransmission(LCD_I2C_ADDR);
+	const uint8_t probeResult = Wire.endTransmission();
+	if (probeResult != 0) {
+		lcdPresent = false;
+		return;
+	}
+
+	// lcd.begin() now goes through the full HD44780 4-bit init
+	// sequence (delay(500) + 11 _send() calls). On a real PCF8574
+	// backpack this works; on a missing device it NAKs each write but
+	// the Wire._timeout bounds each call so init still completes.
 	lcd.begin();
 	lcd.backlight();
 	backlightOn = true;
 	currentLine1 = "RetroRoom";
 	currentLine2 = "Sit and Play";
+	lcdPresent = true;
 	enter_phase(DisplayPhase::Welcome, millis());
 }
 
 void display_show_console(const char* name, const char* tagline) {
+	// Short-circuit when no LCD was detected at boot. Saves the
+	// selectConsole() call-site from needing to know whether the LCD
+	// driver is enabled.
+	if (!lcdPresent) {
+		return;
+	}
 	// Called from selectConsole() on every advance / rewind. Update
 	// the line buffers and reset the scroll offsets so the freshly-
 	// selected console starts at the left edge with a full pause.
@@ -152,7 +197,12 @@ void display_show_console(const char* name, const char* tagline) {
 void display_wake() {
 	// Reset the backlight-off deadline to "now + lcdBacklightOffAfterMs".
 	// lcdBacklightOffAfterMs is the shell-side global set by
-	// consoleDefinitions(); see src/consoles.cpp.
+	// consoleDefinitions(); see src/consoles.cpp. Short-circuit when
+	// no LCD was detected so we don't poke lcd.backlight() on a
+	// non-existent device.
+	if (!lcdPresent) {
+		return;
+	}
 	if (!backlightOn) {
 		lcd.backlight();
 		backlightOn = true;
@@ -184,6 +234,10 @@ static void tick_scroll(LineScroll& scroll, int row) {
 }
 
 void display_loop() {
+	// Short-circuit when no LCD was detected at boot.
+	if (!lcdPresent) {
+		return;
+	}
 	const uint32_t now = millis();
 	switch (phase) {
 		case DisplayPhase::Boot:
