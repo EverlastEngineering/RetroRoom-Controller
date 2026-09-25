@@ -69,17 +69,22 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-- `cyw43-picow-wifi` — Pico-W WiFi, anchored on `src/network.{h,cpp}`
-- `stackselector-perfboard-pinmap` — confirm GP8/9/10 ARM/CYCLE/ENABLE on the perfboard
-- `5-second-boot-fade` — single-pixel "I'm alive" pulse at boot
+*(none — all open items closed out on 2026-09-23)*
 
 ### deferred/
 - `stackselector-daisy-chain` — only matters if the perfboard has >1 module
 - `i2c-oled-expansion` — SSD1306 on I2C0/1 when the perfboard lands
 - `touch-sensor-pullup` — external 10 kΩ pull-up on GP5 (PCB reminder)
+- `stackselector-perfboard-pinmap` — confirm GP8/9/10 ARM/CYCLE/ENABLE on the perfboard
 
 ### done/
 - `c6005c7` — USR button advances `currentConsoleIndex`
 - `b603d4b` — pinout doc
 - `41c73e5` — `TODO.md` update bookkeeping
 - `643be7c` — IR restore via `z3t0/IRremote@^4.7.1` + `MANUAL_OE_PIN = GP12`
+- `2026-09-22_drop-non-pico2w-envs` — single-target `platformio.ini` ([env:pico2w] only)
+- `2026-09-21_pico-2-w-platform` — Pico 2 W bring-up + CYW43 webserver
+- `2026-09-22_consoles-json-upload-endpoint` — POST/GET `/consoles.json` + TDD harness
+- `2026-09-22_openapi-spec-and-swagger-ui` — `/openapi` + `/openapi.yaml` live
+- `2026-09-12_cyw43-picow-wifi` — superseded by `2026-09-21_pico-2-w-platform`
+- `2026-09-12_5-second-boot-fade` — closed without merging; LED_BUILTIN heartbeat + YD lightCycle cover the intent
