@@ -1,6 +1,9 @@
 # Console config — add `tagline` per console + `lcd` block
 
-**Status:** open
+**Status:** done
+**Completed:** 2026-09-24
+**Completed by:** `51cd125` — consoles: add per-console tagline + top-level lcd.backlightOffAfterMs
+**Consumed by:** `2aadbd7` — display: 16x2 I2C LCD driver for console name + tagline
 **Branch:** session/pico-2-wireless
 **File anchor:** [lib/ConsoleConfig/src/ConsoleConfig.h](../../lib/ConsoleConfig/src/ConsoleConfig.h), [lib/ConsoleConfig/src/ConsoleConfig.cpp](../../lib/ConsoleConfig/src/ConsoleConfig.cpp), [src/consoleconfig_store.cpp](../../src/consoleconfig_store.cpp), [src/consoles.cpp](../../src/consoles.cpp), [src/Console.h](../../src/Console.h), [src/Console.cpp](../../src/Console.cpp), [example-configurations/example1.json](../../example-configurations/example1.json), [example-configurations/example2.json](../../example-configurations/example2.json), [test/test_console_config/test_console_config.cpp](../../test/test_console_config/test_console_config.cpp), [test/test_console_store/test_console_store.cpp](../../test/test_console_store/test_console_store.cpp)
 **Related doc:** [tag-lines.md](../../tag-lines.md), [todo/open/2026-09-24_i2c-lcd-console-name.md](./2026-09-24_i2c-lcd-console-name.md)
@@ -137,3 +140,73 @@ in an example doesn't appear in the table, leave its `tagline` absent
 - [todo/open/2026-09-24_pin-map-consolidation.md](./2026-09-24_pin-map-consolidation.md) — establishes `pin-map-chart.md` as the source of truth (this todo is unaffected by that work).
 - [todo/done/2026-09-22_consoles-json-upload-endpoint.md](../done/2026-09-22_consoles-json-upload-endpoint.md) — the POST/GET path the new fields will ride on.
 - [example-configurations/](../../example-configurations/) — the configs being backfilled.
+
+## Implementation notes (recorded 2026-09-24)
+
+### What actually shipped in `51cd125`
+
+**Functional core (`lib/ConsoleConfig`):**
+- `Console` struct gained `std::string tagline` (default `""`).
+- `LoadResult` struct gained `std::uint32_t lcdBacklightOffAfterMs`
+  (default `30000`).
+- `loadFromJson()` now reads `c["tagline"]` with an explicit
+  `isNull()` check (the ArduinoJson v7 `as<std::string>()` quirk
+  returns `"null"` for absent string keys — this would otherwise
+  surface in `consoles[].tagline = "null"`).
+- `loadFromJson()` reads top-level `lcd.backlightOffAfterMs` when
+  the `lcd` block is present; defaults to 30000 when absent.
+- **Bounds-check**: `backlightOffAfterMs` is clamped to `[0, 600000]`
+  on parse. 0 = never off (legal). 600000 = 10 min cap. Out-of-range
+  values are accepted but clamped, with the rationale in
+  `ConsoleConfig.cpp`: "operator typos shouldn't brick the device".
+
+**Shell (`src/consoles.{h,cpp}`):**
+- New module-level `uint32_t lcdBacklightOffAfterMs = 30000;`
+  populated by `consoleDefinitions()` from
+  `result.lcdBacklightOffAfterMs`. RAM-only; reloaded per boot.
+- `consoleDefinitions()` boot log now reports the loaded timeout so
+  the operator can confirm the JSON took effect.
+
+**Example configs (verbatim from `tag-lines.md`):**
+- `example1.json`: NES, SNES, GEN got their primary taglines. New
+  top-level `lcd` block with `backlightOffAfterMs: 30000`.
+- `example2.json`: NES, SMS, XBOX got taglines. MAME is
+  tagline-less (not in `tag-lines.md`; driver handles the empty
+  case — line 2 blank).
+
+**Host tests (`test/test_console_config/test_console_config.cpp`):**
+- `test_loads_per_console_tagline` — tagline present + absent.
+- `test_loads_lcd_backlight_default_when_absent` — default 30000.
+- `test_loads_lcd_backlight_explicit_value` — honored when
+  present.
+- `test_loads_lcd_backlight_clamps_out_of_range` — too high
+  clamps to 600000; negative clamps to 0.
+
+### Open question resolutions from the original todo
+
+- **Schema versioning**: no migration needed. Both new fields are
+  optional; existing on-device `/consoles.json` files parse fine
+  with the new parser (defaults kick in). Confirmed by the
+  e2e round-trip test in `51cd125`.
+- **Multiple taglines**: kept the single `tagline` field per the
+  recommendation in the original todo. `taglineAlt` can land as
+  a separate schema bump if asked.
+- **`lcd` block scope**: block name `lcd` is the right prefix;
+  future fields (contrast, brightness, custom welcome text) land
+  here.
+
+### Verification (recorded in `51cd125`)
+
+- `pio test -e test_native` → 39/39 pass (35 pre-existing + 4 new).
+- `./agent-script/pio-upload-monitor.sh --no-upload` → build OK.
+- `./agent-script/e2e-consoles-json.sh --scenario
+  post-then-read-back` → POST/GET byte-identical round-trip for
+  `example1.json` with the new fields. `state.json` reflects the
+  loaded config.
+
+### Consumer
+
+The schema work is consumed by `2aadbd7` — the LCD firmware
+driver. The driver reads `c.tagline` directly off the parsed
+`Console` struct and reads `lcdBacklightOffAfterMs` via the
+shell-side global in `src/consoles.h`.

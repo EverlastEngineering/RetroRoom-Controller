@@ -1,8 +1,11 @@
 # 16x2 I2C LCD — console name + tagline display
 
-**Status:** open
+**Status:** done
+**Completed:** 2026-09-24
+**Completed by:** `2aadbd7` — display: 16x2 I2C LCD driver for console name + tagline
+**Depends on:** `51cd125` — consoles: add per-console tagline + top-level lcd.backlightOffAfterMs (the schema side)
 **Branch:** session/pico-2-wireless
-**File anchor:** [src/configuration.h](../../src/configuration.h), new [src/display.h](../../src/display.h) + [src/display.cpp](../../src/display.cpp), [src/consoles.cpp](../../src/consoles.cpp)
+**File anchor:** [src/configuration.h](../../src/configuration.h), [src/display.h](../../src/display.h) + [src/display.cpp](../../src/display.cpp), [src/consoles.cpp](../../src/consoles.cpp), [src/main.cpp](../../src/main.cpp), [platformio.ini](../../platformio.ini)
 **Related doc:** [pin-map-chart.md](../../pin-map-chart.md), [tag-lines.md](../../tag-lines.md), [todo/open/2026-09-24_console-config-lcd-fields.md](./2026-09-24_console-config-lcd-fields.md), [todo/open/2026-09-24_pin-map-consolidation.md](./2026-09-24_pin-map-consolidation.md), [todo/deferred/2026-09-12_i2c-oled-expansion.md](../deferred/2026-09-12_i2c-oled-expansion.md)
 
 ## What
@@ -175,3 +178,75 @@ PCF8574 into host tests.
 - [todo/deferred/2026-09-12_i2c-oled-expansion.md](../deferred/2026-09-12_i2c-oled-expansion.md) — alternative display tech on the same pins.
 - [src/consoles.cpp](../../src/consoles.cpp) `selectConsole()` — the update hook.
 - [src/main.cpp](../../src/main.cpp) `setup()` + `loop()` — wiring + display_loop call site.
+
+## Implementation notes (recorded 2026-09-24)
+
+### What actually shipped in `2aadbd7`
+
+- **Library**: `enjoyneering/LiquidCrystal_I2C@^1.4.0`. Tried
+  `mhelm.col@^1.1.0` per the original todo but the fork is stale
+  (no rp2040 PIO backend updates since 2020); enjoyneering is
+  current and the 1.4.0 API is stable on Earle Philhower's rp2040
+  core.
+- **Build flag**: `-D HAS_LCD` added to `[env:pico2w]` build_flags.
+  When undefined, every `display_*` call becomes an inline no-op
+  via the stub block in `display.h` — call-sites in `main.cpp` and
+  `consoles.cpp` need no `#ifdef` of their own.
+- **Pins**: I2C0 (GP4 SDA / GP5 SCL) per pin-map-chart.md.
+  `display_init()` calls `Wire.setSDA()`/`setSCL()` explicitly so
+  the intent is at the call site; the rp2040 Wire library doesn't
+  expose a 2-arg `Wire.begin(SDA, SCL)` (only 0-arg or 1-arg
+  `begin()`).
+- **Welcome**: 3 s `RetroRoom` / `Sit and Play` (per the spec).
+  Skipped if `display_show_console()` fires within the 3 s window
+  (e.g. `/next` during boot) — the live display takes over
+  immediately so the operator sees the current console name.
+- **Long-line scroll**: 1 char / 250 ms after a 1 s pause, only
+  the overflowing line. Per-line independent. Snap back to
+  offset 0 + 1 s pause when the tail reaches the natural end.
+- **Backlight auto-off**: per `lcd.backlightOffAfterMs` (default
+  30000 = 30 s, set by the schema side in `51cd125`). 0 means
+  "never off". `display_wake()` is called from `selectConsole()`
+  so next/prev/click / WebSocket / HTTP `/next` all wake for free.
+- **Defensive when no board wired**: `Wire.begin()` + `lcd.begin()`
+  return silently when no device NAKs the address probe; subsequent
+  writes are no-ops. The firmware stays usable on the bench without
+  the perfboard wired up — exactly what was needed for this
+  session since no I2C board was attached.
+
+### Pre-commit build failures caught + fixed
+
+1. `lcd.init()` doesn't exist in the enjoyneering library (it was
+   the older fdebrabander fork's API); renamed to `lcd.begin()`.
+2. `Wire.begin(SDA, SCL)` doesn't exist on Earle Philhower's rp2040
+   Wire library; switched to `setSDA()`/`setSCL()` + 0-arg
+   `begin()`.
+3. `LCD_I2C_ADDR` was defined as a raw `0x27` int literal; the
+   library's constructor takes a `pcf8574Address` enum. Renamed to
+   `PCF8574_ADDR_A21_A11_A01` (same numeric value, right type).
+4. `src/consoles.cpp` called `display_show_console`/`display_wake`
+   without including `display.h`; added `#include "display.h"` at
+   the top.
+
+### Open question resolutions from the original todo
+
+- **Welcome timeout**: kept at 3 s per spec.
+- **Scroll cadence**: kept at 1 char / 250 ms after 1 s pause.
+- **Backlight wake on what**: `selectConsole()` only. HTTP
+  `/state.json` polls do NOT wake — confirmed in code. Operators
+  wanting to spam wake would need a separate touch sensor wired
+  to `TOUCH_SENSOR_PIN` (GP12), which already exists but isn't
+  plumbed to wake the LCD today. Defer until asked.
+- **OLED coexistence**: deferred item
+  (`2026-09-12_i2c-oled-expansion.md`) — same I2C0 pins as the
+  LCD. Resolution unchanged: if both ever ship, LCD on I2C0 and
+  OLED on I2C1 (GP2/GP3).
+
+### Verification
+
+- `pio run -e pico2w`: SUCCESS (~3 MB sketch size).
+- `pio test -e test_native`: 39/39 pass (4 new from the schema
+  side already landed in `51cd125`).
+- No I2C board on the bench for this session — code path exercised
+  only via the compile pass and the host tests. Live verification
+  needs the perfboard (when the operator is back from AFK).
