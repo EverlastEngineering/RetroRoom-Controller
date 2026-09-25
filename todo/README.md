@@ -69,7 +69,9 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-*(none — all open items closed out on 2026-09-23)*
+- `2026-09-24_pin-map-consolidation` — make `pin-map-chart.md` the single source of truth; delete `pico-pin-mapping.md` + `pin-map-plan.md`; rewire all references
+- `2026-09-24_i2c-lcd-console-name` — 16×2 I2C LCD on GP4/GP5 shows console name + tagline (scrolls if >16 chars), `RetroRoom` / `Sit and Play` welcome, backlight auto-off after `lcd.backlightOffAfterMs`
+- `2026-09-24_console-config-lcd-fields` — JSON schema change: per-console `tagline` + top-level `lcd.backlightOffAfterMs`; backfill `example1.json` + `example2.json` from `tag-lines.md`
 
 ### deferred/
 - `stackselector-daisy-chain` — only matters if the perfboard has >1 module
