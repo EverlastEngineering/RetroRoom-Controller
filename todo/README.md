@@ -78,7 +78,7 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-- `2026-09-25_led-string-light-control` — wire the GP21 second strip; light `[ledPosition, ledPosition+ledWidth)` on commit. Driver only — no animation, no shows. Animations / shows / wiring-diagram / e2e readback are held in the sibling draft `2026-09-25_led-string-light-shows_DRAFT.md` until the basic driver lands.
+*(none — `2026-09-25_led-string-light-control` closed on 2026-09-28, see done/.)*
 
 ### deferred/
 - `stackselector-daisy-chain` — only matters if the perfboard has >1 module
@@ -87,6 +87,7 @@ with current ones. Per-file gives:
 - `stackselector-perfboard-pinmap` — confirm GP8/9/10 ARM/CYCLE/ENABLE on the perfboard
 
 ### done/
+- `9c1304b` — second-strip LED driver on GP21 (`src/ledstring.{h,cpp}` + `lib/LedStringPaint`); lights `[ledPosition, ledPosition+ledWidth)` from `selectConsole()`. Companion draft `2026-09-25_led-string-light-shows_DRAFT.md` parks the pulled-out sub-items (animation, shows, wiring diagram, e2e readback).
 - `c6005c7` — USR button advances `currentConsoleIndex`
 - `b603d4b` — pinout doc
 - `41c73e5` — `TODO.md` update bookkeeping
