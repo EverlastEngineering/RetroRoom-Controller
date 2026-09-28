@@ -814,6 +814,22 @@ static void startStaServer() {
 			return;
 		}
 
+		// Drop the saved console selection. The stored value is an
+		// index into the array the config just replaced, so carrying
+		// it across would point at whichever console happens to land
+		// at that offset in the new list -- or at nothing, if the new
+		// list is shorter. Wiping means the reboot below lands on
+		// console 0, which is what an operator uploading a config
+		// expects.
+		//
+		// Best-effort: a failure here is only visible if the device
+		// loses power between now and the next selection change, and
+		// the boot path clamps an out-of-range value anyway. Not worth
+		// failing an otherwise-good upload over.
+		if (!retroroom_store::clearLastSelectedConsole()) {
+			Serial.println("net: could not clear saved console selection");
+		}
+
 		// Step 3: respond, then arm the reboot. Same async-reboot
 		// pattern as /factory-reset -- sending the response from the
 		// handler, then restarting in network_loop() once the TCP
@@ -924,6 +940,13 @@ static void startStaServer() {
 		Serial.println("net: /factory-reset POST -- nonce OK, wiping /wifi.json and scheduling reboot");
 		if (LittleFS.begin()) {
 			LittleFS.remove(kWifiConfigPath);
+			// Also drop the saved console selection. It's device state
+			// that names a slot in the operator's cabinet, so a device
+			// handed to someone else shouldn't boot into the previous
+			// owner's last selection. Routed through the store wrapper
+			// rather than a raw remove() so the path constant stays in
+			// one place.
+			retroroom_store::clearLastSelectedConsole();
 		}
 
 		// Serve the post-reset confirmation page. The auto-refresh

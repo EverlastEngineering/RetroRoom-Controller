@@ -19,6 +19,8 @@
 
 #include <LittleFS.h>
 
+#include <stdlib.h>
+
 #include <ConsoleConfig.h>
 
 namespace retroroom_store {
@@ -31,6 +33,12 @@ namespace {
 constexpr const char* kLivePath    = "/consoles.json";
 constexpr const char* kBackup1Path = "/consoles.bak1";
 constexpr const char* kBackup2Path = "/consoles.bak2";
+
+// Last-selected console index. Kept separate from the config blobs
+// above because its lifetime is different: the config changes only
+// when an operator POSTs a new one (which wipes this file), whereas
+// this changes on every rotary detent.
+constexpr const char* kLastSelectedPath = "/lastconsole";
 
 // Read a whole file into `out`. Returns true on success; on failure
 // (file missing, open() failed) returns false and leaves `out`
@@ -143,6 +151,46 @@ SaveResult saveConsoleConfigWithBackups(const std::string& payload) {
 		return SaveResult::WriteFailed;
 	}
 	return SaveResult::Ok;
+}
+
+bool loadLastSelectedConsole(int& out) {
+	if (!ensureMounted()) {
+		return false;
+	}
+	std::string raw;
+	if (!readFileInto(kLastSelectedPath, raw)) {
+		return false;
+	}
+	// Deliberately not bounds-checked here. The stored value is only
+	// meaningful against the config that wrote it, and this TU has no
+	// idea how long that list is. The caller clamps with
+	// retroroom_core::clampIndex(stored, HowManyConsoles()) -- the same
+	// guard every other index-restoring path in the firmware uses.
+	//
+	// strtol on a hand-edited or truncated file yields 0, which is a
+	// legal index, so a corrupt file degrades to "start at the first
+	// console" rather than to a wild out-of-range read.
+	out = static_cast<int>(strtol(raw.c_str(), nullptr, 10));
+	return true;
+}
+
+bool saveLastSelectedConsole(int index) {
+	if (!ensureMounted()) {
+		return false;
+	}
+	const std::string payload = std::to_string(index);
+	return writeFileFrom(kLastSelectedPath, payload);
+}
+
+bool clearLastSelectedConsole() {
+	if (!ensureMounted()) {
+		return false;
+	}
+	// LittleFS::remove() on a missing file is a no-op, so this is
+	// safe to call unconditionally. The exists() re-check is what
+	// turns "remove failed" into an honest return value.
+	LittleFS.remove(kLastSelectedPath);
+	return !LittleFS.exists(kLastSelectedPath);
 }
 
 }  // namespace retroroom_store

@@ -78,6 +78,14 @@ void setup() {
 	ir_control_init();
 #endif
 	consoleDefinitions();
+	// Restore the console that was selected before the last power loss.
+	// Must run between consoleDefinitions() -- which populates the list
+	// the stored index refers to -- and ledstring_setConsole() below,
+	// which lights the strip for currentConsoleIndex. Everything after
+	// it (the strip, the LCD's live-line seed, /state.json) then reads
+	// the restored index, so the device simply boots into the operator's
+	// console rather than being switched to it afterwards.
+	restoreLastSelectedConsole();
 	// Paint the initial console's window on the second strip now
 	// that consoleDefinitions() has populated src/consoles.cpp::consoles.
 	// ledstring_init() powers the strip up dark; ledstring_setConsole(0)
@@ -89,6 +97,11 @@ void setup() {
 	ledstring_init();
 	ledstring_setConsole(currentConsoleIndex);
 #endif
+	// Home the console latch. selectStack_init() also issues the initial
+	// selectStack() pass, which is what gives restoreLastSelectedConsole()
+	// in loop() a known starting position to step relative to -- the
+	// latch shares a power rail with the controller, so it does not hold
+	// its position across a power cycle.
 	selectStack_init();
 #if defined(HAS_LCD)
 	// Arm the backlight-off timer now (no selectConsole() call has

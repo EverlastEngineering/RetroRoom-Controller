@@ -14,6 +14,7 @@
 //   /consoles.json       -- the live config the device boots with
 //   /consoles.bak1       -- the previous live config
 //   /consoles.bak2       -- the previous bak1 config
+//   /lastconsole         -- decimal index of the last selected console
 //
 // All three slots are independent files; the rotate-on-write policy
 // (rotateBackupBlobs in the core) decides what each slot holds before
@@ -75,6 +76,36 @@ enum class SaveResult {
 // back through bak1 -> bak2 -> embedded PROGMEM. The operator can
 // always re-POST to recover.
 SaveResult saveConsoleConfigWithBackups(const std::string& payload);
+
+// ---------- last-selected console (power-loss persistence) ----------
+//
+// A one-line decimal index into the live config's console array, kept
+// in its own file so the operator's selection never shares a lifetime
+// with the config that produced it. The POST /consoles.json handler
+// clears it on every accepted upload (see clearLastSelectedConsole):
+// a new config reorders, adds and removes entries, so a stored index
+// from the previous config is meaningless against the new one.
+//
+// Restoring the raw stored value is the shell's job, not this
+// header's -- clamp it with retroroom_core::clampIndex() against
+// HowManyConsoles() before trusting it.
+
+// Read the persisted index into `out`. Returns true if the file
+// existed and was read. On a missing file, mount failure or an
+// unparseable body, returns false and leaves `out` untouched -- the
+// caller keeps whatever default it already had.
+bool loadLastSelectedConsole(int& out);
+
+// Persist `index` as the last-selected console. Returns true on a
+// successful write. Best-effort: a failure here costs the operator
+// their selection across the next power cycle, nothing more, so
+// callers should log and carry on rather than abort a selection.
+bool saveLastSelectedConsole(int index);
+
+// Drop the persisted selection, so the next boot starts at console 0.
+// Called when a new config is committed and on factory reset. Returns
+// true if the file is absent afterwards (removed, or never existed).
+bool clearLastSelectedConsole();
 
 }  // namespace retroroom_store
 

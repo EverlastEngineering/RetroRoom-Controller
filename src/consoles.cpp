@@ -74,6 +74,47 @@ const Console& CurrentConsole() {
 	return consoles[currentConsoleIndex];
 }
 
+void restoreLastSelectedConsole() {
+	// The console list has to be populated before this is worth
+	// calling: the stored value is an index into it.
+	int stored = 0;
+	if (!retroroom_store::loadLastSelectedConsole(stored)) {
+		// No file, no filesystem, or a mount failure. All three mean
+		// the same thing to the operator: stay on whatever setup()
+		// left us on.
+		Serial.println("consoles: no saved selection");
+		return;
+	}
+	// Clamp rather than trust: the stored index refers to the config
+	// that wrote it, and a hand-edited /lastconsole is one bad boot
+	// away from being out of range. clampIndex() also folds the
+	// empty-list case to 0, which is already the default, so the
+	// comparison below makes that a no-op without a special case.
+	const int clamped = retroroom_core::clampIndex(stored, HowManyConsoles());
+	if (clamped == currentConsoleIndex) {
+		return;  // nothing to restore (or an empty console list)
+	}
+	// Just the cursor. The rest of setup() reads currentConsoleIndex as
+	// it goes -- ledstring_setConsole() lights the right window, the
+	// LCD seeds its live lines from CurrentConsole() at the
+	// startup->welcome handover -- so the console is simply booted into
+	// rather than selected after the fact.
+	//
+	// Deliberately not selectConsole(): that drives the latch and
+	// paints the LCD, and the paint is what would cut the welcome
+	// splash short. setup() homes the latch either way, so the boot
+	// hardware sequence is unchanged.
+	currentConsoleIndex = clamped;
+	Serial.print("consoles: restored selection index=");
+	Serial.print(currentConsoleIndex);
+	if (clamped != stored) {
+		Serial.print(" (clamped from ");
+		Serial.print(stored);
+		Serial.print(")");
+	}
+	Serial.println();
+}
+
 void consoleDefinitions() {
 	// Functional-core load: pure parse + validation, no Arduino headers in
 	// the parse path. The returned LoadResult has ok=false + a typed error
@@ -174,6 +215,20 @@ void selectConsole(const Console& c) {
 	// NOT part of this commit.
 	ledstring_setConsole(currentConsoleIndex);
 #endif
+
+	// Remember the selection so it survives a power cycle.
+	// selectConsole() is the single commit point for every selection
+	// path (rotary press, NEXT/PREV buttons, /next, /prev, the WS
+	// commands and the post-boot restore), so saving here covers them
+	// all with no per-path bookkeeping.
+	//
+	// Best-effort by design: a failed write costs the selection across
+	// the next power cycle and nothing more, so it must never take
+	// down a selection that otherwise worked. The rotary *detent*
+	// handler in src/controls.cpp moves currentConsoleIndex without
+	// committing, which is right -- it only re-lights the ring, and
+	// the press is what actually selects.
+	retroroom_store::saveLastSelectedConsole(currentConsoleIndex);
 }
 
 void advanceConsole() {
