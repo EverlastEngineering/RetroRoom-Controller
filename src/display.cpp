@@ -78,7 +78,7 @@ struct LineScroll {
 		return elapsedSince(now, holdUntilMs) < 0;
 	}
 	bool needsScroll() const {
-		return currentLine.length() > LCD_COLS;
+		return scrollable && currentLine.length() > LCD_COLS;
 	}
 	// One full cycle of the marquee: the string, plus the blanks that
 	// separate it from its own next repeat. offset wraps at this.
@@ -86,6 +86,13 @@ struct LineScroll {
 		return (int)currentLine.length() + LCD_LOOP_GAP;
 	}
 	const String& currentLine;  // bound to currentLine1 / currentLine2 by the caller
+	// False for a status message (see display_show_status) -- the row
+	// is pinned in place instead of marqueeing, however long the text
+	// runs. Defaults to true so display_show_console()'s scrolling is
+	// unchanged for every caller that doesn't opt out. Declared last
+	// because the scroll1 / scroll2 instances below aggregate-init it
+	// positionally with {0, 0, 0, currentLineN}.
+	bool scrollable = true;
 };
 
 static LineScroll scroll1{0, 0, 0, currentLine1};
@@ -154,7 +161,13 @@ static void repaint_line(LineScroll& scroll, int row) {
 static void enter_phase(DisplayPhase next, uint32_t nowMs) {
 	phase = next;
 	phaseStartedAtMs = nowMs;
-	if (next == DisplayPhase::Welcome) {
+	if (next == DisplayPhase::Boot) {
+		lcd.clear();
+		lcd.setCursor(0, 0);
+		lcd.print("RetroRoom");
+		lcd.setCursor(0, 1);
+		lcd.print("Loading");
+	} else if (next == DisplayPhase::Welcome) {
 		lcd.clear();
 		lcd.setCursor(0, 0);
 		lcd.print("RetroRoom");
@@ -303,11 +316,43 @@ void display_init() {
 		currentLine2 = String(c.tagline.c_str());
 	} else {
 		currentLine1 = "RetroRoom";
-		currentLine2 = "Sit and Play";
+		currentLine2 = "Configure Req'd";
 	}
 
 	lcdPresent = true;
-	enter_phase(DisplayPhase::Welcome, millis());
+	enter_phase(DisplayPhase::Boot, millis());
+}
+
+// Shared body of display_show_console() and display_show_status():
+// load the two line buffers and rewind both marquee windows to the
+// left edge, holding there for LCD_SCROLL_PAUSE_MS. `scrollable` is
+// false for a status message, which pins both rows in place instead
+// of letting the marquee take them over.
+//
+// Callers must have already checked lcdPresent.
+static void show_lines(const char* line1, const char* line2, bool scrollable) {
+	currentLine1 = line1 ? String(line1) : String("");
+	currentLine2 = line2 ? String(line2) : String("");
+	const uint32_t now = millis();
+	scroll1.offset = 0;
+	scroll1.lastTickMs = now;
+	scroll1.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
+	scroll1.scrollable = scrollable;
+	scroll2.offset = 0;
+	scroll2.lastTickMs = now;
+	scroll2.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
+	scroll2.scrollable = scrollable;
+	// Force the live phase so the welcome screen doesn't overwrite
+	// the message when the caller fires within the first
+	// LCD_WELCOME_MS of boot. enter_phase() repaints both rows and
+	// rewinds the offsets itself, but leaves `scrollable` alone --
+	// which is what we want, since we set it above.
+	if (phase != DisplayPhase::Live) {
+		enter_phase(DisplayPhase::Live, now);
+		return;
+	}
+	repaint_line(scroll1, 0);
+	repaint_line(scroll2, 1);
 }
 
 void display_show_console(const char* name, const char* tagline) {
@@ -317,30 +362,30 @@ void display_show_console(const char* name, const char* tagline) {
 	if (!lcdPresent) {
 		return;
 	}
-	// Called from selectConsole() on every advance / rewind. Update
-	// the line buffers and reset the scroll state so the freshly-
+	// Called from selectConsole() on every advance / rewind. The freshly-
 	// selected console starts at the left edge, held there for
 	// LCD_SCROLL_PAUSE_MS so the operator gets a beat to read the
 	// start of the line before the marquee takes over. After that it
 	// loops continuously.
-	currentLine1 = name ? String(name) : String("");
-	currentLine2 = tagline ? String(tagline) : String("");
-	const uint32_t now = millis();
-	scroll1.offset = 0;
-	scroll1.lastTickMs = now;
-	scroll1.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
-	scroll2.offset = 0;
-	scroll2.lastTickMs = now;
-	scroll2.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
-	// Force the live phase so the welcome screen doesn't overwrite
-	// the console name when the operator does a /next within the
-	// first LCD_WELCOME_MS of boot.
-	if (phase != DisplayPhase::Live) {
-		enter_phase(DisplayPhase::Live, millis());
-	} else {
-		repaint_line(scroll1, 0);
-		repaint_line(scroll2, 1);
+	show_lines(name, tagline, /*scrollable=*/true);
+}
+
+void display_show_status(const char* line1, const char* line2) {
+	// Short-circuit when no LCD was detected at boot, same as
+	// display_show_console().
+	if (!lcdPresent) {
+		return;
 	}
+	show_lines(line1, line2, /*scrollable=*/false);
+	// Force the backlight on and re-arm the auto-off deadline. The
+	// caller is on a path that ends in a reset, so a display that had
+	// been idle long enough to blank itself would otherwise show a
+	// dark panel for the fraction of a second the message is up.
+	if (!backlightOn) {
+		lcd.backlight();
+		backlightOn = true;
+	}
+	backlightOffAtMs = millis() + lcdBacklightOffAfterMs;
 }
 
 void display_wake() {
@@ -421,6 +466,7 @@ void display_loop() {
 // is still required to exist (it's in src/ and src/main.cpp links it).
 void display_init() {}
 void display_show_console(const char*, const char*) {}
+void display_show_status(const char*, const char*) {}
 void display_wake() {}
 void display_loop() {}
 

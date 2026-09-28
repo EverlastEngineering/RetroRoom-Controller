@@ -44,6 +44,18 @@ void ledstring_fillRange(int fromInclusive, int toExclusive, CRGB color) {
 	}
 }
 
+void ledstring_allOff() {
+	// Same fill as ledstring_setConsole()'s reset-to-black step, but
+	// without a window to paint afterwards. show() is synchronous on
+	// the RP2040 PIO backend -- it blocks until the last bit of the
+	// frame has clocked out -- so by the time this returns the strip
+	// is genuinely dark, which is what lets the caller reset the MCU
+	// immediately afterwards.
+	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
+			  LEDSTRING_OFF_COLOR);
+	FastLED.show();
+}
+
 void ledstring_init() {
 	// addLeds() binds a second FastLED controller to GP21. The
 	// controller is independent of the ring (CRGB leds[] on GP20 via

@@ -61,7 +61,7 @@
 #define LCD_ROWS 2
 #endif
 #ifndef LCD_WELCOME_MS
-#define LCD_WELCOME_MS 1000
+#define LCD_WELCOME_MS 5000
 #endif
 // How long a freshly-selected line holds at the left edge before the
 // marquee starts moving it. After that the line loops continuously.
@@ -97,6 +97,23 @@ void display_init();
 // display.
 void display_show_console(const char* name, const char* tagline);
 
+// Paint a fixed, non-scrolling two-line status message and hold it
+// until the next display_show_console() / display_show_status() call.
+// For terminal states that aren't console selections -- currently the
+// "Rebooting" message shown just before a POST /consoles.json resets
+// the board.
+//
+// Contract differences from display_show_console():
+//   - Neither line scrolls, even past LCD_COLS. A status is read
+//     once, not read in a loop.
+//   - The backlight is forced on and re-armed, so a status that
+//     lands while the auto-off timer is mid-countdown can't be
+//     missed by an operator standing at the cabinet.
+//
+// Like display_show_console(), this is a no-op when no LCD was
+// detected at boot.
+void display_show_status(const char* line1, const char* line2);
+
 // Reset the backlight-off timer without changing what's on the
 // screen. Called from selectConsole() right after
 // display_show_console(). Cheap (just resets a uint32_t timestamp).
@@ -113,6 +130,7 @@ void display_loop();
 #if !defined(HAS_LCD)
 inline void display_init() {}
 inline void display_show_console(const char* /*name*/, const char* /*tagline*/) {}
+inline void display_show_status(const char* /*line1*/, const char* /*line2*/) {}
 inline void display_wake() {}
 inline void display_loop() {}
 #endif

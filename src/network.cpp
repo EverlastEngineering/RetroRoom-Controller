@@ -34,7 +34,11 @@
 #include "html.h"
 #include "state.h"
 #include "main.h"
+#include "display.h"
 #include "consoleconfig_store.h"
+#if defined(HAS_LEDS)
+#include "ledstring.h"
+#endif
 #include <ConsoleConfig.h>
 
 // ---------- module state ----------
@@ -104,6 +108,15 @@ volatile unsigned long g_pendingFactoryResetRebootAt = 0;
 // depth) can't clobber this one.
 static constexpr unsigned long kConsoleConfigRebootDelayMs = 1500;
 volatile unsigned long g_pendingConsoleConfigRebootAt = 0;
+
+// How long the operator-facing outputs get to settle after being
+// blanked and before rp2040.restart() actually fires. Both writes
+// leave this TU as I2C traffic (the HD44780 needs a few ms to finish
+// executing the last few character writes), and a hard reset in the
+// same tick can leave the panel showing the old console instead of
+// "Rebooting". Costs nothing -- the device is going down regardless,
+// and the TCP response drained a full kConsoleConfigRebootDelayMs ago.
+static constexpr unsigned long kRebootOutputSettleMs = 250;
 
 // Boot-time scan cache. Populated by network_scan_cache() before the
 // AP comes up (the CYW43 cannot scan while a client is associated, so
@@ -1095,6 +1108,32 @@ void network_init() {
 	startStaServer();
 }
 
+// Blank the operator-facing outputs so a pending reboot reads as a
+// deliberate shutdown rather than the cabinet freezing mid-frame:
+//   - the LCD shows a fixed "Rebooting" on line 1
+//   - the second FastLED strip (GP21, SELECTED_CONSOLE_LED_STRING_DATA)
+//     goes fully dark
+//
+// Main-loop context only -- never call this from a request handler.
+// The PIO state machine and the I2C bus are both shared with whatever
+// else the loop is driving, and this is always followed by a hard
+// reset, so there's nothing to gain from running it any earlier in
+// the reboot window.
+//
+// Each output degrades to a no-op on a build that doesn't have it:
+// display.h supplies inline stubs without HAS_LCD, and ledstring.h
+// declares nothing without HAS_LEDS.
+static void showRebootingState() {
+	display_show_status("Rebooting", "");
+#if defined(HAS_LEDS)
+	ledstring_allOff();
+#endif
+	Serial.println("net: outputs blanked for pending reboot");
+	// Let the frame actually reach the panel and the wire before the
+	// reset truncates it. See kRebootOutputSettleMs.
+	delay(kRebootOutputSettleMs);
+}
+
 void network_loop() {
 	// Auto-restart the DNS catch-all if the debug suspension has
 	// expired. The operator hit /debug/dns-off, the 60 s window is up,
@@ -1135,10 +1174,18 @@ void network_loop() {
 	// context once the TCP send buffer has drained. Separate flag so
 	// a race with /factory-reset (theoretical -- /factory-reset has
 	// its own CSRF nonce gate) can't lose this one.
+	//
+	// showRebootingState() is called here rather than in the POST
+	// handler: the response has had its full 1.5 s window to drain by
+	// now, so painting at the fire site means the "Rebooting" message
+	// and the dark strip are up for exactly as long as the device is
+	// still running, not for a window that mostly overlaps the TCP
+	// grace period.
 	if (const unsigned long deadline = g_pendingConsoleConfigRebootAt) {
 		if ((long)(millis() - deadline) >= 0) {
 			g_pendingConsoleConfigRebootAt = 0;
 			Serial.println("net: /consoles.json reboot firing now");
+			showRebootingState();
 			rp2040.restart();
 		}
 	}

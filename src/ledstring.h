@@ -58,6 +58,17 @@ extern void ledstring_init();
 //     /next, /prev, WebSocket console)
 extern void ledstring_setConsole(int idx);
 
+// Blank every pixel on the GP21 strip and push the frame to the wire.
+// Used on the way down to a reset (the "Rebooting" state armed by a
+// POST /consoles.json) so the operator sees the highlight window go
+// dark rather than the last-painted console's block freezing on the
+// strip through the restart.
+//
+// Independent of the ring: this does NOT touch CRGB leds[] on GP20 or
+// MANUAL_OE_PIN. Callers that want the whole cabinet dark should also
+// drive the ring's OE -- this is only the second strip.
+extern void ledstring_allOff();
+
 // Fill the entire GP21 strip with the given CRGB color. Used by the host
 // tests to verify the buffer fill primitive in isolation; also useful
 // for a future "manual clear" endpoint, but no production caller exists

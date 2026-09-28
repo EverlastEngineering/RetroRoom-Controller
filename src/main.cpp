@@ -87,6 +87,8 @@ void setup() {
 	// Arm the backlight-off timer now (no selectConsole() call has
 	// happened yet, so without this the backlight would stay on
 	// forever).
+	display_init();
+	display_loop();
 	display_wake();
 #endif
 	Serial.println("Setup Complete.");
