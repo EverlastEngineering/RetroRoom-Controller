@@ -30,9 +30,11 @@
 // pass LCD_COLS / LCD_ROWS to lcd.begin() instead.
 LiquidCrystal_I2C lcd((pcf8574Address)LCD_I2C_ADDR);
 
-// State machine phases. Boot -> welcome -> live; the welcome phase
-// just paints the static "RetroRoom" / "Sit and Play" lines and
-// waits LCD_WELCOME_MS before transitioning to live.
+// State machine phases. Boot -> welcome -> live, all three driven by
+// display_loop(). Boot holds the static "RetroRoom" / "Loading" lines
+// for LCD_LOADING_MS while the rest of setup() finishes; Welcome holds
+// the static "RetroRoom" / "Sit and Play" lines for LCD_WELCOME_MS;
+// Live is the steady state, where the two live lines marquee.
 enum class DisplayPhase {
 	Boot,
 	Welcome,
@@ -113,6 +115,15 @@ static uint32_t backlightOffAtMs = 0;
 // when the device is supposed to come up in <1 s.
 static bool lcdPresent = false;
 
+// Latches true on the first display_init() that gets past the probe.
+// The I2C bus scan plus lcd.begin()'s HD44780 init sequence runs close
+// to a second of blocking delay, so display_init() short-circuits on
+// re-entry rather than repeating it. Separate from `lcdPresent` because
+// that one also means "an LCD is present" -- this one means "we've
+// already done the one-time bring-up", which is true even when the
+// probe failed and there's nothing to drive.
+static bool lcdInitialised = false;
+
 // Paint a line that fits the display: the whole string, space-padded
 // so the previous contents are overwritten cleanly. No scrolling, no
 // repeat.
@@ -156,6 +167,23 @@ static void repaint_line(LineScroll& scroll, int row) {
 		return;
 	}
 	lcd_print_repeating(scroll.currentLine, scroll.offset, row);
+}
+
+// Seed the two live lines from the console that's currently selected,
+// so the welcome -> Live handover has something real to show.
+//
+// Must not be called before consoleDefinitions() has run:
+// CurrentConsole() indexes without a bounds check, hence the guard.
+// The welcome strings are the empty-list fallback.
+static void seed_live_lines() {
+	if (HowManyConsoles() > 0) {
+		const auto& c = CurrentConsole();
+		currentLine1 = String(c.name.c_str());
+		currentLine2 = String(c.tagline.c_str());
+	} else {
+		currentLine1 = "RetroRoom";
+		currentLine2 = "Configure Req'd";
+	}
 }
 
 static void enter_phase(DisplayPhase next, uint32_t nowMs) {
@@ -239,6 +267,18 @@ static uint8_t lcd_scanBus(uint8_t* found, uint8_t maxFound, uint32_t budgetMs) 
 }
 
 void display_init() {
+	// One-time hardware bring-up. Everything below is a fixed cost --
+	// the bus scan is time-boxed to 250 ms, the probe is a single
+	// transmission, and lcd.begin()'s HD44780 init is delay(500) plus
+	// 11 nibble writes. None of it is idempotent-friendly: lcd.begin()
+	// re-issues the init sequence, which clears the panel and would
+	// wipe whatever is on screen. So a second call is a no-op, and
+	// the startup -> welcome handover is left to display_loop().
+	if (lcdInitialised) {
+		return;
+	}
+	lcdInitialised = true;
+
 	// Wire defaults to GP4/GP5 on the rpipico2w variant, but we set
 	// the pins explicitly so the intent is visible at the call site.
 	// The rp2040 Wire library doesn't expose a 2-arg begin(SDA, SCL)
@@ -303,22 +343,15 @@ void display_init() {
 	lcd.backlight();
 	backlightOn = true;
 
-	// Seed the live lines from the console that's already selected.
-	// selectConsole() fires during consoleDefinitions(), which runs
-	// before display_init(), and display_show_console() no-ops until
-	// lcdPresent is set -- so without this the LCD hands over from the
-	// welcome screen still showing the welcome text. Guarded on the
-	// console count because CurrentConsole() indexes without a bounds
-	// check. The welcome strings stay as the empty-list fallback.
-	if (HowManyConsoles() > 0) {
-		const auto& c = CurrentConsole();
-		currentLine1 = String(c.name.c_str());
-		currentLine2 = String(c.tagline.c_str());
-	} else {
-		currentLine1 = "RetroRoom";
-		currentLine2 = "Configure Req'd";
-	}
-
+	// The live lines are deliberately NOT seeded here. display_init()
+	// runs at the top of setup(), before consoleDefinitions() has
+	// loaded the console list, so CurrentConsole() would read an empty
+	// vector. The startup -> welcome handover in display_loop() seeds
+	// them instead, which is the first point where the list exists.
+	//
+	// While the panel is showing the startup screen they're not on
+	// screen anyway; enter_phase(Welcome) paints fixed text and only
+	// enter_phase(Live) repaints from these buffers.
 	lcdPresent = true;
 	enter_phase(DisplayPhase::Boot, millis());
 }
@@ -434,15 +467,24 @@ void display_loop() {
 	const uint32_t now = millis();
 	switch (phase) {
 		case DisplayPhase::Boot:
-			// display_init() should have been called; if not, enter
-			// Welcome now. Guarded by `backlightOn` so init's own
-			// welcome doesn't double up.
-			if (backlightOn) {
+			// Hold the "Loading" screen for LCD_LOADING_MS, then hand
+			// over to the welcome screen.
+			//
+			// This is the first point in the boot where the console
+			// list exists: setup() loads it after the network bring-up,
+			// and display_loop() is not pumped until setup() returns.
+			// So the seed belongs here rather than in display_init(),
+			// which runs while the list is still empty. In practice
+			// this branch is reached with the timer long expired (the
+			// CYW43 join blocks for seconds) and fires on the first
+			// loop() tick.
+			if (elapsedSince(now, phaseStartedAtMs) >= (int32_t)LCD_LOADING_MS) {
+				seed_live_lines();
 				enter_phase(DisplayPhase::Welcome, now);
 			}
 			break;
 		case DisplayPhase::Welcome:
-			if (now - phaseStartedAtMs >= LCD_WELCOME_MS) {
+			if (elapsedSince(now, phaseStartedAtMs) >= (int32_t)LCD_WELCOME_MS) {
 				enter_phase(DisplayPhase::Live, now);
 			}
 			break;

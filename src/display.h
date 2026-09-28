@@ -60,6 +60,22 @@
 #ifndef LCD_ROWS
 #define LCD_ROWS 2
 #endif
+// How long the "Loading" screen holds before the panel is handed to
+// the welcome screen.
+//
+// The hold is a floor, not a delay: the CYW43 join / SoftAP bring-up
+// and the LittleFS console-config load in setup() block for a couple
+// of seconds, and display_loop() is not pumped until setup() returns.
+// So in practice the startup phase expires on the very first loop()
+// tick after boot -- the Loading screen covers the blocking work for
+// free. This constant only governs the case where setup() is fast
+// (no WiFi, or a warm FS), so the message doesn't flash past in a
+// single frame.
+#ifndef LCD_LOADING_MS
+#define LCD_LOADING_MS 500
+#endif
+// How long the welcome screen holds before the live console takes
+// over. Started by the startup -> welcome handover, not by display_init().
 #ifndef LCD_WELCOME_MS
 #define LCD_WELCOME_MS 5000
 #endif
@@ -84,11 +100,24 @@
 extern LiquidCrystal_I2C lcd;
 #endif  // HAS_LCD
 
-// Boot the LCD. Called once from main.cpp setup() after
-// consoleDefinitions(). On no-I2C-device-at-this-address (the common
-// bench case when the perfboard isn't wired yet) lcd.init() returns
-// silently and the LCD just stays blank -- subsequent calls are
-// no-ops, no crash.
+// Bring the LCD hardware up and paint the startup "RetroRoom" /
+// "Loading" screen. Called ONCE, at the top of main.cpp setup(),
+// before consoleDefinitions() and before the network bring-up -- both
+// of which block for seconds, and this is what tells the operator the
+// cabinet is alive while they wait.
+//
+// The startup -> welcome -> live progression is display_loop()'s job.
+// display_init() only does hardware bring-up and starts the clock on
+// the startup phase.
+//
+// Idempotent. The bus scan, the address probe and lcd.begin()'s
+// HD44780 init sequence (delay(500) + 11 nibble writes) together cost
+// close to a second, and re-running lcd.begin() re-issues the init and
+// blanks the panel we just painted. A second call is a no-op.
+//
+// On no-I2C-device-at-this-address (the common bench case when the
+// perfboard isn't wired yet) the probe fails, every public display_*
+// function no-ops, and the firmware stays usable.
 void display_init();
 
 // Push the current console + tagline onto the LCD. Called from
@@ -119,10 +148,12 @@ void display_show_status(const char* line1, const char* line2);
 // display_show_console(). Cheap (just resets a uint32_t timestamp).
 void display_wake();
 
-// Pump the LCD state machine. Called from main.cpp loop(). Handles
-// the welcome -> live transition (after LCD_WELCOME_MS), the
-// scroll cadence, and the backlight auto-off. All time-based,
-// non-blocking.
+// Pump the LCD state machine. Called from main.cpp loop(). Owns the
+// whole startup -> welcome -> live progression: the startup -> welcome
+// handover (after LCD_LOADING_MS, and it seeds the live lines from the
+// console list that setup() loaded), the welcome -> live transition
+// (after LCD_WELCOME_MS), the scroll cadence, and the backlight
+// auto-off. All time-based, non-blocking.
 void display_loop();
 
 // No-LCD stub mode. When HAS_LCD is undefined these are inline

@@ -46,9 +46,16 @@ void setup() {
 	// ring side effect is sacrificed (the operator can hit /flash
 	// once to engage it if they want the ring OE PWM).
 #if defined(HAS_LCD)
-	// 16x2 I2C LCD -- welcome screen + live console name. Must come
-	// AFTER consoleDefinitions() so the live display can show the
-	// current console from the start.
+	// 16x2 I2C LCD -- brings up the hardware and paints the startup
+	// "RetroRoom" / "Loading" screen. Deliberately FIRST, before the
+	// network bring-up below: that path blocks for seconds, and this
+	// is the only thing telling the operator the cabinet is alive
+	// while it happens.
+	//
+	// The startup -> welcome -> live progression is owned by
+	// display_loop() in loop(). Nothing further is needed here, and
+	// calling display_init() again would just repeat ~1 s of I2C
+	// bring-up and blank the panel.
 	display_init();
 #endif
 #ifdef MANUAL_OE_PIN
@@ -86,9 +93,9 @@ void setup() {
 #if defined(HAS_LCD)
 	// Arm the backlight-off timer now (no selectConsole() call has
 	// happened yet, so without this the backlight would stay on
-	// forever).
-	display_init();
-	display_loop();
+	// forever). The LCD's phase progression is NOT touched here --
+	// loop()'s display_loop() picks up the startup phase on its first
+	// tick and takes it from there.
 	display_wake();
 #endif
 	Serial.println("Setup Complete.");
