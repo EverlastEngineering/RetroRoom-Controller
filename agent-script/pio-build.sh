@@ -38,6 +38,8 @@
 
 set -u
 
+. "$(dirname "$0")/pio-env.sh"
+
 ENV="pico2w"
 VERBOSE=0
 
@@ -60,7 +62,7 @@ trap 'rm -f "$LOG"' EXIT
 
 if [ "$VERBOSE" = 1 ]; then
     # Pass-through mode: full output, full exit code.
-    pio run -e "$ENV" 2>&1 | tee "$LOG"
+    "$PIO" run -e "$ENV" 2>&1 | tee "$LOG"
     rc=${PIPESTATUS[0]}
 else
     # Quiet mode: filter the ArduinoJson StaticJsonDocument deprecation
@@ -69,7 +71,7 @@ else
     # `set -o pipefail` so the trap catches a build that succeeded but
     # had grep kill the stream unexpectedly.
     set -o pipefail
-    pio run -e "$ENV" 2>&1 \
+    "$PIO" run -e "$ENV" 2>&1 \
         | tee "$LOG" \
         | grep -v -E "StaticJsonDocument.*deprecated.*JsonDocument" \
         || true

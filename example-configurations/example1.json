@@ -6,8 +6,8 @@
         "YUV":   "0xE30"
     },
     "consoleNames": {
-        "NES":  "Nintendo Entertainment System",
-        "SNES": "Super Nintendo Entertainment System",
+        "NES":  "Nintendo NES",
+        "SNES": "Super Nintendo",
         "GEN":  "Sega Genesis"
     },
     "consoles": [

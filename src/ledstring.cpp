@@ -3,8 +3,9 @@
 //
 // This translation unit is excluded from the [env:test_native] host
 // build -- it depends on FastLED's RP2040 PIO backend and the Arduino
-// core, neither of which exist on the host. Pure paint-math coverage
-// lives in lib/LedStringPaint (unittested under test/test_ledstring).
+// core, neither of which exist on the host. The paint *math* is lifted
+// into lib/LedStringPaint precisely so it can be unit-tested on the
+// host; see test/test_ledstring.
 
 #include "ledstring.h"
 

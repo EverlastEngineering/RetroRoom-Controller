@@ -28,7 +28,7 @@
 // mapping matches the HD44780 + PCF8574 backpack pinout used by the
 // enjoyneering library and is what the library tests against; we
 // pass LCD_COLS / LCD_ROWS to lcd.begin() instead.
-LiquidCrystal_I2C lcd(LCD_I2C_ADDR);
+LiquidCrystal_I2C lcd((pcf8574Address)LCD_I2C_ADDR);
 
 // State machine phases. Boot -> welcome -> live; the welcome phase
 // just paints the static "RetroRoom" / "Sit and Play" lines and
@@ -47,24 +47,49 @@ static uint32_t phaseStartedAtMs = 0;
 static String currentLine1;
 static String currentLine2;
 
+// Milliseconds from `from` to `now`, as a signed quantity.
+//
+// Both operands are millis() stamps, so a plain uint32_t subtraction
+// looks like the obvious thing to write -- and is quietly wrong
+// whenever `from` lies in the future, which is exactly how a
+// hold-until deadline is expressed. The subtraction wraps to a very
+// large positive number, every "has enough time passed?" test then
+// reads true, and the hold it was meant to impose silently never
+// happens. Signed arithmetic yields a negative number instead, which
+// compares correctly against a positive interval.
+static int32_t elapsedSince(uint32_t now, uint32_t from) {
+	return (int32_t)(now - from);
+}
+
 // Per-line scroll state. Each line independently:
 //   - Holds at the left edge for LCD_SCROLL_PAUSE_MS after a fresh
-//     show_console.
-//   - Scrolls right by 1 char every LCD_SCROLL_MS, only when the
-//     line exceeds LCD_COLS.
-//   - When the trailing edge reaches the natural end, snaps back
-//     to the left edge and pauses again.
+//     show_console, and after the welcome screen hands over, so the
+//     operator can read the start of the line before it moves.
+//   - Then scrolls right by 1 char every LCD_SCROLL_MS, for as long
+//     as the line exceeds LCD_COLS.
+//   - Loops forever. The window is taken from a stream that repeats
+//     the line (see lcd_print_repeating), so the wrap is seamless.
 struct LineScroll {
 	int offset = 0;
-	uint32_t lastTickMs = 0;
+	uint32_t lastTickMs = 0;   // millis() stamp of the last step
+	uint32_t holdUntilMs = 0;  // don't step before this stamp
+	// True while still inside the initial hold.
+	bool holding(uint32_t now) const {
+		return elapsedSince(now, holdUntilMs) < 0;
+	}
 	bool needsScroll() const {
 		return currentLine.length() > LCD_COLS;
+	}
+	// One full cycle of the marquee: the string, plus the blanks that
+	// separate it from its own next repeat. offset wraps at this.
+	int period() const {
+		return (int)currentLine.length() + LCD_LOOP_GAP;
 	}
 	const String& currentLine;  // bound to currentLine1 / currentLine2 by the caller
 };
 
-static LineScroll scroll1{0, 0, currentLine1};
-static LineScroll scroll2{0, 0, currentLine2};
+static LineScroll scroll1{0, 0, 0, currentLine1};
+static LineScroll scroll2{0, 0, 0, currentLine2};
 
 // Backlight state. lcd.backlight() / lcd.noBacklight() drive the
 // PCF8574 backpack's BL bit.
@@ -81,33 +106,49 @@ static uint32_t backlightOffAtMs = 0;
 // when the device is supposed to come up in <1 s.
 static bool lcdPresent = false;
 
-static void lcd_print_padded(const String& s, int offset, char row) {
-	// Paint `LCD_COLS` chars from `s` starting at `offset`. When the
-	// string is shorter than LCD_COLS+offset, pad with spaces so any
-	// previous characters are overwritten cleanly.
+// Paint a line that fits the display: the whole string, space-padded
+// so the previous contents are overwritten cleanly. No scrolling, no
+// repeat.
+static void lcd_print_fitted(const String& s, char row) {
 	lcd.setCursor(0, row);
-	if (offset >= s.length()) {
-		// Past the end -- blank line.
+	for (int i = 0; i < LCD_COLS; ++i) {
+		lcd.print(i < (int)s.length() ? s.charAt(i) : ' ');
+	}
+}
+
+// Paint one marquee window: LCD_COLS characters taken from a stream
+// that repeats `s` end-to-start forever, separated by LCD_LOOP_GAP
+// blanks.
+//
+// This is what makes the loop seamless. The character that exits on
+// the left is immediately followed by the first character of the next
+// repeat arriving on the right in the same tick, so there is no jump
+// and no blank frame at the seam. The gap is what keeps that readable
+// -- without it the tail of the line would butt straight against its
+// own head ("SystemSuper") and look like a typo.
+static void lcd_print_repeating(const String& s, int offset, char row) {
+	lcd.setCursor(0, row);
+	const int len = (int)s.length();
+	if (len == 0) {
 		for (int i = 0; i < LCD_COLS; ++i) lcd.print(' ');
 		return;
 	}
-	const char* p = s.c_str() + offset;
-	int remaining = s.length() - offset;
-	int n = remaining < LCD_COLS ? remaining : LCD_COLS;
-	for (int i = 0; i < n; ++i) lcd.print(p[i]);
-	for (int i = n; i < LCD_COLS; ++i) lcd.print(' ');
+	const int period = len + LCD_LOOP_GAP;
+	for (int i = 0; i < LCD_COLS; ++i) {
+		const int idx = (offset + i) % period;
+		lcd.print(idx < len ? s.charAt(idx) : ' ');
+	}
 }
 
 static void repaint_line(LineScroll& scroll, int row) {
 	// Repaint one row from `scroll.currentLine` at `scroll.offset`.
 	// Bound to currentLine1 or currentLine2 by whoever owns the
 	// LineScroll instance.
-	if (scroll.currentLine.length() <= LCD_COLS) {
-		// Short line -- just paint the whole thing at offset 0.
-		lcd_print_padded(scroll.currentLine, 0, row);
+	if (!scroll.needsScroll()) {
+		lcd_print_fitted(scroll.currentLine, row);
 		return;
 	}
-	lcd_print_padded(scroll.currentLine, scroll.offset, row);
+	lcd_print_repeating(scroll.currentLine, scroll.offset, row);
 }
 
 static void enter_phase(DisplayPhase next, uint32_t nowMs) {
@@ -121,11 +162,67 @@ static void enter_phase(DisplayPhase next, uint32_t nowMs) {
 		lcd.print("Sit and Play");
 	} else if (next == DisplayPhase::Live) {
 		lcd.clear();
+		// Arm the same hold a fresh show_console() would, so the
+		// console name is readable for LCD_SCROLL_PAUSE_MS after the
+		// welcome screen hands over rather than marching off the
+		// left edge the instant it appears.
+		const uint32_t now = millis();
+		scroll1.offset = 0;
+		scroll1.lastTickMs = now;
+		scroll1.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
+		scroll2.offset = 0;
+		scroll2.lastTickMs = now;
+		scroll2.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
 		// Repaint immediately so the operator sees the current
 		// console name without waiting for the next loop() tick.
 		repaint_line(scroll1, 0);
 		repaint_line(scroll2, 1);
 	}
+}
+
+// Print an address as 0xNN without relying on Serial.printf, which the
+// RP2040 core's Serial doesn't provide.
+static void printI2cAddr(uint8_t addr) {
+	Serial.print("0x");
+	if (addr < 0x10) {
+		Serial.print('0');
+	}
+	Serial.print((int)addr, HEX);
+}
+
+// Walk the 7-bit I2C address space and report every device that ACKs,
+// writing up to `maxFound` addresses into `found`. Returns the total
+// number of responders (which may exceed maxFound).
+//
+// Why: a breadboard bring-up with one PCF8574 backpack has exactly one
+// failure mode that is invisible. The probe below addresses a single
+// hardcoded address and, on a NAK, returns with no output at all -- so
+// a blank LCD is indistinguishable from a wiring mistake. The PCF8574
+// and PCF8574A live at different addresses (0x20-0x27 vs 0x38-0x3F
+// depending on the A2/A1/A0 jumpers), and 0x3F clones are extremely
+// common, so the default is wrong often enough to matter.
+//
+// Time-boxed on purpose. A healthy NAK returns in microseconds, but on
+// a miswired bus (SDA held low, no pull-ups) every probe can burn the
+// full Wire timeout; at 112 addresses that would stall boot for
+// seconds and look exactly like the wedge the probe guard exists to
+// prevent. The deadline turns that into one clear "bus stuck" line.
+static uint8_t lcd_scanBus(uint8_t* found, uint8_t maxFound, uint32_t budgetMs) {
+	const uint32_t startedAt = millis();
+	uint8_t count = 0;
+	for (uint8_t addr = 0x08; addr <= 0x77; ++addr) {
+		if (millis() - startedAt > budgetMs) {
+			break;
+		}
+		Wire.beginTransmission(addr);
+		if (Wire.endTransmission() == 0) {
+			if (count < maxFound) {
+				found[count] = addr;
+			}
+			++count;
+		}
+	}
+	return count;
 }
 
 void display_init() {
@@ -136,6 +233,29 @@ void display_init() {
 	Wire.setSDA(LCD_I2C_SDA_PIN);
 	Wire.setSCL(LCD_I2C_SCL_PIN);
 	Wire.begin();
+
+	// Report what's on the bus before deciding whether to drive the
+	// LCD. Purely diagnostic -- the probe below still decides whether
+	// the driver engages.
+	uint8_t busDevices[8];
+	const uint8_t busCount = lcd_scanBus(busDevices, sizeof(busDevices), 250);
+	Serial.print(F("[display] I2C bus GP"));
+	Serial.print((int)LCD_I2C_SDA_PIN);
+	Serial.print(F("/GP"));
+	Serial.print((int)LCD_I2C_SCL_PIN);
+	Serial.print(F(": "));
+	if (busCount == 0) {
+		Serial.println(F("no devices responded (bus idle, or SDA/SCL "
+						 "miswired / missing pull-ups)"));
+	} else {
+		Serial.print(busCount);
+		Serial.print(F(" device(s):"));
+		for (uint8_t i = 0; i < busCount && i < sizeof(busDevices); ++i) {
+			Serial.print(' ');
+			printI2cAddr(busDevices[i]);
+		}
+		Serial.println();
+	}
 
 	// Probe the bus for the LCD before letting lcd.begin() run.
 	// Without this guard, lcd.begin() runs the HD44780 init sequence
@@ -150,9 +270,17 @@ void display_init() {
 	Wire.beginTransmission(LCD_I2C_ADDR);
 	const uint8_t probeResult = Wire.endTransmission();
 	if (probeResult != 0) {
+		Serial.print(F("[display] LCD not found at configured "));
+		printI2cAddr((uint8_t)LCD_I2C_ADDR);
+		Serial.println(F(" -- LCD driver disabled. If a device above "
+						 "looks like a PCF8574 backpack, rebuild with "
+						 "-DLCD_I2C_ADDR=<that address>."));
 		lcdPresent = false;
 		return;
 	}
+	Serial.print(F("[display] LCD found at "));
+	printI2cAddr((uint8_t)LCD_I2C_ADDR);
+	Serial.println();
 
 	// lcd.begin() now goes through the full HD44780 4-bit init
 	// sequence (delay(500) + 11 _send() calls). On a real PCF8574
@@ -161,8 +289,23 @@ void display_init() {
 	lcd.begin();
 	lcd.backlight();
 	backlightOn = true;
-	currentLine1 = "RetroRoom";
-	currentLine2 = "Sit and Play";
+
+	// Seed the live lines from the console that's already selected.
+	// selectConsole() fires during consoleDefinitions(), which runs
+	// before display_init(), and display_show_console() no-ops until
+	// lcdPresent is set -- so without this the LCD hands over from the
+	// welcome screen still showing the welcome text. Guarded on the
+	// console count because CurrentConsole() indexes without a bounds
+	// check. The welcome strings stay as the empty-list fallback.
+	if (HowManyConsoles() > 0) {
+		const auto& c = CurrentConsole();
+		currentLine1 = String(c.name.c_str());
+		currentLine2 = String(c.tagline.c_str());
+	} else {
+		currentLine1 = "RetroRoom";
+		currentLine2 = "Sit and Play";
+	}
+
 	lcdPresent = true;
 	enter_phase(DisplayPhase::Welcome, millis());
 }
@@ -175,14 +318,20 @@ void display_show_console(const char* name, const char* tagline) {
 		return;
 	}
 	// Called from selectConsole() on every advance / rewind. Update
-	// the line buffers and reset the scroll offsets so the freshly-
-	// selected console starts at the left edge with a full pause.
+	// the line buffers and reset the scroll state so the freshly-
+	// selected console starts at the left edge, held there for
+	// LCD_SCROLL_PAUSE_MS so the operator gets a beat to read the
+	// start of the line before the marquee takes over. After that it
+	// loops continuously.
 	currentLine1 = name ? String(name) : String("");
 	currentLine2 = tagline ? String(tagline) : String("");
+	const uint32_t now = millis();
 	scroll1.offset = 0;
-	scroll1.lastTickMs = millis();
+	scroll1.lastTickMs = now;
+	scroll1.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
 	scroll2.offset = 0;
-	scroll2.lastTickMs = millis();
+	scroll2.lastTickMs = now;
+	scroll2.holdUntilMs = now + LCD_SCROLL_PAUSE_MS;
 	// Force the live phase so the welcome screen doesn't overwrite
 	// the console name when the operator does a /next within the
 	// first LCD_WELCOME_MS of boot.
@@ -211,25 +360,24 @@ void display_wake() {
 }
 
 static void tick_scroll(LineScroll& scroll, int row) {
-	if (scroll.currentLine.length() <= LCD_COLS) {
-		return;  // short line; no scrolling
+	if (!scroll.needsScroll()) {
+		return;  // short line; nothing to scroll
 	}
 	const uint32_t now = millis();
-	if (now - scroll.lastTickMs < LCD_SCROLL_MS) {
+	// Still inside the initial hold? Don't move. Checked with signed
+	// arithmetic because holdUntilMs is legitimately in the future.
+	if (scroll.holding(now)) {
+		return;
+	}
+	if (elapsedSince(now, scroll.lastTickMs) < (int32_t)LCD_SCROLL_MS) {
 		return;
 	}
 	scroll.lastTickMs = now;
-	// After offset reaches (length - LCD_COLS) we've shown the tail;
-	// snap back to 0 and pause for LCD_SCROLL_PAUSE_MS.
-	if (scroll.offset >= scroll.currentLine.length() - LCD_COLS) {
-		scroll.offset = 0;
-		// The pause uses LCD_SCROLL_PAUSE_MS by extending the next
-		// tick's deadline. Cheap: just bump lastTickMs forward.
-		scroll.lastTickMs = now + LCD_SCROLL_PAUSE_MS - LCD_SCROLL_MS;
-		repaint_line(scroll, row);
-		return;
-	}
-	++scroll.offset;
+	// One step forward, wrapping at the end of a full cycle. The wrap
+	// is invisible: lcd_print_repeating() renders the window from the
+	// repeating stream, so the character that reappears on the right
+	// is the one that just left on the left. No snap-back, no pause.
+	scroll.offset = (scroll.offset + 1) % scroll.period();
 	repaint_line(scroll, row);
 }
 

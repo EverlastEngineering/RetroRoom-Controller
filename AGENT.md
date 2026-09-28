@@ -1,196 +1,172 @@
 # AGENT.md — Working with RetroRoom-Controller
 
-> This file is for AI coding agents (and humans driving tooling on the
-> agent's behalf). It captures the rules, conventions, and gotchas that
-> have already been paid for in past sessions. Read it before doing
-> anything in this repo. Update it when a new lesson is learned.
+> Read this before doing anything in this repo. It records **rules and
+> gotchas that cost real time**, not a copy of anybody's documentation.
+> Update it when a new lesson is learned.
 
-## 0. What this project is
+## 0. Documentation policy — read this first
 
-Firmware for a microcontroller that controls a multi-console retro
-gaming switch box. The **only firmware target** is the **Raspberry
-Pi Pico 2 W** (`[env:pico2w]`, RP2350 + on-board CYW43 WiFi) — the
-pre-CYW43 wired-only `pico_base` / `picow` / `pico_yd` environments
-were removed from `platformio.ini` on 2026-09-22 (commit `4b50eaa`).
-ESP8266 support was dropped earlier on `session/merge-pico-json`.
-The active branch is `session/pico-2-wireless`.
+This file is deliberately **not** a reference manual.
 
-Layout: `src/` for shell code, `lib/ConsoleConfig/` for the pure
-functional core (console JSON parser + selection math), `test/`
-for host-side Unity tests, `todo/` for per-item open/done/deferred
-files, `pinouts/` for hardware notes, `pin-map-chart.md` for the
-authoritative per-pin table (per-role `#define` comments live in
-`src/configuration.h`).
+- **Do not restate platform or tool documentation.** How to invoke
+  PlatformIO, what a build flag does, how the Arduino core or the CYW43
+  driver behaves — look it up in the tool's own docs, or read the
+  installed source. If a fact here conflicts with the tool, the tool is
+  right and this file is stale.
+- **Do not record facts that drift.** No test counts, no pass rates, no
+  library versions, no LED blink cadences, no port names, no pin numbers
+  outside `pin-map-chart.md`. Anything that changes when someone merges a
+  commit belongs in the code, not here.
+- **Record symptoms and where to look.** The durable content here is
+  "you will see X, the cause is Y, go check Z" — not a transcription of
+  what Z says.
 
-## 1. Build / Flash / Monitor (PlatformIO)
+If you find a stale statement in this file or `readme.md`, fix it in the
+same commit as whatever you were doing. Do not add new ones.
 
-This is the **only** correct workflow. Do not invent shell wrappers,
-agent-script helpers, or MCP tool servers. The prior session tried
-that and deleted it (commit `5f6a554`) — the user does not want
-workarounds, they want the standard PlatformIO commands used
-correctly.
+## 1. The pin map is the source of truth
 
-```sh
-# 1. Build only (no flash) — headless-safe, runs anywhere
-pio run -e pico2w
+[`pin-map-chart.md`](pin-map-chart.md) is authoritative for every physical
+pin. Hardware gets wired from it.
 
-# 2. Build + flash (headless-safe). Uses picotool over /dev/cu.usbmodem*
-#    by default; auto-detects the port.
-pio run -e pico2w -t upload --upload-port /dev/cu.usbmodem11101
+- **`src/configuration.h` must match it.** Every pin in the chart table
+  gets exactly one `#define` in `configuration.h`, and nothing in
+  `configuration.h` may claim a pin the chart doesn't list. If a pin is
+  needed but isn't in the table, the table is the thing that's wrong.
+- **If code and the chart disagree, the code is wrong.** Fix the code.
+  Never "fix" the chart to match the code.
+- **If the chart is missing a pin the code genuinely needs — or a pin
+  collides, or a role is ambiguous — stop and raise it with the user
+  before writing any code.** This is a blocking, high-priority question
+  because the answer changes the physical wiring and can't be inferred
+  from the source. Guessing here risks a mis-wired board.
 
-# 3. Build + flash + monitor — this is what you want when debugging a
-#    boot sequence or watching the WiFi SoftAP come up. Use the repo's
-#    wrapper (agent-script/pio-upload-monitor.sh) so the monitor
-#    auto-closes after a timeout instead of running forever:
-./agent-script/pio-upload-monitor.sh                     # default: pico2w, 25s window
-./agent-script/pio-upload-monitor.sh -t 60               # longer monitor window
-./agent-script/pio-upload-monitor.sh --no-build          # skip the standalone build step
-./agent-script/pio-upload-monitor.sh --keep-heartbeats   # don't strip Heartbeat: lines
+Verify with a grep for the pin macros before and after touching
+`configuration.h`.
 
-# 4. Monitor only — split step. Run in a separate terminal:
-pio device monitor -p /dev/cu.usbmodem11101 -b 115200
-```
+## 2. Build / flash / monitor
 
-The wrapper exists because `pio device monitor` requires a real TTY on
-stdin (miniterm reads line-editing input), which means it gets
-suspended by the OS if you run it as a background job in a non-TTY
-shell. The wrapper uses `script(1)` to give the monitor a pseudo-tty
-and SIGINTs it on a timer. Don't try to inline the `script(1) ... &`
-pattern yourself every time — that's what the script is for.
+Use the wrappers in [`agent-script/`](agent-script/). They exist because
+the naive invocations have real failure modes, and they document the exit
+codes.
 
-`monitor_filters = direct` is set in `platformio.ini` so every byte
-the firmware writes to `Serial` shows up unprocessed. Do **not** pipe
-build or monitor output through `tail`, `grep`, or any other filter —
-the user wants to see everything (LOG entry 2026-09-07, "Policy #6:
-never hide user-facing command output").
+| Script | Does |
+|---|---|
+| `pio-build.sh` | Compile only. No hardware touched. Always safe. |
+| `pio-upload-monitor.sh` | Build + flash + serial capture on a timer. |
+| `e2e-consoles-json.sh` | Drives `/consoles.json` against a running device. |
+| `serial-snapshot.sh` | Non-interactive serial capture. |
 
-The serial device is auto-detected at `/dev/cu.usbmodem*` on macOS. If
-the wrong port is picked, pass `--upload-port /dev/cu.usbmodemXXXX`
-explicitly.
+`agent-script/pio-env.sh` is sourced by the others; it resolves the
+PlatformIO CLI from `PATH` or `~/.platformio/penv/bin` and fails with
+install instructions if it's genuinely absent. **If a wrapper says
+"command not found", the fix is usually just that PlatformIO isn't on
+`PATH` in non-interactive shells** — add it to `~/.zprofile` (macOS) or
+`~/.bashrc`. Do not work around it by hardcoding paths into the scripts.
 
-## 2. RP2350 (Pico 2 W) gotchas
+### Build and flash as two separate steps
 
-These are the rules that look like magic but are just how the chip
-behaves:
+Never combine the build into the flash-and-monitor invocation. Do this
+instead:
 
-- **BOOTSEL does NOT auto-eject on RP2350.** Unlike the RP2040 (where
-  writing a UF2 unmounts `/Volumes/RPI-RP2/` and reboots into
-  firmware), the RP2350 keeps `/Volumes/RP2350/` mounted after the
-  flash write. The firmware boots only after one of: physical BOOTSEL
-  button press, USB cable unplug + replug, or a 1200-baud reset
-  sequence over USB-CDC from the host.
-- **CDC-ACM buffer drops pre-host writes.** The Earle Philhower
-  `rpipico2w` board target's USB-CDC ACM silently discards writes
-  issued before the host opens the port. Boot logs printed before the
-  user connects `pio device monitor` are lost. The current
-  `setup()` (src/main.cpp) handles this with a 1 s `delay(1000)`
-  before `Serial.begin()` plus a bounded `while (!Serial ... < 3000)`
-  wait after. Don't remove those delays without a replacement.
-- **LED_BUILTIN is GP64 on Pico 2 W** (was GP25 on the Pico / Pico-W
-  / YD-RP2040). The framework resolves the right pin per board, so
-  `pinMode(LED_BUILTIN, OUTPUT)` works on every target without
-  conditional code.
-- **On-board WS2812 is NOT present on the Pico 2 W** (that was a
-  YD-RP2040 special). External WS2812 ring must be wired to
-  `DATA_PIN` (currently GP4 per `src/configuration.h`).
-- **1 Hz heartbeat blink on `LED_BUILTIN`** is the canonical "is the
-  firmware alive?" signal. If the LED isn't blinking, `setup()` did
-  not reach `pinMode(LED_BUILTIN, OUTPUT)` and the firmware wedged
-  earlier — inspect `/Volumes/RP2350/INFO_UF2.TXT` to confirm the
-  bootloader banner, or check the serial output for the last
-  breadcrumb.
+1. `./agent-script/pio-build.sh` — build, then **read the output and
+   confirm it succeeded** before going any further.
+2. `./agent-script/pio-upload-monitor.sh -e <env> -t 45` — flash and
+   capture, with a window of **at least 30 seconds**.
 
-## 3. PlatformIO keys that aren't what they look like
+The monitor window opens before the upload finishes, so a short window
+expires mid-`Loading into Flash`, kills the pipeline, and leaves the
+device in an indeterminate state with a truncated log — a failure that
+doesn't announce itself. Building first means the window only has to
+cover the flash, which makes the timing predictable. The wrapper clamps
+anything under 30s, but that clamp is a backstop, not a licence to
+combine the two steps.
 
-Things that burned time and will burn yours if you don't know:
+Don't hand-roll `pio ... | tail` one-liners. The wrappers already handle
+exit-code propagation and the monitor's TTY problem, and AGENT.md's
+history records that inventing shell wrappers around this was explicitly
+rejected before.
 
-- **Flash / FS partition override.** The override is
-  `board_build.filesystem_size = 1MB` (or `64KB`, `128KB`, etc.).
-  This is read by the platform's
-  `~/.platformio/platforms/raspberrypi/builder/main.py` via
-  `board.get("build.filesystem_size")`. The keys
-  `board_build.flash_length`, `board_build.flash_total`,
-  `board_build.fs_start`, `board_build.fs_end`,
-  `board_build.eeprom_start` are silently dropped by PlatformIO's
-  menu-merge logic and don't reach the linker. The build prints
-  `Filesystem size: 0.00MB` if you got it wrong, regardless of what
-  you put in those keys.
-- **CYW43 WiFi on Pico 2 W.** `khoih-prog/AsyncTCP_RP2040W` and
-  `khoih-prog/AsyncWebServer_RP2040W` gate on
-  `#if defined(ARDUINO_RASPBERRY_PI_PICO_W)` and reject
-  `ARDUINO_RASPBERRY_PI_PICO_2W`. Use
-  `ayushsharma82/RPAsyncTCP@^1.3.2` + `esp32async/ESPAsyncWebServer@^3.7.2`
-  instead — those explicitly support both RP2040+W and RP2350+W on
-  Earle Philhower's core.
-- **AsyncWebServer C++ overloads.** `AsyncWebSocket::textAll` takes a
-  `const char*` + `size_t`. Don't pass a `std::string` directly; the
-  compiler picks a wrong overload and rejects it. Use
-  `textAll(msg.c_str(), msg.size())`. Same for
-  `AsyncWebSocketClient::text(...)`.
-- **`monitor_filters = direct`** historically suppressed miniterm's
-  line-ending/timestamp munging on the dropped `pico_base` env. The
-  current `[env:pico2w]` block doesn't set it; the
-  `agent-script/pio-upload-monitor.sh` wrapper handles its own
-  filter handling and doesn't rely on the env-level setting. If you
-  ever run `pio device monitor` directly and see mangled output,
-  add `monitor_filters = direct` back to `[env:pico2w]`.
+### Never filter the user's output
 
-## 4. Hardware-permission policy
+Do not pipe build or monitor output through `tail`, `grep`, `head`, or
+any other filter. The user wants to see everything. (LOG entry
+2026-09-07, "Policy #6".) If a wrapper truncates for you, it does so
+deliberately and logs the full text to a file it tells you about.
 
-`pio ... -t upload`, `pio device monitor`, and any action that
-**causes a device reboot or hardware state change** (POST
-`/consoles.json` on a running device, `rp2040.restart()`, factory
-reset, etc.) may only run when the user has explicitly asked for
-that action in the current conversation. The two recognized
-patterns of explicit permission:
+## 3. Hardware permission policy
 
-  1. **Direct command**: "flash the device", "upload and monitor",
-     "POST the JSON to it", or similar wording that names the
-     hardware-touching action.
-  2. **Task-scoped delegation**: assigning a task whose fulfillment
-     requires a hardware-touching step (e.g. "run the e2e test
-     suite against the device", "verify the new firmware boots
-     clean", "iterate on the WS handshake"), and saying it is OK
-     to perform those steps. The user doing this once per task is
-     sufficient; do not re-ask before every flash/reboot within the
-     same task.
+Flashing, attaching a monitor, rebooting the device, POSTing to a running
+device, factory reset, or any other action that changes **hardware state**
+may only run when the user has asked for it in the current conversation.
+Two patterns count as explicit permission:
 
-Building (`pio run -e pico2w`) is always fine. Mounting/unmounting
-LittleFS or any other host-side code change is always fine. When
-in doubt, ask before uploading or attaching the monitor. (LOG
-entry 2026-09-07, "Policy #5", last revised 2026-09-22 — added the
-task-scoped delegation pattern after the e2e harness work.)
+1. **Direct instruction** — "flash it", "upload and monitor", "POST the
+   JSON to the device".
+2. **Task-scoped delegation** — assigning a task that inherently requires
+   hardware (e.g. "run the e2e suite against the device") and saying it's
+   OK to perform those steps. Once granted, it covers the whole task; do
+   not re-ask before each flash within the same task.
 
-## 5. Logging / decision records
+Building, running the host-side tests, and any host-side code change are
+always fine. When in doubt, ask. (LOG entry 2026-09-07, "Policy #5".)
 
-Significant architectural decisions get logged at the top of `LOG.md`
-in [MADR](https://adr.github.io/mdr/) format. The existing `AGENT.md`
-references in `LOG.md` are historical — there is no live `AGENT.md`
-elsewhere. Keep entries short and concrete: **Context** (what forced
-the choice), **Decision** (what we picked and why), **Consequences**
-(what changed and what to verify). Use UTC timestamps.
+## 4. Platform gotchas worth remembering
 
-For routine TODO tracking, the `todo/` directory is the source of
-truth: `open/` for active items, `done/` for finished ones (rename the
-file to `<sha1-prefix>_<slug>.md` on completion so the filename itself
-records the commit), `deferred/` for items parked indefinitely.
+The durable lessons. For the current API surface, read the tool.
+
+- **RP2350 BOOTSEL does not auto-eject.** After a UF2 write the volume
+  stays mounted and the board does not boot on its own. It needs a
+  BOOTSEL press, a cable replug, or a 1200-baud USB reset.
+  → Symptom: "flash succeeded, nothing happened." Check the mount name
+  against your chip (RP2350 and RP2040 differ).
+- **The USB CDC buffer drops writes made before the host opens the port.**
+  Boot logs printed too early vanish. The bounded wait in `setup()`
+  exists for this — don't delete it without a replacement.
+- **`LED_BUILTIN` is not the same pin across boards.** The framework
+  resolves the right one per board target, so always use the symbol.
+  For what the blink *means*, read `src/state.cpp`.
+- **Some AsyncWebServer dependencies are gated on older board macros and
+  silently refuse newer ones.** If a build breaks on a board bump, check
+  the library's `#if defined(...)` guards against the board symbol the
+  new target actually defines.
+- **FastLED's RP2040/RP2350 backend uses `DATA_PIN` as a template
+  parameter name,** which collides with our own `DATA_PIN` macro. The
+  save/`#undef`/restore dance in `lighting.h` and `ledstring.h` is
+  load-bearing — leave it alone.
+- **`AsyncWebSocket::textAll` has overloads that don't accept a
+  `std::string` directly.** Pass `.c_str()` and the size explicitly, or
+  the compiler picks the wrong overload and rejects it.
+
+## 5. Task tracking
+
+`todo/` is the source of truth for outstanding work — `open/` for active,
+`deferred/` for parked, `done/` for shipped. Read `todo/README.md` for
+the conventions and the completion ritual.
+
+`LOG.md` holds architectural decisions in MADR format, newest at the top.
 
 ## 6. Tests
 
-Unity tests for the functional core live in `test/test_console_config/`.
-Run them with:
+Host-side Unity tests run through the `test_native` environment. Run them
+and read the result — **don't rely on any number written in this file**,
+including one you remember from a previous session.
 
 ```sh
-pio test -d . -e test_native
+./agent-script/pio-build.sh          # firmware compile check
+pio test -d . -e test_native         # host unit tests
 ```
 
-24/24 currently pass. The host environment is `[env:test_native]`
-declared in `platformio.ini` — no Arduino toolchain required.
+Pure decision logic belongs in `lib/` (no Arduino/FastLED dependencies)
+precisely so it is testable on the host. If you write logic that touches
+hardware, push the *decision* down into a lib and unit-test it there.
+Some `lib/` code is deliberately untested on the host — check the file's
+header before assuming either way.
 
 ## 7. When in doubt
 
-Read `readme.md` (high-level feature checklist), `pin-map-chart.md`
-(authoritative pin table), `LOG.md` (recent decisions), and the
-relevant file in `todo/open/` (current work). Don't read
-`todo/done/` unless you're trying to understand history; everything
-there is already shipped.
+- Hardware question → [`pin-map-chart.md`](pin-map-chart.md), then
+  `src/configuration.h`.
+- Current work → `todo/open/`.
+- Recent decisions and their reasoning → `LOG.md`.
+- Project scope and feature state → `readme.md`.

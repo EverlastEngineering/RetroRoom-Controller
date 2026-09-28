@@ -2,7 +2,7 @@
  * RetroRoom firmware main loop. Targets the Raspberry Pi Pico (RP2040)
  * via Earle Philhower's arduino-pico core. Originally written for
  * ESP8266; ESP support was dropped on session/merge-pico-json (see
- * TODO.md and LOG.md).
+ * todo/ and LOG.md).
  *
  * Author: Jason Copp
  * Contact: jason@everlastengineering.com
@@ -45,6 +45,12 @@ void setup() {
 	// once would DISABLE the boot-time flash. The MANUAL_OE_PIN
 	// ring side effect is sacrificed (the operator can hit /flash
 	// once to engage it if they want the ring OE PWM).
+#if defined(HAS_LCD)
+	// 16x2 I2C LCD -- welcome screen + live console name. Must come
+	// AFTER consoleDefinitions() so the live display can show the
+	// current console from the start.
+	display_init();
+#endif
 #ifdef MANUAL_OE_PIN
 	analogWrite(MANUAL_OE_PIN, 127);  // ring OE 50% PWM at boot
 #endif
@@ -78,10 +84,6 @@ void setup() {
 #endif
 	selectStack_init();
 #if defined(HAS_LCD)
-	// 16x2 I2C LCD -- welcome screen + live console name. Must come
-	// AFTER consoleDefinitions() so the live display can show the
-	// current console from the start.
-	display_init();
 	// Arm the backlight-off timer now (no selectConsole() call has
 	// happened yet, so without this the backlight would stay on
 	// forever).
@@ -98,7 +100,7 @@ void loop() {
 	// Service the touch sensor (YD-RP2040 USR button on GP24 is mapped to
 	// TOUCH_SENSOR_PIN). EasyButton in POLL mode requires .read() (not
 	// .update()) to fire onPressed / wasReleased callbacks. The handler
-	// registered in controls_init() -- see TODO.md.
+	// registered in controls_init() -- see todo/README.md.
 	touchSensor.read();
 
 	// Pump the network stack (currently the captive-portal DNS server).

@@ -38,7 +38,7 @@ void nextConsoleISR();
 void prevConsoleISR();
 // Kept as stubs (no caller in src/main.cpp right now); these will be
 // re-wired to drive console advance from the YD USR button when the perfboard
-// capacitive-touch input is brought up (see TODO.md).
+// capacitive-touch input is brought up (see todo/README.md).
 void touchDetected();
 void touchReleaseDetected();
 

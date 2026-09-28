@@ -23,17 +23,30 @@
 #      SIGKILL if still alive.
 #   4. Filter heartbeats out of the captured log and print the rest.
 #
+# Preferred workflow
+# -----------------
+# Build and flash as two separate steps, so the timings are predictable:
+#
+#   ./agent-script/pio-build.sh                              # build, read the result
+#   ./agent-script/pio-upload-monitor.sh -e pico2w -t 45     # flash + monitor
+#
+# Combining them makes the monitor window race the upload: the window
+# starts before the upload does, and if it expires first the pipeline
+# gets killed mid-"Loading into Flash" with the device in an
+# indeterminate state and a truncated log. That's the failure this
+# script's own -t floor exists to prevent -- but the real fix is
+# building first so the window only has to cover the flash.
+#
 # Usage:
-#   ./agent-script/pio-upload-monitor.sh                       # default env=pico2w, 25s
-#   ./agent-script/pio-upload-monitor.sh -e pico_base           # different env
-#   ./agent-script/pio-upload-monitor.sh -e pico2w -t 60       # 60s monitor window
+#   ./agent-script/pio-upload-monitor.sh                       # default env=pico2w, 35s
+#   ./agent-script/pio-upload-monitor.sh -e pico2w -t 60       # 60s window (min 30)
 #   ./agent-script/pio-upload-monitor.sh --no-build            # skip the standalone build
 #   ./agent-script/pio-upload-monitor.sh --no-upload           # build only, do NOT flash / monitor
 #   ./agent-script/pio-upload-monitor.sh --monitor-only        # attach to serial only; no build, no flash
 #   ./agent-script/pio-upload-monitor.sh --keep-heartbeats     # don't strip Heartbeat: lines
 #   ./agent-script/pio-upload-monitor.sh --show-progress       # don't strip the per-% Loading/Verifying lines
 #
-# Defaults: ENV=pico2w, MONITOR_SECS=25, LOG=/tmp/pio_upload_monitor.log, DO_BUILD=1, DO_UPLOAD=1
+# Defaults: ENV=pico2w, MONITOR_SECS=35 (floor 30), LOG=/tmp/pio_upload_monitor.log, DO_BUILD=1, DO_UPLOAD=1
 #
 # Output filtering (operator-visible only; $LOG keeps the raw bytes
 # for post-mortem analysis and the status check below):
@@ -61,6 +74,8 @@
 #   4  couldn't open the serial port (likely another monitor session is holding it)
 
 set -u
+
+. "$(dirname "$0")/pio-env.sh"
 
 ENV="pico2w"
 MONITOR_SECS=35
@@ -91,6 +106,23 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The window covers upload + boot + serial settle, not the monitor on
+# its own, so it has to outlast the upload. A window that expires
+# mid-"Loading into Flash" doesn't fail loudly -- it SIGKILLs the
+# pipeline with the device in an indeterminate state and the log ends
+# mid-progress-bar. Clamp rather than reject, so a too-small value is
+# corrected instead of costing a round trip.
+case "$MONITOR_SECS" in
+    ''|*[!0-9]*)
+        echo "[pio-upload-monitor] -t must be a whole number of seconds (got '$MONITOR_SECS')" >&2
+        exit 1
+        ;;
+esac
+if [ "$MONITOR_SECS" -lt 30 ]; then
+    echo "[pio-upload-monitor] -t $MONITOR_SECS is under the 30s floor; using 30s." >&2
+    MONITOR_SECS=30
+fi
+
 # Truncate any stale log so the post-run grep is unambiguous.
 : > "$LOG"
 
@@ -101,8 +133,8 @@ done
 #    only skips step 1; the upload+monitor in step 2 still runs. Use
 #    --no-upload for a true build-only check.)
 if [ "$DO_BUILD" = 1 ]; then
-    echo "[pio-upload-monitor] pio run -e $ENV (full build)..." >&2
-    if ! pio run -e "$ENV" 2>&1 | tee -a "$LOG" | tail -3 ; then
+    echo "[pio-upload-monitor] $PIO run -e $ENV (full build)..." >&2
+    if ! "$PIO" run -e "$ENV" 2>&1 | tee -a "$LOG" | tail -3 ; then
         echo "[pio-upload-monitor] BUILD FAILED for env=$ENV; see $LOG" >&2
         exit 2
     fi
@@ -130,7 +162,7 @@ if [ "$MONITOR_ONLY" = 1 ]; then
     # (no Verifying Flash line to look for, exit 0 if we got any
     # output, exit 1 if the log is empty -- which is exactly the
     # "device wedged" signal heartbeats exist to disambiguate).
-    script -q "$LOG" pio device monitor --environment "$ENV" &
+    script -q "$LOG" "$PIO" device monitor --environment "$ENV" &
     PIO_PID=$!
     sleep "$MONITOR_SECS"
     kill -INT "$PIO_PID" 2>/dev/null || true
@@ -159,8 +191,8 @@ fi
 if [ "$MONITOR_ONLY" = 1 ]; then
     :  # no-op; the monitor-only block above already ran the monitor
 else
-echo "[pio-upload-monitor] pio run -e $ENV -t upload -t monitor (capped at ${MONITOR_SECS}s)..." >&2
-script -q "$LOG" pio run -e "$ENV" -t upload -t monitor &
+echo "[pio-upload-monitor] $PIO run -e $ENV -t upload -t monitor (capped at ${MONITOR_SECS}s)..." >&2
+script -q "$LOG" "$PIO" run -e "$ENV" -t upload -t monitor &
 PIO_PID=$!
 
 # 3. Wait, then SIGINT (miniterm's "Ctrl+C" handler exits cleanly),

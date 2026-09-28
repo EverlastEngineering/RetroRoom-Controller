@@ -8,7 +8,7 @@
 // Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
 // are supported. The ESP-only `#define MANUAL_OE_PIN` is intentionally gone;
 // when a perfboard revision lands, MANUAL_OE_PIN will be added back to the
-// Pico block (see TODO.md).
+// Pico block (see todo/deferred/ and todo/open/ for the tracked work).
 
 #if defined(ARDUINO_RASPBERRY_PI_PICO) || defined(ARDUINO_RASPBERRY_PI_PICO_W) || defined(ARDUINO_RASPBERRY_PI_PICO_2W)
 	// Bare Raspberry Pi Pico / Pico-W / Pico 2 W pin map. All three have
@@ -54,6 +54,12 @@
 	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Reserved for the second FastLED strip; wiring lands in a follow-up commit.
 	#define IR_CONTROL_PIN    22
 	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
+	// I2C0 (SDA/SCL) for the 16x2 HD44780 + PCF8574 backpack. Defined here
+	// rather than in display.h so that pin-map-chart.md really is the only
+	// place pins are declared -- the chart asserts every pin in the table
+	// has a matching #define in this file.
+	#define LCD_I2C_SDA_PIN 4
+	#define LCD_I2C_SCL_PIN 5
 #elif defined(ARDUINO_YD_RP2040)
 	// VCC-GND Studio YD-RP2040 (dev board currently on the desk). Distinct
 	// from the standard Pico block above because:

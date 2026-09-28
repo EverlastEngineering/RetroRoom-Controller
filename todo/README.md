@@ -37,6 +37,9 @@ todo/
 - **Completed items:** rename to `<sha>_<short-name>.md` where `<sha>`
   is the 7-char short hash that completes the work. Example:
   `643be7c_ir-restore-via-z3t0-IRremote-4-x-and-MANUAL-OE-GP12.md`.
+  A handful of older items still carry their `YYYY-MM-DD_` prefix
+  because they were closed before this convention was adopted; leave
+  them alone rather than churning history for cosmetics.
 - The SHA in the filename is the completion receipt: `git log --follow
   done/<sha>_<short-name>.md` shows the rename commit + the original
   add.
