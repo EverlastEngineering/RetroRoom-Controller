@@ -78,6 +78,13 @@ void setup() {
 	ir_control_init();
 #endif
 	consoleDefinitions();
+	// Home the console latch. selectStack_init() also issues the
+	// initial selectStack() pass, which establishes the known starting
+	// position that restoreLastSelectedConsole() below steps relative
+	// to -- and the latch shares a power rail with the controller, so
+	// it does not hold its position across a power cycle. The two must
+	// run in this order.
+	selectStack_init();
 	// Restore the console that was selected before the last power loss.
 	// Must run between consoleDefinitions() -- which populates the list
 	// the stored index refers to -- and ledstring_setConsole() below,
@@ -97,12 +104,6 @@ void setup() {
 	ledstring_init();
 	ledstring_setConsole(currentConsoleIndex);
 #endif
-	// Home the console latch. selectStack_init() also issues the initial
-	// selectStack() pass, which is what gives restoreLastSelectedConsole()
-	// in loop() a known starting position to step relative to -- the
-	// latch shares a power rail with the controller, so it does not hold
-	// its position across a power cycle.
-	selectStack_init();
 #if defined(HAS_LCD)
 	// Arm the backlight-off timer now (no selectConsole() call has
 	// happened yet, so without this the backlight would stay on

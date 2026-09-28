@@ -78,41 +78,56 @@ void restoreLastSelectedConsole() {
 	// The console list has to be populated before this is worth
 	// calling: the stored value is an index into it.
 	int stored = 0;
-	if (!retroroom_store::loadLastSelectedConsole(stored)) {
-		// No file, no filesystem, or a mount failure. All three mean
-		// the same thing to the operator: stay on whatever setup()
-		// left us on.
+	if (retroroom_store::loadLastSelectedConsole(stored)) {
+		// Clamp rather than trust: the stored index refers to the
+		// config that wrote it, and a hand-edited /lastconsole is one
+		// bad boot away from being out of range. CurrentConsole()
+		// indexes without a bounds check, so this is load-bearing.
+		// clampIndex() also folds the empty-list case to 0, which is
+		// already the default cursor position.
+		const int clamped = retroroom_core::clampIndex(stored, HowManyConsoles());
+		Serial.print("consoles: restored selection index=");
+		Serial.print(clamped);
+		if (clamped != stored) {
+			Serial.print(" (clamped from ");
+			Serial.print(stored);
+			Serial.print(")");
+		}
+		Serial.println();
+		// Just the cursor. The rest of setup() reads
+		// currentConsoleIndex as it goes -- ledstring_setConsole()
+		// lights the right window, the LCD seeds its live lines from
+		// CurrentConsole() at the startup->welcome handover -- so the
+		// console is booted into rather than selected after the fact.
+		currentConsoleIndex = clamped;
+	} else {
+		// No file, no filesystem, or a mount failure. The cursor stays
+		// where setup() left it, but the latch below is still driven:
+		// its physical position is unknown after a power cycle whether
+		// or not we remembered a selection.
 		Serial.println("consoles: no saved selection");
-		return;
 	}
-	// Clamp rather than trust: the stored index refers to the config
-	// that wrote it, and a hand-edited /lastconsole is one bad boot
-	// away from being out of range. clampIndex() also folds the
-	// empty-list case to 0, which is already the default, so the
-	// comparison below makes that a no-op without a special case.
-	const int clamped = retroroom_core::clampIndex(stored, HowManyConsoles());
-	if (clamped == currentConsoleIndex) {
-		return;  // nothing to restore (or an empty console list)
-	}
-	// Just the cursor. The rest of setup() reads currentConsoleIndex as
-	// it goes -- ledstring_setConsole() lights the right window, the
-	// LCD seeds its live lines from CurrentConsole() at the
-	// startup->welcome handover -- so the console is simply booted into
-	// rather than selected after the fact.
+
+	// Step the latch to whichever console we ended up on.
 	//
-	// Deliberately not selectConsole(): that drives the latch and
-	// paints the LCD, and the paint is what would cut the welcome
-	// splash short. setup() homes the latch either way, so the boot
-	// hardware sequence is unchanged.
-	currentConsoleIndex = clamped;
-	Serial.print("consoles: restored selection index=");
-	Serial.print(currentConsoleIndex);
-	if (clamped != stored) {
-		Serial.print(" (clamped from ");
-		Serial.print(stored);
-		Serial.print(")");
+	// This is the one case where the cursor and the hardware genuinely
+	// disagree after a reboot: the latch shares a power rail with the
+	// controller, so it does not hold position across a power cycle,
+	// while the cursor is just a number we remembered. That is why the
+	// drive below is unconditional rather than tied to whether the
+	// cursor actually moved -- a device that saved index 0 and never
+	// moved still has an arm sitting somewhere unknown.
+	//
+	// selectStack() counts a *relative* number of pulses from wherever
+	// the arm sits, so it is only meaningful once setup() has homed the
+	// latch. The two calls must stay in that order.
+	//
+	// Deliberately selectStack() and not selectConsole(): the LCD
+	// paint inside selectConsole() is exactly what would cut the
+	// welcome splash short. The IR code is left alone here too.
+	if (HowManyConsoles() > 0) {
+		selectStack(CurrentConsole().selector_position);
 	}
-	Serial.println();
 }
 
 void consoleDefinitions() {
