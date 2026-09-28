@@ -2,7 +2,7 @@
 #define RRCONFIGURATION_H
 
 // lighting
-#define NUM_LEDS 8
+#define NUM_LEDS 20
 
 // ESP8266 (NodeMCU v2) and AVR boards were dropped on session/merge-pico-json.
 // Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
@@ -50,8 +50,8 @@
 	#define ROTARY_SELECTOR_PIN 13
 	#define ROTARY_PIN_IN1    14
 	#define ROTARY_PIN_IN2    15
-	#define DATA_PIN          20  // FastLED ring (above-console selection ring) on GP20
-	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Reserved for the second FastLED strip; wiring lands in a follow-up commit.
+	#define DATA_PIN          20  // FastLED ring 
+	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // FastLED strip
 	#define IR_CONTROL_PIN    22
 	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
 	// I2C0 (SDA/SCL) for the 16x2 HD44780 + PCF8574 backpack. Defined here
