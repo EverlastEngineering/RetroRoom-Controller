@@ -5,6 +5,7 @@
 #include <string>
 
 #include "lighting.h"
+#include "ledstring.h"
 #include "consoleconfig_store.h"
 #include "display.h"
 #if defined(HAS_IR)
@@ -159,6 +160,20 @@ void selectConsole(const Console& c) {
 	// no-ops when HAS_LCD is undefined (see display.h).
 	display_show_console(c.name.c_str(), c.tagline.c_str());
 	display_wake();
+#if defined(HAS_LEDS)
+	// Paint the active console's LED window on the second strip (GP21).
+	// This one insertion point covers every commit path: rotary press,
+	// NEXT_CONSOLE_BTN, PREV_CONSOLE_BTN, HTTP /next, /prev, and the
+	// WebSocket "console" message -- because they all funnel through
+	// selectConsole() on the way to driving the StackSelector.
+	//
+	// No animation here; this is the steady-state "light the right
+	// pixels on commit" path. The pull-tween animation between zones
+	// is tracked under
+	// todo/open/2026-09-25_led-string-light-shows_DRAFT.md (S1) and is
+	// NOT part of this commit.
+	ledstring_setConsole(currentConsoleIndex);
+#endif
 }
 
 void advanceConsole() {

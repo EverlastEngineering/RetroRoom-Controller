@@ -65,6 +65,17 @@ void setup() {
 	ir_control_init();
 #endif
 	consoleDefinitions();
+	// Paint the initial console's window on the second strip now
+	// that consoleDefinitions() has populated src/consoles.cpp::consoles.
+	// ledstring_init() powers the strip up dark; ledstring_setConsole(0)
+	// lights the [ledPosition, ledPosition+ledWidth) range of the first
+	// console in the list so the operator sees the feature live before
+	// they've turned the dial. Both calls no-op when HAS_LEDS is
+	// undefined (boards without the second strip wired).
+#if defined(HAS_LEDS)
+	ledstring_init();
+	ledstring_setConsole(currentConsoleIndex);
+#endif
 	selectStack_init();
 #if defined(HAS_LCD)
 	// 16x2 I2C LCD -- welcome screen + live console name. Must come

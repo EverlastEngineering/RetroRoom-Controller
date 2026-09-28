@@ -13,6 +13,8 @@ todo/
   README.md                       (this file)
   open/                           (act now)
     YYYY-MM-DD_<short-name>.md    ← filename pattern for an open item
+    YYYY-MM-DD_<short-name>_DRAFT.md  ← holding pen for a sub-item list;
+                                           requires breakdown before work begins
   deferred/                       (waiting on the perfboard / external dependency)
     YYYY-MM-DD_<short-name>.md
   done/                           (completed)
@@ -25,6 +27,13 @@ todo/
 - **New items:** `YYYY-MM-DD_<short-name>.md` where `<short-name>` is
   lowercase, dash-separated, and <= 50 chars. Example:
   `2026-09-12_cyw43-picow-wifi.md`.
+- **Drafts (sub-item holding pen):** `YYYY-MM-DD_<short-name>_DRAFT.md`.
+  Holds a breakdown checklist for sub-items carved out of a parent
+  todo. **Not actionable** — first line must say `**Status:** draft
+  (needs breakdown — do not start work from this file)`. Do not list
+  in the `### open/` inventory block (it isn't open). When the parent
+  work closes, break into per-sub-item todos and `git rm` the draft.
+  Example: `2026-09-25_led-string-light-shows_DRAFT.md`.
 - **Completed items:** rename to `<sha>_<short-name>.md` where `<sha>`
   is the 7-char short hash that completes the work. Example:
   `643be7c_ir-restore-via-z3t0-IRremote-4-x-and-MANUAL-OE-GP12.md`.
@@ -69,7 +78,7 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-*(none — both open items from the previous session closed on 2026-09-24)*
+- `2026-09-25_led-string-light-control` — wire the GP21 second strip; light `[ledPosition, ledPosition+ledWidth)` on commit. Driver only — no animation, no shows. Animations / shows / wiring-diagram / e2e readback are held in the sibling draft `2026-09-25_led-string-light-shows_DRAFT.md` until the basic driver lands.
 
 ### deferred/
 - `stackselector-daisy-chain` — only matters if the perfboard has >1 module
