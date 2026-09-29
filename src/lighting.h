@@ -34,16 +34,21 @@
 
 #if defined(HAS_LEDS)
 extern void lighting_init();
+// Advances the lightRing(false) fade toward completion. lightRing()
+// only steps the fade one increment per call, so the caller that asked
+// for the ring to go dark has to keep asking; this does it from loop().
+extern void lighting_loop();
 extern void lightSingle(int led);
 extern void ringLEDNext();
 extern void ringLEDPrevious();
+// lightRing(true) snaps the ring on. lightRing(false) starts a fade to
+// black that finishes only once lighting_loop() has pumped it enough.
 extern void lightRing(bool lit);
 // Continuous smoke-test cycle (red -> green -> blue). Used by loop() on
 // the pico_yd env to exercise the FastLED PIO driver after lighting_init().
 // Returns immediately if the cycle period hasn't elapsed.
 extern void lightCycleTick();
-// Query / toggle the cycle. Bound to the USR button (touchSensor) in
-// controls_init() so pressing the button disables / re-enables the cycle.
+// Query / toggle the cycle. Not currently bound to any control.
 extern bool lightCycleIsEnabled();
 extern void lightCycleToggle();
 #endif

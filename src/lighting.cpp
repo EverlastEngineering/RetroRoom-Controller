@@ -27,6 +27,21 @@ void lightRing(bool lit) {
 	}
 }
 
+// Drives the lightRing(false) fade to completion. lightRing() takes a
+// single fadeToBlackBy step per call and re-arms ringFading, so whoever
+// asked for the ring to go dark has to keep asking until ringFading
+// clears itself.
+//
+// lightSingle() / ringLEDNext() / ringLEDPrevious() do not consult
+// ringFading -- they repaint unconditionally -- so turning the encoder
+// during a fade simply overwrites it, which is the wanted behaviour:
+// the operator is actively using the control.
+void lighting_loop() {
+	if (ringFading) {
+		lightRing(false);
+	}
+}
+
 void lighting_init() {
 	// FastLED 3.10+ on RP2040 / RP2350 (the rpcommon PIO backend
 	// transparently supports both chips). The addLeds clockless helper
@@ -57,10 +72,10 @@ void lighting_init() {
 // cadence. Returns nothing; uses static state to track current color and
 // last update tick.
 //
-// The USR button (touchSensor on TOUCH_SENSOR_PIN, GP24 on the YD-RP2040)
-// toggles lightCycleEnabled. When disabled, lightCycleTick() blacks out
-// the LED strip and returns immediately; the FastLED PIO driver stays
-// initialized but no frames are pushed.
+// lightCycleEnabled defaults true and nothing in the current build
+// toggles it. When disabled, lightCycleTick() blacks out the LED strip
+// and returns immediately; the FastLED PIO driver stays initialized but
+// no frames are pushed.
 //
 // NOTE: this is a temporary smoke-test helper. Once the StackSelector
 // perfboard lands and the rotary encoder drives ringLEDNext / ringLEDPrevious,
@@ -72,10 +87,8 @@ static bool lightCycleNeedsBlack = false;
 
 bool lightCycleIsEnabled() { return lightCycleEnabled; }
 void lightCycleToggle() {
-	// Called from touchSensor.onPressed() in controls_init() on every USR
-	// button release. EasyButton fires this on the release edge when no
-	// onPressedFor callback is registered (which would otherwise set
-	// _was_btn_held and silently swallow this callback for >100ms presses).
+	// No current caller. If this is rebound to a button, note that
+	// EasyButton's onPressed() fires on the RELEASE edge, not the press.
 	lightCycleEnabled = !lightCycleEnabled;
 	Serial.print("USR toggle -> lightCycle ");
 	Serial.println(lightCycleEnabled ? "ON" : "OFF");

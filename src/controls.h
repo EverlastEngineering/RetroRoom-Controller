@@ -9,10 +9,12 @@
 /* EasyButton Library used for rotary encoder selector and capacitive touch sensor in digital mode */
 #include <EasyButton.h>
 
-// touchSensor is exposed here (not just in controls.cpp) so the main loop
-// can call .read() on it for polling-based debounce. On the YD-RP2040
-// dev board TOUCH_SENSOR_PIN maps to GP24 (the USR button); when the
-// perfboard lands, the same pin is the capacitive touch input.
+// touchSensor is the capacitive PROXIMITY pad on TOUCH_SENSOR_PIN, not a
+// button. The electrode is the metal rotary knob: approaching it lights the
+// ring as an affordance cue, and that is the only effect -- it never
+// selects a console. Driven from controls_touchTick() rather than an
+// onPressed() callback; see the comment in controls.cpp for why. Pin per
+// pin-map-chart.md.
 extern EasyButton touchSensor;
 
 // nextConsoleButton / prevConsoleButton are the hardware counterpart to
@@ -39,27 +41,24 @@ extern EasyButton rotarySelector;
 extern volatile bool hasRotarySelectorInterruptFired;
 extern volatile bool hasNextConsoleInterruptFired;
 extern volatile bool hasPrevConsoleInterruptFired;
-// Touch sensor: the touchSensor.read() used to be polled every tick,
-// but that ran the _pressed_callback synchronously from a poll and
-// carried the same callback-in-non-loop context hazard as the others
-// when the perfboard capacitive input is wired. Now flag-deferred.
-extern volatile bool hasTouchInterruptFired;
 
 extern void controls_init();
 extern void rotaryEncoderTick();
+// Proximity tick for touchSensor. Drains the deferred ISR flag and
+// lights / fades the ring on the approach and departure edges.
+extern void controls_touchTick();
 extern int currentConsoleIndex;
 
 void rotarySelectorPressed();
 void sequenceElapsed();
 void rotarySelectorISR();
-void touchSensorISR();
 void nextConsolePressed();
 void prevConsolePressed();
 void nextConsoleISR();
 void prevConsoleISR();
-// Kept as stubs (no caller in src/main.cpp right now); these will be
-// re-wired to drive console advance from the YD USR button when the perfboard
-// capacitive-touch input is brought up (see todo/README.md).
+// Kept as stubs (no caller anywhere). The capacitive pad is proximity
+// only and deliberately does not drive console advance -- that is the
+// next/prev buttons' job (GP6/GP7) and the rotary's own click.
 void touchDetected();
 void touchReleaseDetected();
 

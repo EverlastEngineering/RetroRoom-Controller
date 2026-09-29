@@ -139,10 +139,10 @@ void loop() {
 		hasPrevConsoleInterruptFired = false;
 		prevConsoleButton.read();
 	}
-	if (hasTouchInterruptFired) {
-		hasTouchInterruptFired = false;
-		touchSensor.read();
-	}
+	// The capacitive pad is a proximity sensor, not a button, so it has
+	// no callback to defer -- controls_touchTick() reads it and drives
+	// the ring light off the state edges itself.
+	controls_touchTick();
 
 	// Pump the network stack (currently the captive-portal DNS server).
 	// No-op when WiFi is not active.
@@ -154,6 +154,13 @@ void loop() {
 	// OE internally; main.cpp never touches the LED pin directly.
 	// No-op when `flash` is false; 1 Hz toggle while it's true.
 	flashLedTick();
+
+	// Finish any ring fade that controls_touchTick() started when the
+	// operator's hand left the proximity pad. No-op when no fade is in
+	// flight. No-op when HAS_LEDS is undefined.
+#if defined(HAS_LEDS)
+	lighting_loop();
+#endif
 
 	// Pump the LCD driver -- welcome -> live transition, scrolling,
 	// backlight auto-off. No-op when HAS_LCD is undefined.

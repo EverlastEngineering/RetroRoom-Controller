@@ -36,7 +36,10 @@ volatile bool hasNextConsoleInterruptFired = false;
 volatile bool hasPrevConsoleInterruptFired = false;
 
 bool isTouched = false;
-volatile bool hasTouchInterruptFired = false;
+// Last observed proximity state, for edge detection in
+// controls_touchTick(). Starts false so a boot with the operator's hand
+// already near the knob still registers an approach.
+static bool proximityActive = false;
 
 // checkPosition() ISR for the rotary encoder. Defined unconditionally now
 // that ESP8266 and AVR are gone.
@@ -61,24 +64,29 @@ void controls_init() {
 		Serial.println("Button will be used through interrupts");
 	}
 
-	// touch sensor
-	touchSensor.begin();
-	// Map the YD-RP2040 USR button (TOUCH_SENSOR_PIN = GP24) to advance
-	// currentConsoleIndex with wrap-around. On the perfboard the same pin
-	// is the capacitive touch input; the same handler fires.
+	// touch sensor -- PROXIMITY ONLY, never a console selection.
 	//
-	// IMPORTANT: register via onPressed() only -- do NOT register onPressedFor.
-	// EasyButton's wasReleased() fires _pressed_callback() only when
-	// _was_btn_held is false; _was_btn_held is set inside _checkPressedTime()
-	// gated on _pressed_for_callback being non-null. Registering an
-	// onPressedFor handler (legacy touchReleaseDetected at 100ms) would set
-	// _was_btn_held = true on any press longer than that threshold and
-	// silently swallow advanceConsole().
-	touchSensor.onPressed(advanceConsole);
-	if (touchSensor.supportsInterrupt()) {
-		attachInterrupt(digitalPinToInterrupt(TOUCH_SENSOR_PIN), touchSensorISR, CHANGE);
-		Serial.println("Button will be used through interrupts");
-	}
+	// Capacitive proximity pad on TOUCH_SENSOR_PIN. The electrode is the
+	// metal rotary knob, so a hand approaching the knob raises the pin
+	// and the ring lights as an affordance cue before the operator
+	// touches anything. Approach must NOT move currentConsoleIndex, drive
+	// the stack selector, or fire IR -- the ring light is the only effect.
+	//
+	// No onPressed() callback is registered here, and there deliberately
+	// must not be one. EasyButton dispatches _pressed_callback from
+	// inside its wasReleased() branch, so onPressed() actually fires on
+	// the RELEASE edge (EasyButtonBase.cpp: wasReleased() is
+	// `!_current_state && _changed`). For a proximity pad that is the
+	// wrong edge -- it would light the ring when the hand leaves instead
+	// of when it arrives. Both transitions are detected explicitly in
+	// controls_touchTick() instead.
+	//
+	// No interrupt either, unlike the three real buttons. Gating the
+	// read() on an edge means a hand that is already near the knob at
+	// power-on and never moves produces no edge at all, so the ring
+	// would stay dark. EasyButton's own POLL mode is the default and
+	// read() on a GPIO is free next to everything else loop() does.
+	touchSensor.begin();
 
 	// next / prev console push-buttons. These are the hardware counterpart
 	// to the /next + /prev HTTP endpoints (src/network.cpp::onConsoleNext /
@@ -129,8 +137,28 @@ void rotarySelectorISR() {
 	hasRotarySelectorInterruptFired = true;
 }
 
-void touchSensorISR() {
-	hasTouchInterruptFired = true;
+
+// Proximity handling for the capacitive pad. Polled from loop() rather
+// than driven by an EasyButton callback or an interrupt -- we need both
+// the approach and the departure edge, and the library's callback only
+// gives us one. See the comment in controls_init() for the full
+// reasoning.
+//
+// The only effect is the ring light: approach lights it, departure fades
+// it out. currentConsoleIndex, the stack selector and IR are untouched.
+void controls_touchTick() {
+	touchSensor.read();
+
+	const bool near = touchSensor.isPressed();
+	if (near == proximityActive) {
+		return;
+	}
+	proximityActive = near;
+	Serial.print("Proximity ");
+	Serial.println(near ? "near -- ring on" : "clear -- ring off");
+#if defined(HAS_LEDS)
+	lightRing(near);
+#endif
 }
 
 void nextConsolePressed() {
