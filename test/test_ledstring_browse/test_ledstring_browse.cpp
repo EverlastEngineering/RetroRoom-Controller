@@ -920,6 +920,8 @@ static StripFrame travelFrame(const LedRange& leave, int entryPixel,
 	f.travelMs = 1000;
 	f.aboveWindows = 0;
 	f.aboveCount = 0;
+	// On a first-step browse the active console *is* the one being left.
+	f.activeWindow = leave;
 	computeTravelPath(leave, entryPixel, target, spark, f);
 	f.elapsedMs = elapsedMs;
 	return f;
@@ -1183,6 +1185,7 @@ static void test_fill_does_not_light_pixels_below_the_console(void) {
 	f.fillPct = 45;
 	f.minFillLeds = 0;
 	f.from = kNes;
+	f.activeWindow = kNes;
 	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
 	f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 1000);
 	int out[64];
@@ -1205,6 +1208,7 @@ static void test_fill_runs_backwards_when_browsing_back(void) {
 	f.fillPct = 45;
 	f.minFillLeds = 0;
 	f.from = kSms;
+	f.activeWindow = kSms;
 	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, f);
 	// At the start of the step the run is just short of SMS. Both leads
 	// are scaled from the *unprogressed* one -- scaling an already
@@ -1264,12 +1268,15 @@ static void test_shelf_crossing_sweeps_the_whole_destination_shelf(void) {
 static void test_fill_uses_three_distinct_levels(void) {
 	// Stack, fill and selection must not collapse into each other, or
 	// "where the stack ends" and "how far I have got" become the same
-	// fact and there is nothing to read progress from.
+	// fact and there is nothing to read progress from. The resting
+	// brightness is 0 (only the selection is lit) and the fill is its
+	// own level on top of that.
 	StripFrame f = configuredFrame(StripEffect::FILLING);
 	f.dimPct = 22;
 	f.fillPct = 45;
 	f.minFillLeds = 0;
 	f.from = kNes;
+	f.activeWindow = kNes;
 	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
 	int out[64];
 	frameLevels(f, out);
@@ -1311,17 +1318,17 @@ static void test_the_resting_frame_distinguishes_selection_from_stack(void) {
 }
 
 static void test_the_fill_and_the_console_left_are_different_roles(void) {
-	// Both are lit at the same time and, at the same level, were the
-	// same thing. The operator needs to see where they are and where
-	// they are going.
+	// Two different things, both lit, at the same time. The console
+	// being played is context; the fill is progress.
 	retroroom_core::LedRole r[64];
 	StripFrame f = configuredFrame(StripEffect::FILLING);
 	f.from = kSms;
+	f.activeWindow = kSms;
 	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, f);
 	f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 1000);
 	frameRoles(f, r);
 	TEST_ASSERT_TRUE_MESSAGE(r[7] == retroroom_core::LedRole::LEAVING,
-		"the console being left is context, not progress");
+		"the console being played is context, not progress");
 	TEST_ASSERT_TRUE(r[3] == retroroom_core::LedRole::FILL);
 	TEST_ASSERT_TRUE(r[12] == retroroom_core::LedRole::OFF);
 }
@@ -1392,6 +1399,74 @@ static void test_resolve_pixel_gives_black_to_an_unlit_pixel(void) {
 	TEST_ASSERT_EQUAL(0, none.r);
 	TEST_ASSERT_EQUAL(0, none.g);
 	TEST_ASSERT_EQUAL(0, none.b);
+}
+
+static void test_only_the_active_console_and_the_candidate_are_lit(void) {
+	// The rule from the bench, twice over:
+	//
+	//   - whatever the operator is being shown, the console they are
+	//     actually playing stays lit and dim. It used to be the console
+	//     the browse *departed from*, which is the same thing for the
+	//     first step and a different thing for every step after it, so
+	//     keeping the knob moving handed the dim role to the candidate
+	//     and the console being played went dark.
+	//
+	//   - the candidate keeps pulsing while the operator fills onward
+	//     past it, because it is still what a press would select. It
+	//     used to become part of the fill, so the pulse vanished one
+	//     detent after it appeared.
+	//
+	// SMS is active; NES is the candidate; the fill runs toward SMS.
+	const LedRange active = computeConsoleWindow(5, 3, 64);     // SMS
+	const LedRange candidate = computeConsoleWindow(1, 1, 64);  // NES
+	const LedRange target = active;
+	retroroom_core::LedRole r[64];
+
+	StripFrame fill = configuredFrame(StripEffect::FILLING);
+	fill.from = candidate;
+	fill.activeWindow = active;
+	fill.candidateWindow = candidate;
+	computeFillGeometry(candidate, candidate.start + candidate.width, target, 0,
+						64, fill);
+	fill.fillLead = scaleFillLead(fill.fillAnchor, fill.fillLead, fill.fillForward,
+								 1000);
+	frameRoles(fill, r);
+	TEST_ASSERT_TRUE_MESSAGE(r[5] == retroroom_core::LedRole::LEAVING,
+		"the console being played stays lit through the fill");
+	TEST_ASSERT_TRUE_MESSAGE(r[1] == retroroom_core::LedRole::PROPOSAL,
+		"the candidate keeps pulsing while the operator turns past it");
+	// And the fill is the fill, not either of them.
+	int fillPixels = 0;
+	for (int p = 0; p < 64; ++p) {
+		if (r[p] == retroroom_core::LedRole::FILL) fillPixels++;
+	}
+	TEST_ASSERT_TRUE_MESSAGE(fillPixels > 0, "the fill must be its own thing");
+	// Nothing else is lit.
+	TEST_ASSERT_TRUE(r[40] == retroroom_core::LedRole::OFF);
+
+	StripFrame preview = configuredFrame(StripEffect::PREVIEW);
+	preview.from = candidate;
+	preview.to = candidate;
+	preview.activeWindow = active;
+	frameRoles(preview, r);
+	TEST_ASSERT_TRUE(r[1] == retroroom_core::LedRole::PROPOSAL);
+	TEST_ASSERT_TRUE_MESSAGE(r[5] == retroroom_core::LedRole::LEAVING,
+		"the proposal never replaces the console being played as the lit one");
+}
+
+static void test_a_fill_with_no_candidate_does_not_pulse(void) {
+	// Before the first snap the anchor is the console already selected,
+	// and that one is shown as selected, not offered as a proposal. A
+	// frame with no candidate window must draw nothing pulsing.
+	retroroom_core::LedRole r[64];
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.from = kNes;
+	f.activeWindow = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	frameRoles(f, r);
+	TEST_ASSERT_TRUE(r[1] == retroroom_core::LedRole::LEAVING);
+	TEST_ASSERT_TRUE_MESSAGE(r[7] != retroroom_core::LedRole::PROPOSAL,
+		"the selected console is not also a proposal");
 }
 
 int main(int argc, char** argv) {
@@ -1468,6 +1543,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_resolve_pixel_applies_the_role_colour_and_level);
 	RUN_TEST(test_resolve_pixel_clamps_rather_than_wrapping);
 	RUN_TEST(test_resolve_pixel_gives_black_to_an_unlit_pixel);
+	RUN_TEST(test_only_the_active_console_and_the_candidate_are_lit);
+	RUN_TEST(test_a_fill_with_no_candidate_does_not_pulse);
 	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
 	RUN_TEST(test_fill_never_lights_the_target_window);
 	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);

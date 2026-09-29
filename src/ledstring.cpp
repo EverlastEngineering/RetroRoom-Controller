@@ -252,6 +252,10 @@ retroroom_core::StripFrame baseFrame() {
 	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
 	f.travelMs = LEDSTRING_TRAVEL_MS;
 	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	// The console that is actually selected, which stays dim through
+	// every browse state. Not the one the browse is on -- that is the
+	// whole distinction the role exists for.
+	f.activeWindow = windowFor(currentConsoleIndex);
 	f.palette = buildPalette();
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
@@ -342,6 +346,22 @@ void paintFilling() {
 	// here, so the run is the real gap at every angle of the knob.
 	f.fillLead = retroroom_core::scaleFillLead(f.fillAnchor, f.fillLead,
 											   f.fillForward, stepPermille);
+	// The candidate keeps pulsing while the operator fills onward. It
+	// is still the console a press would select, and it is what the fill
+	// is running away from; making it part of the fill meant it stopped
+	// pulsing the moment the knob moved again, so the console being
+	// offered vanished one detent after it appeared.
+	//
+	// No pulse before the first snap: the anchor is the console already
+	// selected, and that one is shown as selected, not as a proposal.
+	if (fromIdx >= 0 && fromIdx < HowManyConsoles() &&
+		fromIdx != currentConsoleIndex) {
+		f.candidateWindow = windowFor(fromIdx);
+	}
+	// The pulse phase runs from the last snap, not from the detent, so
+	// the candidate breathes continuously across a whole step instead of
+	// restarting on every click.
+	f.elapsedMs = (uint32_t)(millis() - animStartMs);
 	pushFrame(f);
 }
 
@@ -362,13 +382,6 @@ void paintPreview(uint32_t elapsedMs) {
 	f.effect = retroroom_core::StripEffect::PREVIEW;
 	f.from = windowFor(previewIdx);
 	f.to = f.from;
-	// The consoles the operator is choosing between stay lit, dim, for
-	// as long as the preview runs. They went dark on the last travel
-	// frame, which left the strip showing only the proposal and no
-	// longer anything to compare it against.
-	f.aboveCount = collectAboveFor(previewIdx, aboveBuffer);
-	f.aboveWindows = aboveBuffer;
-	f.abovePct = f.dimPct;
 	f.elapsedMs = elapsedMs;
 	pushFrame(f);
 }

@@ -336,6 +336,14 @@ int lerpPercent(int from, int to, int progressPermille) {
 	return from + (to - from) * progressPermille / 1000;
 }
 
+
+// Is this pixel inside a console window? Used for the dim/context roles,
+// where "which console" matters and a raw range test would be a second
+// copy of the same condition to keep in step.
+bool inWindow(int pixel, const LedRange& w) {
+	return w.width > 0 && pixel >= w.start && pixel < w.start + w.width;
+}
+
 }  // namespace
 
 int twinkleSample(int pixel, std::uint32_t tick) {
@@ -626,13 +634,13 @@ int scaleFillLead(int anchor, int lead, bool forward, int progressPermille) {
 }
 
 int computeFillScale(int pixel, const StripFrame& frame) {
-	// Only the console being left is dimmed, and only because it is the
-	// one the operator is leaving. Dimming "everything below the run"
-	// instead lit up bare gap pixels at the start of the strip, which
-	// read as the fill starting from LED 0 rather than from the console
-	// the operator is turning away from.
-	if (pixel >= frame.fillFrom.start &&
-		pixel < frame.fillFrom.start + frame.fillFrom.width) {
+	// Only the selected console is dimmed, and only where nothing else
+	// has claimed the pixel. Dimming "everything below the run" instead
+	// lit up bare gap pixels at the start of the strip, which read as
+	// the fill starting from LED 0 rather than from the console the
+	// operator is turning away from.
+	if (inWindow(pixel, frame.activeWindow) &&
+		!inWindow(pixel, frame.candidateWindow)) {
 		return frame.dimPct;
 	}
 	const int lo = (frame.fillLead < frame.fillAnchor) ? frame.fillLead
@@ -675,9 +683,9 @@ int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
 	if (covered > 0) {
 		return (frame.travelPct * covered) / 100;
 	}
-	// Then the console left behind, dim for the duration of the travel.
-	if (pixel >= frame.travelFrom.start &&
-		pixel < frame.travelFrom.start + frame.travelFrom.width) {
+	// Then the selected console, dim for the duration of the travel.
+	if (inWindow(pixel, frame.activeWindow) &&
+		!inWindow(pixel, frame.candidateWindow)) {
 		return frame.dimPct;
 	}
 	(void)leftPermille;
@@ -832,19 +840,24 @@ void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 		paintRestingInto(frame, out);
 		break;
 	case StripEffect::FILLING: {
+		// Three things at once: the console being played (dim), the
+		// console a press would select right now (pulsing, and still
+		// pulsing even though the operator has started turning toward
+		// the next one), and the fill running on past it.
+		fillWindow(out, frame.activeWindow, LedRole::LEAVING, frame.dimPct);
+		const int pulse = computePulseScale(frame.elapsedMs, frame.pulsePeriodMs,
+										   frame.pulseMinPct, frame.pulseMaxPct);
+		fillWindow(out, frame.candidateWindow, LedRole::PROPOSAL, pulse);
 		for (int i = 0; i < total; ++i) {
 			const int level = computeFillScale(i, frame);
-			// The console being left is context, not progress, and gets
-			// its own role so it can be its own colour. Treated as part
-			// of the fill it was indistinguishable from the thing the
-			// operator is actually watching move.
-			if (i >= frame.fillFrom.start &&
-				i < frame.fillFrom.start + frame.fillFrom.width) {
-				out[i].role = LedRole::LEAVING;
-			} else {
+			// The fill goes on last: it is the thing that is moving, and
+			// nothing may paint over it. Pixels already claimed by the
+			// two context roles keep their role, so a fill that runs
+			// across the candidate does not repaint it.
+			if (out[i].role == LedRole::OFF) {
 				out[i].role = (level <= 0) ? LedRole::OFF : LedRole::FILL;
+				out[i].level = level;
 			}
-			out[i].level = level;
 		}
 		break;
 	}
@@ -871,9 +884,8 @@ void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 			// let them be told apart.
 			const bool onBlock =
 				coveragePercent(edges.leftPermille, edges.rightPermille, i) > 0;
-			const bool leaving =
-				(i >= frame.travelFrom.start &&
-				 i < frame.travelFrom.start + frame.travelFrom.width);
+			const bool leaving = inWindow(i, frame.activeWindow) &&
+								 !inWindow(i, frame.candidateWindow);
 			out[i].role = onBlock ? LedRole::TRAVEL
 								  : (leaving ? LedRole::LEAVING
 											 : ((level <= 0) ? LedRole::OFF
@@ -883,14 +895,10 @@ void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 		break;
 	}
 	case StripEffect::PREVIEW: {
-		// The consoles the operator is choosing between stay visible, or
-		// the proposal is showing with nothing to compare it against.
-		if (frame.aboveWindows != 0 && frame.aboveCount > 0) {
-			for (int i = 0; i < frame.aboveCount; ++i) {
-				fillWindow(out, frame.aboveWindows[i], LedRole::LEAVING,
-						   frame.dimPct);
-			}
-		}
+		// Only the selected console stays lit behind the proposal. It is
+		// what the proposal is a proposal *for*, and it is the one thing
+		// the operator is comparing against.
+		fillWindow(out, frame.activeWindow, LedRole::LEAVING, frame.dimPct);
 		const int pulse = computePulseScale(frame.elapsedMs, frame.pulsePeriodMs,
 										   frame.pulseMinPct, frame.pulseMaxPct);
 		fillWindow(out, frame.to, LedRole::PROPOSAL, pulse);

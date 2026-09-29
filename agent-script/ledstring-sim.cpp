@@ -108,6 +108,10 @@ const SimConsole kConsoles[] = {
 };
 const int kConsoleCount = static_cast<int>(sizeof(kConsoles) / sizeof(kConsoles[0]));
 
+// The console the operator is currently playing, set per scenario.
+// It is what stays dim through every browse state.
+int scenarioActive = 0;
+
 LedRange windowFor(int idx) {
 	if (idx < 0 || idx >= kConsoleCount) {
 		return {0, 0};
@@ -242,6 +246,10 @@ StripFrame baseFrame() {
 	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
 	f.travelMs = LEDSTRING_TRAVEL_MS;
 	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	// The simulator's "active" console is whatever the scenario says
+	// the operator is currently playing. The browse is always driven
+	// from there, so the dim context is the same thing throughout.
+	f.activeWindow = windowFor(scenarioActive);
 	f.palette = buildPalette();
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
@@ -349,12 +357,16 @@ void scenarioBrowse() {
 	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
 									LEDSTRING_FAST_DETENTS_PER_STEP,
 									LEDSTRING_FAST_SPIN_WINDOW_MS));
+	// SMS is active; the operator is turning back toward NES.
 	const int anchor = 1;
 	const int target = 0;
+	scenarioActive = 1;
 	uint32_t t = 0;
+	uint32_t snapAt = 0;
 
 	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP - 1; ++i) {
 		t += 2000;
+		snapAt = 2000;
 		const retroroom_core::DetentEvent ev = gate.onDetent(-1, t,
 															kConsoleCount, anchor);
 		StripFrame f = baseFrame();
@@ -507,6 +519,7 @@ void scenarioShelf() {
 
 	const int from = 3;  // MAME
 	const int to = 4;    // GEN
+	scenarioActive = from;
 
 	StripFrame rest = baseFrame();
 	rest.effect = StripEffect::RESTING;
@@ -534,6 +547,69 @@ void scenarioShelf() {
 	}
 }
 
+
+// The multi-step browse: SMS is active, the operator has already browsed
+// onto NES (so NES is pulsing as a candidate), and is now filling onward
+// toward SMS. NES must keep pulsing -- a press right now would still
+// select NES -- and SMS must stay dim as the console being played.
+//
+// The previous behaviour turned the candidate into fill the moment the
+// knob moved, so the pulse disappeared and left the strip showing only
+// a growing run of light with nothing to press.
+void scenarioCarry() {
+	rule("CARRY -- a candidate that keeps pulsing while you turn past it");
+	banner();
+
+	// NES [1,2) is the candidate: a browse already snapped onto it.
+	// SMS [5,8) is the console actually selected, and stays dim.
+	scenarioActive = 1;
+	const int candidate = 0;
+	const int target = 1;
+
+	StripFrame rest = baseFrame();
+	rest.effect = StripEffect::RESTING;
+	applyResting(rest, scenarioActive);
+	render(rest, "resting (SMS selected)");
+	renderRoles(rest, "resting roles");
+
+	StripFrame pv = baseFrame();
+	pv.effect = StripEffect::PREVIEW;
+	pv.from = windowFor(candidate);
+	pv.to = pv.from;
+	pv.elapsedMs = 0;
+	render(pv, "NES pulses as the candidate");
+	renderRoles(pv, "preview roles");
+
+	printf("\n  -- now turn toward SMS, one detent at a time --\n");
+	DetentGate gate;
+	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
+									LEDSTRING_FAST_DETENTS_PER_STEP,
+									LEDSTRING_FAST_SPIN_WINDOW_MS));
+	uint32_t t = 0;
+	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP - 1; ++i) {
+		t += 2000;
+		const retroroom_core::DetentEvent ev =
+			gate.onDetent(1, t, kConsoleCount, candidate);
+		StripFrame f = baseFrame();
+		f.effect = StripEffect::FILLING;
+		f.from = windowFor(candidate);
+		applyBrowsePath(f, candidate, target);
+		f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward,
+								   ev.stepPermille);
+		f.candidateWindow = windowFor(candidate);
+		// Phase the pulse somewhere mid-cycle so the two frames differ.
+		f.elapsedMs = 400 + i * 300;
+		char caption[64];
+		snprintf(caption, sizeof(caption), "detent %d/%d", ev.detents,
+				 ev.detentsPerStep);
+		render(f, caption);
+		char roles[64];
+		snprintf(roles, sizeof(roles), "detent %d/%d roles", ev.detents,
+				 ev.detentsPerStep);
+		renderRoles(f, roles);
+	}
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -541,6 +617,9 @@ int main(int argc, char** argv) {
 	const bool all = (which == "all");
 	if (all || which == "browse") {
 		scenarioBrowse();
+	}
+	if (all || which == "carry") {
+		scenarioCarry();
 	}
 	if (all || which == "shelf") {
 		scenarioShelf();
@@ -554,10 +633,10 @@ int main(int argc, char** argv) {
 	if (all || which == "above") {
 		scenarioAbove();
 	}
-	if (!all && which != "browse" && which != "shelf" && which != "select" &&
+	if (!all && which != "browse" && which != "shelf" && which != "carry" && which != "select" &&
 		which != "frames" && which != "above") {
 		fprintf(stderr, "unknown scenario '%s'\n", which.c_str());
-		fprintf(stderr, "try: browse, shelf, select, frames, above, all\n");
+		fprintf(stderr, "try: browse, carry, shelf, select, frames, above, all\n");
 		return 1;
 	}
 	printf("\n");

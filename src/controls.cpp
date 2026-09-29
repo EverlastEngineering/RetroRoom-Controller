@@ -157,11 +157,31 @@ void rotarySelectorPressed() {
 	// removed (now an alias for retroroom_core::Console from lib/ConsoleConfig),
 	// and the core type is pure -- no I/O, no Serial, no selectStack.
 	//
-	// The commit point for a rotary browse: whatever the operator spun
-	// to becomes the selection, and only now. Everything downstream of
-	// currentConsoleIndex follows from this assignment.
-	if (HowManyConsoles() > 0) {
-		currentConsoleIndex = browsedConsoleIndex;
+	// The commit point for a rotary browse: the console the operator has
+	// been *shown* becomes the selection, and only now. Everything
+	// downstream of currentConsoleIndex follows from this assignment.
+	//
+	// It is the browse ANCHOR, not browsedConsoleIndex. The anchor is
+	// the last console the browse actually snapped onto -- the one that
+	// has been lit and pulsing as a candidate. browsedConsoleIndex is
+	// the one merely being approached, which after a single detent is
+	// already the next console along, so committing to it meant one
+	// click could select a console the operator had never been shown.
+	//
+	// The same line covers the other two cases without special-casing:
+	// mid-step the anchor is the console already selected, so a press
+	// reverts the browse and changes nothing; and after a snap followed
+	// by more detents, it commits the pulsing candidate rather than
+	// whichever console the fill had wandered toward.
+	int target = browseAnchorIndex;
+	if (target < 0) {
+		// No browse has run since boot, so there is no anchor to commit
+		// and the press is a re-selection of what is already selected.
+		target = currentConsoleIndex;
+	}
+	if (HowManyConsoles() > 0 && target >= 0 && target < HowManyConsoles() &&
+		target != currentConsoleIndex) {
+		currentConsoleIndex = target;
 	}
 	selectConsole(CurrentConsole());
 }

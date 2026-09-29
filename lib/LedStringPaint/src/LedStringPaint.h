@@ -412,6 +412,38 @@ struct StripFrame {
 	// the union of the windows above, and the gaps stay dark.
 	//
 	// May be null with aboveCount 0, which lights nothing above.
+
+    // The console that is *selected* right now, which is not the same as
+    // the one the browse is on. It is what stays lit, dim, through every
+    // browse state: the only thing on the strip besides whatever the
+    // operator is currently being shown.
+    //
+    // It used to be the console the browse departed from, which is the
+    // same thing for the first step and a different thing for every
+    // step after it -- so the pulsing candidate took over the dim role
+    // the moment you kept turning, and the console you were actually
+    // playing went dark.
+    // Value-initialised, and not merely default-initialised: LedRange
+    // is a plain aggregate with no member initialisers of its own, so
+    // an uninitialised StripFrame member of that type holds whatever
+    // was on the stack. That showed up as a frame drawing a proposal
+    // over a random span of the strip.
+    LedRange activeWindow = {0, 0};
+
+    // The console the browse is currently offering, which keeps
+    // pulsing for as long as it remains the console a press would
+    // select -- including while the operator is filling onward toward
+    // the next one.
+    //
+    // This is the reason it is separate from `activeWindow` and not
+    // implied by the fill: the fill is about where the operator is
+    // *going*, and the proposal is about what a press right now would
+    // do. Collapsing the candidate into the fill made it stop pulsing
+    // the moment the knob moved again, so the console you were being
+    // offered disappeared one detent after it appeared -- and the
+    // console you were actually playing had already gone dark, leaving
+    // nothing but the fill itself.
+    LedRange candidateWindow = {0, 0};
 	const LedRange* aboveWindows = 0;
 	int aboveCount = 0;
 
