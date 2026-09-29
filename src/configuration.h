@@ -40,7 +40,7 @@
 //      JSON-defined window (ledPosition / ledWidth).
 //
 //   3. SELECT. On commit the whole strip twinkles and collapses in
-//      under a second to just the pixels above the selected console.
+//      under a second to just the consoles above the selected one.
 
 // Detents of the rotary knob required to move the browse cursor one
 // console when the operator is turning deliberately.
@@ -133,26 +133,25 @@
 #define LEDSTRING_SELECT_TWINKLE_MAX_PCT 100
 #endif
 
-// What the two ends of the strip are painted with once everything
-// settles:
+// What the strip settles to once everything is over.
 //
-//   ABOVE -- the pixels above the selected console, dimly lit so the
-//            stack reads as filled down to the selection.
-//   SELF  -- the selected console's own window, at full. 0 excludes
-//            it and leaves only the strictly-above prefix.
+//   ABOVE -- the consoles *above* the selected one, dimly lit. The set
+//            is their own windows, NOT a contiguous run from the top
+//            of the strip: the consoles do not tile it, and the pixels
+//            between one console's window and the next are the
+//            physical gap between shelves. Those stay dark, so the
+//            strip reads as a stack of separate consoles rather than
+//            one long bar. Setting this to 0 is the third reading of
+//            the same phrase -- light only the selected console and
+//            nothing above it.
+//   SELF  -- the selected console's own window, at full. Nothing
+//            paints over it; the selection is the brightest thing on
+//            the strip.
 #ifndef LEDSTRING_ABOVE_PCT
 #define LEDSTRING_ABOVE_PCT 22
 #endif
 #ifndef LEDSTRING_SELF_PCT
 #define LEDSTRING_SELF_PCT 100
-#endif
-
-// Set to 0 to light only the pixels strictly above the selected
-// console's window. Defaults to 1, which includes the selected console
-// itself: turning the thing you just chose off reads as a glitch.
-// See computeKeepEnd() in lib/LedStringPaint for the two readings.
-#ifndef LEDSTRING_KEEP_INCLUDES_SELECTED
-#define LEDSTRING_KEEP_INCLUDES_SELECTED 1
 #endif
 
 // Base color of the strip. Everything is this hue at a percentage of

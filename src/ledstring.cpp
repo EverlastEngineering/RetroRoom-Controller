@@ -103,13 +103,9 @@ int fromIdx = 0;
 int toIdx = 0;
 int fractionPermille = 0;
 int previewIdx = 0;
-// SELECTING caches the console being committed and the pixel index the
-// strip collapses to. Both are resolved when the effect starts so a
-// config change part-way through cannot repaint the strip against a
-// different console list.
+// The console being committed. Its target picture is resolved when the
+// selection effect starts, not per frame.
 int selectIdx = 0;
-int selectKeepEnd = 0;
-int selectConsoleStart = 0;
 
 // millis() when the live animation started, and when the last frame
 // went out. Both are unsigned-subtracted so a millis() wraparound is
@@ -131,11 +127,38 @@ retroroom_core::LedRange windowFor(int idx) {
 		c.led_position, c.led_width, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
 }
 
-int keepEndFor(int idx) {
-	const retroroom_core::Console& c = consoles[idx];
-	return retroroom_core::computeKeepEnd(
-		c.led_position, c.led_width, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
-		LEDSTRING_KEEP_INCLUDES_SELECTED != 0);
+// Upper bound on how many console windows we will hand to a frame as
+// "the ones above". The strip physically cannot hold more than
+// NUM_SELECTED_CONSOLE_LED_STRING_LEDS non-empty windows, and the fixed
+// array keeps the frame's layout allocation-free. Sized off the strip
+// rather than a magic number so a longer strip cannot silently drop a
+// console.
+enum { kMaxAboveWindows = NUM_SELECTED_CONSOLE_LED_STRING_LEDS };
+
+// Scratch for the windows above, resolved once per resting or
+// selection frame. See collectAboveFor() for why it is a list and not a
+// prefix.
+retroroom_core::LedRange aboveBuffer[kMaxAboveWindows];
+
+// The windows of every console entirely above `idx`, for the resting
+// paint. collectAboveWindows() does the "entirely above" test; this
+// only has to know the console list, which the core deliberately does
+// not.
+int collectAboveFor(int idx, retroroom_core::LedRange* out) {
+	const int n = HowManyConsoles();
+	if (n <= 0 || idx < 0 || idx >= n) {
+		return 0;
+	}
+	retroroom_core::LedRange all[kMaxAboveWindows];
+	int count = 0;
+	for (int i = 0; i < n && count < kMaxAboveWindows; ++i) {
+		if (i == idx) {
+			continue;
+		}
+		all[count++] = windowFor(i);
+	}
+	return retroroom_core::collectAboveWindows(all, count, windowFor(idx).start,
+											   out, kMaxAboveWindows);
 }
 
 // Turn a resolved frame into pixels and push it to the wire. This is
@@ -172,21 +195,18 @@ retroroom_core::StripFrame baseFrame() {
 	return f;
 }
 
-// The resting paint: the stack above the console dim, the console's own
-// window at full, everything below dark.
+// The resting paint: the consoles above, dim, the selected console
+// bright, everything else dark. The gaps between consoles' windows are
+// the physical space between shelves and stay dark -- filling them
+// makes the strip read as one continuous bar.
 void paintResting(int idx) {
-	const int n = HowManyConsoles();
-	if (n <= 0 || idx < 0 || idx >= n) {
-		retroroom_core::StripFrame f = baseFrame();
-		f.effect = retroroom_core::StripEffect::RESTING;
-		pushFrame(f);
-		return;
-	}
 	retroroom_core::StripFrame f = baseFrame();
 	f.effect = retroroom_core::StripEffect::RESTING;
-	f.from = windowFor(idx);
-	f.keepEnd = keepEndFor(idx);
-	f.consoleStart = f.from.start;
+	if (HowManyConsoles() > 0 && idx >= 0 && idx < HowManyConsoles()) {
+		f.from = windowFor(idx);
+		f.aboveCount = collectAboveFor(idx, aboveBuffer);
+		f.aboveWindows = aboveBuffer;
+	}
 	pushFrame(f);
 }
 
@@ -210,13 +230,12 @@ void paintPreview(uint32_t elapsedMs) {
 void paintSelecting(uint32_t elapsedMs) {
 	retroroom_core::StripFrame f = baseFrame();
 	f.effect = retroroom_core::StripEffect::SELECTING;
-	f.keepEnd = selectKeepEnd;
-	// The console's own window start, so the effect's two brightness
-	// tiers land on the same pixels the resting paint uses. Resolved
-	// alongside selectKeepEnd in ledstring_selectEffect() for the same
-	// reason -- a reload mid-animation must not repaint against a
-	// different console.
-	f.consoleStart = selectConsoleStart;
+	// The consoles above are resolved to *once*, when the effect starts,
+	// not per frame. A config reload mid-animation would otherwise
+	// repaint the twinkle against a different console list.
+	f.from = windowFor(selectIdx);
+	f.aboveCount = collectAboveFor(selectIdx, aboveBuffer);
+	f.aboveWindows = aboveBuffer;
 	f.elapsedMs = elapsedMs;
 	pushFrame(f);
 }
@@ -353,12 +372,6 @@ void ledstring_selectEffect(int idx) {
 	}
 	mode = StripMode::SELECTING;
 	selectIdx = idx;
-	// Resolved now rather than at the end of the effect, so the pixels
-	// that light up are the ones that were actually clicked on even if
-	// the console list is reloaded underneath the animation.
-	selectKeepEnd = keepEndFor(idx);
-	const retroroom_core::LedRange w = windowFor(idx);
-	selectConsoleStart = w.start;
 	animStartMs = millis();
 	paintSelecting(0);
 }

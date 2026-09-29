@@ -33,6 +33,7 @@ using retroroom_core::easeInOutPermille;
 using retroroom_core::LedRange;
 using retroroom_core::SelectionEffectConfig;
 using retroroom_core::twinkleSample;
+using retroroom_core::collectAboveWindows;
 using retroroom_core::computeConsoleWindow;
 using retroroom_core::computeStripFrame;
 using retroroom_core::StripEffect;
@@ -409,53 +410,39 @@ static void test_keep_end_clamps_to_the_strip(void) {
 	TEST_ASSERT_EQUAL(0, computeKeepEnd(10, 5, 0, true));
 }
 
+// The resting picture the tests settle onto: NES's window at 22, the
+// selection at 100, the gaps between them dark. Same shape the
+// simulator renders for example2.json's first two consoles.
+static const int kSettleTarget[8] = {0, 22, 0, 0, 0, 0, 0, 0};
+static const int kSettleTargetWithSelection[8] = {0, 22, 0, 0, 0, 100, 100, 0};
+
 static void test_select_effect_is_finished_inside_its_budget(void) {
 	// The user-visible contract: under a second, every pixel settled.
-	// above=22, self=100 matches src/configuration.h today.
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	const int keepEnd = computeKeepEnd(27, 15, 64, true);  // 42
-	const int consoleStart = 27;                            // MAME window
-	for (int p = 0; p < 64; ++p) {
-		const int expected =
-			(p < consoleStart) ? 22 : ((p < keepEnd) ? 100 : 0);
-		TEST_ASSERT_EQUAL_MESSAGE(expected,
-			computeSelectScale(p, keepEnd, consoleStart, 64, cfg.totalMs, cfg),
+	for (int p = 0; p < 8; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(kSettleTargetWithSelection[p],
+			computeSelectScale(p, kSettleTargetWithSelection, 8, cfg.totalMs, cfg),
 			"pixel must be at its final value by totalMs");
 	}
 }
 
-static void test_select_lands_on_the_resting_paint(void) {
+static void test_select_lands_exactly_on_its_target(void) {
 	// The handoff between the selection effect and the resting paint
-	// has to be invisible. That means the effect's final frame must be
-	// the *same two-tier* picture the resting paint draws -- dim above,
-	// bright on the console -- not one flat level. A flat level leaves
-	// the whole prefix at console brightness and then visibly dims the
-	// instant the effect ends.
+	// has to be invisible, and it is now invisible by construction:
+	// the target is an input, so "ends on the target" cannot be a
+	// separate expression that disagrees.
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	const int keepEnd = computeKeepEnd(27, 15, 64, true);
-	const int consoleStart = 27;
-	for (int p = 0; p < 64; ++p) {
-		const int settled = computeSelectScale(p, keepEnd, consoleStart, 64,
-											   cfg.totalMs, cfg);
-		const int expected =
-			(p < consoleStart) ? 22 : ((p < keepEnd) ? 100 : 0);
-		TEST_ASSERT_EQUAL_MESSAGE(expected, settled,
-			"effect must end on the resting paint's brightness for this pixel");
+	for (int p = 0; p < 8; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(kSettleTargetWithSelection[p],
+			computeSelectScale(p, kSettleTargetWithSelection, 8, cfg.totalMs, cfg),
+			"effect must end on the target it was given");
 	}
-}
-
-static void test_select_exclusive_leaves_the_selection_dark(void) {
-	// LEDSTRING_KEEP_INCLUDES_SELECTED = 0: only the pixels strictly
-	// above the console survive, and the console itself goes dark. The
-	// middle band collapses to nothing because keepEnd == consoleStart.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	const int consoleStart = 27;
-	const int keepEnd = computeKeepEnd(27, 15, 64, false);  // 27
-	TEST_ASSERT_EQUAL(keepEnd, consoleStart);
-	for (int p = 0; p < 64; ++p) {
-		const int expected = (p < consoleStart) ? 22 : 0;
-		TEST_ASSERT_EQUAL(expected, computeSelectScale(p, keepEnd, consoleStart,
-													 64, cfg.totalMs, cfg));
+	// And well past the end, in case the shell samples a late frame.
+	for (std::uint32_t t = 900; t < 3000; t += 50) {
+		for (int p = 0; p < 8; ++p) {
+			TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
+				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg));
+		}
 	}
 }
 
@@ -463,14 +450,10 @@ static void test_select_effect_is_over_a_second_is_unreachable(void) {
 	// Guards the headline requirement rather than the config: whatever
 	// the shell passes, nothing is still ramping past a second.
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	const int keepEnd = computeKeepEnd(27, 15, 64, true);
-	const int consoleStart = 27;
 	for (std::uint32_t t = 1000; t < 2000; t += 50) {
-		for (int p = 0; p < 64; ++p) {
-			const int expected =
-				(p < consoleStart) ? 22 : ((p < keepEnd) ? 100 : 0);
-			TEST_ASSERT_EQUAL(expected, computeSelectScale(p, keepEnd,
-							  consoleStart, 64, t, cfg));
+		for (int p = 0; p < 8; ++p) {
+			TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
+				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg));
 		}
 	}
 }
@@ -479,27 +462,29 @@ static void test_select_starts_by_twinkling_the_whole_strip(void) {
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
 	// A pixel that is destined to be dark is still lit during the
 	// twinkle -- that is the "entire LED string twinkles" moment.
-	int litBelow = 0, litAbove = 0;
-	for (int p = 0; p < 64; ++p) {
-		if (p > 42) {
-			// Destined to be dark.
-			if (computeSelectScale(p, 42, 27, 64, 0, cfg) > 0) litBelow++;
-		} else if (computeSelectScale(p, 42, 27, 64, 0, cfg) > 0) {
-			litAbove++;
+	// kSettleTarget has lit pixels only at index 1, so every other pixel
+	// is one of those.
+	int litDark = 0;
+	for (int p = 0; p < 8; ++p) {
+		if (kSettleTarget[p] == 0 &&
+			computeSelectScale(p, kSettleTarget, 8, 0, cfg) > 0) {
+			litDark++;
 		}
 	}
-	TEST_ASSERT_TRUE_MESSAGE(litAbove > 0, "strip must be lit during the twinkle");
-	TEST_ASSERT_TRUE_MESSAGE(litBelow > 0, "whole strip twinkles, not just the prefix");
+	TEST_ASSERT_TRUE_MESSAGE(litDark >= 6, "whole strip twinkles, not just the prefix");
 }
 
 static void test_select_surviving_pixels_never_go_dark(void) {
-	// The prefix must not flicker to black on the way to settling or
+	// A lit pixel must not flicker to black on the way to settling or
 	// the collapse reads as a dropout.
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	for (int p = 0; p < 42; ++p) {
+	for (int p = 0; p < 8; ++p) {
+		if (kSettleTargetWithSelection[p] == 0) {
+			continue;
+		}
 		for (std::uint32_t t = 0; t < 900; t += 5) {
 			TEST_ASSERT_TRUE_MESSAGE(
-				computeSelectScale(p, 42, 27, 64, t, cfg) > 0,
+				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg) > 0,
 				"a surviving pixel must stay lit for the whole effect");
 		}
 	}
@@ -510,44 +495,43 @@ static void test_select_expires_early_for_the_top_of_the_strip(void) {
 	// and is done before the bottom of the strip. That ripple is the
 	// whole point of the stagger.
 	//
+	// Uses a 64-pixel strip because the ramp length depends on it: the
+	// stagger span is (totalLeds - 1) * staggerMs and it is subtracted
+	// from the settle window, so a short strip gets a much longer ramp
+	// and the ripple never completes inside the effect.
+	//
 	// 77 is deliberately outside the twinkle range (12..60) so "is this
 	// pixel settled yet?" is unambiguous -- a twinkle sample can never
-	// be mistaken for a final value of 77 or 0. Both tiers are 77 here,
-	// so the split point does not matter for the test.
+	// be mistaken for a final value of 77 or 0.
 	const SelectionEffectConfig cfg(900, 350, 6, 12, 60, 77, 77);
-	const int keepEnd = 42;
+	int target[64];
+	for (int p = 0; p < 64; ++p) {
+		target[p] = (p < 42) ? 77 : 0;
+	}
 	int firstSettled = -1;
 	int lastUnsettled = -1;
 	for (int p = 0; p < 64; ++p) {
-		const int finalScale = (p < keepEnd) ? 77 : 0;
-		if (computeSelectScale(p, keepEnd, 0, 64, cfg.totalMs, cfg) !=
-			finalScale) {
-			continue;  // not settled at the end; can't be settled earlier
-		}
-		if (computeSelectScale(p, keepEnd, 0, 64, cfg.twinkleMs + 200, cfg) ==
-			finalScale) {
+		if (computeSelectScale(p, target, 64, cfg.twinkleMs + 200, cfg) ==
+			target[p]) {
 			if (firstSettled < 0) firstSettled = p;
 		} else if (lastUnsettled < 0 || p > lastUnsettled) {
-			// Track the highest index still mid-transition.
-			if (computeSelectScale(p, keepEnd, 0, 64, cfg.totalMs, cfg) ==
-				finalScale) {
-				lastUnsettled = p;
-			}
+			lastUnsettled = p;
 		}
 	}
-	TEST_ASSERT_TRUE_MESSAGE(firstSettled >= 0,
+	TEST_ASSERT_EQUAL_MESSAGE(0, firstSettled,
 		"the top of the strip must be settled well before the effect ends");
-	TEST_ASSERT_TRUE_MESSAGE(firstSettled <= 20,
-		"the ripple must reach the top of the strip early");
-	TEST_ASSERT_TRUE_MESSAGE(lastUnsettled > firstSettled,
-		"pixels below the ripple front must still be settling");
+	TEST_ASSERT_EQUAL_MESSAGE(63, lastUnsettled,
+		"the bottom of the strip must still be settling at the same moment");
 }
 
 static void test_zero_length_effect_settles_immediately(void) {
 	const SelectionEffectConfig cfg(0, 0, 6, 12, 100, 22, 100);
-	TEST_ASSERT_EQUAL(100, computeSelectScale(30, 42, 27, 64, 0, cfg));
-	TEST_ASSERT_EQUAL(22, computeSelectScale(10, 42, 27, 64, 0, cfg));
-	TEST_ASSERT_EQUAL(0, computeSelectScale(50, 42, 27, 64, 0, cfg));
+	for (int p = 0; p < 8; ++p) {
+		TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
+			computeSelectScale(p, kSettleTargetWithSelection, 8, 0, cfg));
+	}
+	// A null target means "nothing survives", rather than a crash.
+	TEST_ASSERT_EQUAL(0, computeSelectScale(3, 0, 8, 0, cfg));
 }
 
 static void test_twinkle_is_deterministic_and_varies_per_pixel(void) {
@@ -606,12 +590,12 @@ static void test_resting_frame_splits_prefix_from_selection(void) {
 	int out[64];
 	StripFrame f = configuredFrame(StripEffect::RESTING);
 	f.from = computeConsoleWindow(27, 15, 64);  // MAME
-	f.keepEnd = computeKeepEnd(27, 15, 64, true);  // 42
-	f.consoleStart = f.from.start;                  // 27
-	computeStripFrame(f, out);
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
+		computeStripFrame(f, out);
 
-	TEST_ASSERT_EQUAL(22, out[0]);
-	TEST_ASSERT_EQUAL(22, out[26]);
+	TEST_ASSERT_EQUAL(0, out[0]);
+	TEST_ASSERT_EQUAL(0, out[26]);
 	TEST_ASSERT_EQUAL(100, out[27]);
 	TEST_ASSERT_EQUAL(100, out[41]);
 	TEST_ASSERT_EQUAL(0, out[42]);
@@ -709,23 +693,27 @@ static void test_preview_frame_pulses_only_the_target(void) {
 }
 
 static void test_selecting_frame_ends_on_the_resting_paint(void) {
-	// The whole point of the three-tier settle: the last frame of the
-	// effect has to be indistinguishable from the resting paint, or the
-	// strip visibly jumps when one hands over to the other.
+	// The handoff has to be invisible. This is now true by
+	// construction -- SELECTING resolves its target through the same
+	// helper RESTING renders with -- but assert it anyway: it is the one
+	// invariant whose violation is a visible flash and nothing else.
 	int selecting[64];
 	int resting[64];
 
+	LedRange above[1];
+	above[0] = computeConsoleWindow(1, 1, 64);  // NES
+
 	StripFrame s = configuredFrame(StripEffect::SELECTING);
 	s.from = computeConsoleWindow(27, 15, 64);
-	s.keepEnd = computeKeepEnd(27, 15, 64, true);
-	s.consoleStart = s.from.start;
+	s.aboveWindows = above;
+	s.aboveCount = 1;
 	s.elapsedMs = s.select.totalMs;
 	computeStripFrame(s, selecting);
 
 	StripFrame r = configuredFrame(StripEffect::RESTING);
 	r.from = s.from;
-	r.keepEnd = s.keepEnd;
-	r.consoleStart = s.consoleStart;
+	r.aboveWindows = above;
+	r.aboveCount = 1;
 	computeStripFrame(r, resting);
 
 	for (int p = 0; p < 64; ++p) {
@@ -734,23 +722,6 @@ static void test_selecting_frame_ends_on_the_resting_paint(void) {
 	}
 }
 
-static void test_resting_frame_honours_the_exclusive_configuration(void) {
-	// LEDSTRING_KEEP_INCLUDES_SELECTED = 0 must actually turn the
-	// selected console off, in the resting paint as well as in the
-	// effect. Gating only the prefix would leave the selection lit and
-	// make the define a lie.
-	int out[64];
-	StripFrame f = configuredFrame(StripEffect::RESTING);
-	f.from = computeConsoleWindow(27, 15, 64);
-	f.keepEnd = computeKeepEnd(27, 15, 64, false);  // 27
-	f.consoleStart = f.from.start;                  // 27
-	computeStripFrame(f, out);
-	TEST_ASSERT_EQUAL(22, out[26]);
-	for (int p = 27; p < 64; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(0, out[p],
-			"the selection itself must go dark in the exclusive mode");
-	}
-}
 
 static void test_frame_rejects_a_bad_strip_size(void) {
 	int out[4] = {9, 9, 9, 9};
@@ -772,10 +743,119 @@ static void test_frame_clamps_windows_that_overrun_the_strip(void) {
 	StripFrame f = configuredFrame(StripEffect::RESTING);
 	f.totalLeds = 16;
 	f.from = computeConsoleWindow(12, 20, 16);  // truncated to width 4
-	f.keepEnd = 16;
-	f.consoleStart = 12;
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
 	computeStripFrame(f, out);
 	TEST_ASSERT_EQUAL(100, out[15]);
+}
+
+// The example2.json windows, and the gaps between them.
+static const LedRange kExample2[] = {
+	{1, 1},   // NES   led 1
+	{7, 5},   // SMS   leds 7..11
+	{17, 5},  // XBOX  leds 17..21
+	{27, 15}, // MAME  leds 27..41
+};
+
+static void test_resting_frame_lights_each_window_above(void) {
+	// The consoles do not tile the strip. With SMS selected, NES's window
+	// is lit dimly and SMS's brightly, and the pixels between them -- the
+	// physical gap between shelves -- stay dark. Filling those gaps is
+	// what made the strip read as one bar from the top of the cabinet
+	// rather than a stack of separate consoles.
+	int out[64];
+	LedRange above[1];
+	above[0] = computeConsoleWindow(1, 1, 64);  // NES at [1,2)
+
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.from = computeConsoleWindow(7, 5, 64);  // SMS at [7,12)
+	f.aboveWindows = above;
+	f.aboveCount = 1;
+	computeStripFrame(f, out);
+
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[0], "led 0 belongs to no console");
+	TEST_ASSERT_EQUAL(22, out[1]);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[2], "the gap above SMS must stay dark");
+	TEST_ASSERT_EQUAL(0, out[6]);
+	TEST_ASSERT_EQUAL(100, out[7]);
+	TEST_ASSERT_EQUAL(100, out[11]);
+	TEST_ASSERT_EQUAL(0, out[12]);
+	TEST_ASSERT_EQUAL(0, out[63]);
+}
+
+static void test_resting_frame_with_zero_above_lights_only_the_selection(void) {
+	// abovePct 0 is the third reading of the same phrase: the selected
+	// console and nothing else.
+	int out[64];
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.from = computeConsoleWindow(7, 5, 64);
+	f.abovePct = 0;
+	computeStripFrame(f, out);
+	for (int p = 0; p < 64; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE((p >= 7 && p < 12) ? 100 : 0, out[p],
+			"only the selection may be lit");
+	}
+}
+
+static void test_resting_frame_tolerates_a_null_above_list(void) {
+	// A non-zero count with a null pointer must not be dereferenced.
+	int out[64];
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.from = computeConsoleWindow(7, 5, 64);
+	f.aboveWindows = 0;
+	f.aboveCount = 5;
+	computeStripFrame(f, out);
+	TEST_ASSERT_EQUAL(0, out[1]);
+	TEST_ASSERT_EQUAL(100, out[7]);
+}
+
+static void test_collect_above_picks_only_earlier_windows(void) {
+	LedRange out[4];
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(kExample2, 4, 1, out, 4));
+	TEST_ASSERT_EQUAL(1, collectAboveWindows(kExample2, 4, 7, out, 4));
+	TEST_ASSERT_EQUAL(2, collectAboveWindows(kExample2, 4, 17, out, 4));
+	TEST_ASSERT_EQUAL(3, collectAboveWindows(kExample2, 4, 27, out, 4));
+	TEST_ASSERT_EQUAL(4, collectAboveWindows(kExample2, 4, 64, out, 4));
+}
+
+static void test_collect_above_preserves_the_windows_it_keeps(void) {
+	// XBOX starts at 17, so NES ([1,2)) and SMS ([7,12)) are wholly
+	// above it and XBOX's own window is not. Input order is preserved --
+	// the lit set is the set, and sorting it would be gratuitous.
+	LedRange out[4];
+	const int n = collectAboveWindows(kExample2, 4, 17, out, 4);
+	TEST_ASSERT_EQUAL(2, n);
+	TEST_ASSERT_EQUAL(1, out[0].start);
+	TEST_ASSERT_EQUAL(1, out[0].width);
+	TEST_ASSERT_EQUAL(7, out[1].start);
+	TEST_ASSERT_EQUAL(5, out[1].width);
+}
+
+static void test_collect_above_skips_a_straddling_window(void) {
+	// A hand-edited config with an overlapping window: the middle entry
+	// starts before the selection and ends after it, so it is neither
+	// wholly above nor the selection. It is left out rather than clipped
+	// -- one console dark beats painting its pixels twice at the wrong
+	// brightness. The entry wholly above still comes through, so one bad
+	// record does not blank the whole stack.
+	LedRange mixed[3] = {{2, 3}, {5, 20}, {30, 4}};
+	LedRange out[3];
+	TEST_ASSERT_EQUAL(1, collectAboveWindows(mixed, 3, 12, out, 3));
+	TEST_ASSERT_EQUAL(2, out[0].start);
+	TEST_ASSERT_EQUAL(3, out[0].width);
+	// A zero-width window is not a console.
+	LedRange empty[1] = {{5, 0}};
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(empty, 1, 30, out, 3));
+}
+
+static void test_collect_above_is_defensive_about_bad_arguments(void) {
+	LedRange out[2];
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(0, 4, 30, out, 2));
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(kExample2, 4, 30, 0, 2));
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(kExample2, 4, 30, out, 0));
+	TEST_ASSERT_EQUAL(0, collectAboveWindows(kExample2, 0, 30, out, 2));
+	TEST_ASSERT_EQUAL_MESSAGE(1, collectAboveWindows(kExample2, 4, 64, out, 1),
+		"a short buffer must truncate, not overrun");
 }
 
 int main(int argc, char** argv) {
@@ -818,8 +898,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_keep_end_exclusive_stops_above);
 	RUN_TEST(test_keep_end_clamps_to_the_strip);
 	RUN_TEST(test_select_effect_is_finished_inside_its_budget);
-	RUN_TEST(test_select_lands_on_the_resting_paint);
-	RUN_TEST(test_select_exclusive_leaves_the_selection_dark);
+	RUN_TEST(test_select_lands_exactly_on_its_target);
 	RUN_TEST(test_select_effect_is_over_a_second_is_unreachable);
 	RUN_TEST(test_select_starts_by_twinkling_the_whole_strip);
 	RUN_TEST(test_select_surviving_pixels_never_go_dark);
@@ -829,8 +908,21 @@ int main(int argc, char** argv) {
 
 	// Whole-strip frames.
 	RUN_TEST(test_frame_clears_every_pixel_first);
+	RUN_TEST(test_resting_frame_lights_each_window_above);
+	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);
+	RUN_TEST(test_resting_frame_tolerates_a_null_above_list);
+	RUN_TEST(test_resting_frame_lights_each_window_above);
+	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);
+	RUN_TEST(test_resting_frame_tolerates_a_null_above_list);
 	RUN_TEST(test_resting_frame_splits_prefix_from_selection);
-	RUN_TEST(test_resting_frame_honours_the_exclusive_configuration);
+	RUN_TEST(test_collect_above_picks_only_earlier_windows);
+	RUN_TEST(test_collect_above_preserves_the_windows_it_keeps);
+	RUN_TEST(test_collect_above_skips_a_straddling_window);
+	RUN_TEST(test_collect_above_is_defensive_about_bad_arguments);
+	RUN_TEST(test_collect_above_picks_only_earlier_windows);
+	RUN_TEST(test_collect_above_preserves_the_windows_it_keeps);
+	RUN_TEST(test_collect_above_skips_a_straddling_window);
+	RUN_TEST(test_collect_above_is_defensive_about_bad_arguments);
 	RUN_TEST(test_transit_frame_draws_both_windows_and_the_blob);
 	RUN_TEST(test_blob_wins_over_the_windows_it_crosses);
 	RUN_TEST(test_transit_frame_travels_backwards_too);

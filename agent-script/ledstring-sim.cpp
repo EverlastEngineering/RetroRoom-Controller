@@ -106,7 +106,36 @@ int keepEndFor(int idx) {
 		return 0;
 	}
 	return computeKeepEnd(kConsoles[idx].ledPosition, kConsoles[idx].ledWidth,
-						  kTotalLeds, LEDSTRING_KEEP_INCLUDES_SELECTED != 0);
+						  kTotalLeds, true);
+}
+
+// Upper bound on the "windows above" list, and the scratch it is built
+// into. Mirrors kMaxAboveWindows in src/ledstring.cpp; the firmware
+// sizes its own off the strip length, which a host build cannot see.
+const int kMaxAboveWindows = 8;
+LedRange aboveBuffer[kMaxAboveWindows];
+
+// The windows of every console entirely above `idx`, for the resting
+// paint. Mirrors collectAboveFor() in src/ledstring.cpp -- same core
+// call, same list, so the sim and the firmware agree.
+int collectAboveFor(int idx, LedRange* out, int capacity) {
+	LedRange all[kConsoleCount];
+	int count = 0;
+	for (int i = 0; i < kConsoleCount; ++i) {
+		if (i != idx) {
+			all[count++] = windowFor(i);
+		}
+	}
+	return collectAboveWindows(all, count, windowFor(idx).start, out, capacity);
+}
+
+// Fill a frame's resting fields from the console list. Shared by every
+// scenario that shows a resting or selection frame, so the sim cannot
+// drift from the shell's own assembly.
+void applyResting(StripFrame& f, int idx) {
+	f.from = windowFor(idx);
+	f.aboveCount = collectAboveFor(idx, aboveBuffer, kMaxAboveWindows);
+	f.aboveWindows = aboveBuffer;
 }
 
 int wrapNext(int current, int direction) {
@@ -144,10 +173,6 @@ StripFrame baseFrame() {
 	f.select.abovePct = LEDSTRING_ABOVE_PCT;
 	f.select.selfPct = LEDSTRING_SELF_PCT;
 	return f;
-}
-
-int consoleStartFor(int idx) {
-	return windowFor(idx).start;
 }
 
 // One glyph per pixel. The scale deliberately uses log-ish buckets so
@@ -210,9 +235,7 @@ void scenarioBrowse() {
 
 	StripFrame rest = baseFrame();
 	rest.effect = StripEffect::RESTING;
-	rest.from = windowFor(0);
-	rest.keepEnd = keepEndFor(0);
-	rest.consoleStart = consoleStartFor(0);
+	applyResting(rest, 0);
 	render(rest, "resting (NES selected)");
 
 	DetentGate gate;
@@ -356,9 +379,7 @@ void scenarioSelect(int consoleIdx) {
 
 	StripFrame f = baseFrame();
 	f.effect = StripEffect::SELECTING;
-	f.keepEnd = keepEndFor(consoleIdx);
-	f.consoleStart = consoleStartFor(consoleIdx);
-	f.from = windowFor(consoleIdx);
+	applyResting(f, consoleIdx);
 
 	// Sample in a few passes: coarse through the twinkle, finer through
 	// the settle, where the interesting ramp is.
@@ -379,9 +400,7 @@ void scenarioSelect(int consoleIdx) {
 
 	StripFrame rest = baseFrame();
 	rest.effect = StripEffect::RESTING;
-	rest.from = windowFor(consoleIdx);
-	rest.keepEnd = keepEndFor(consoleIdx);
-	rest.consoleStart = consoleStartFor(consoleIdx);
+	applyResting(rest, consoleIdx);
 	render(rest, "resting");
 }
 
@@ -392,61 +411,57 @@ void scenarioFrames() {
 	for (int i = 0; i < kConsoleCount; ++i) {
 		StripFrame f = baseFrame();
 		f.effect = StripEffect::RESTING;
-		f.from = windowFor(i);
-		f.keepEnd = keepEndFor(i);
-		f.consoleStart = consoleStartFor(i);
+		applyResting(f, i);
 		char caption[64];
-		snprintf(caption, sizeof(caption), "%s (keepEnd %d)", kConsoles[i].name,
-				 keepEndFor(i));
+		snprintf(caption, sizeof(caption), "%s (%d above)", kConsoles[i].name,
+				 collectAboveFor(i, aboveBuffer, kMaxAboveWindows));
 		render(f, caption);
 	}
 }
 
-// The three candidate readings of "reduce down to only the ones above
-// the selected console", side by side for one console. The gaps
-// between segments are the point: example2.json puts NES at [1,2),
-// SMS at [7,12), XBOX at [17,22), MAME at [27,42), so [2,7), [12,17)
-// and [22,27) are *not* any console's window. Whether those gaps stay
-// dark is the whole difference between the three, and it is an
-// aesthetic call that is much easier to settle by looking than by
-// arguing.
+// The three readings of "reduce down to only the ones above the selected
+// console", for one console. The gaps between segments are the point:
+// example2.json puts NES at [1,2), SMS at [7,12), XBOX at [17,22) and
+// MAME at [27,42), so [2,7), [12,17) and [22,27) belong to *no*
+// console. Whether those stay dark is the whole difference between the
+// three, and it is an aesthetic call that is far easier to settle by
+// looking than by arguing.
 void scenarioAbove() {
 	rule("\"ABOVE THE SELECTION\" -- three readings, SMS selected");
-	printf("SMS owns leds 7..11. NES owns led 1. The gaps 2..6, 12..16 and\n"
-		   "22..26 belong to no console.\n\n");
+	printf("SMS owns leds 7..11, NES owns led 1. The gaps belong to no "
+		   "console.\n\n");
 
-	// (a) contiguous prefix -- what is on the strip today.
+	// (a) the consoles above, in their own windows, gaps dark. This is
+	// what is on the strip now, and it goes through the real code path.
 	{
 		StripFrame f = baseFrame();
 		f.effect = StripEffect::RESTING;
-		f.from = windowFor(1);
-		f.keepEnd = keepEndFor(1);
-		f.consoleStart = consoleStartFor(1);
-		render(f, "(a) prefix 0..11, gaps filled  [current]");
+		applyResting(f, 1);
+		render(f, "(a) windows above, gaps dark  [current]");
 	}
 
-	// (b) the windows above, each in its own place, gaps dark. Needs the
-	// list of other windows, which StripFrame does not carry yet.
-	printf("%-36s |", "(b) windows above only, gaps dark");
+	// (b) a contiguous prefix from led 0, filling the gaps. This is what
+	// used to be on the strip, and is what "starts at led 0" describes.
+	printf("%-36s |", "(b) prefix 0..11, gaps filled  [was]");
 	for (int p = 0; p < kTotalLeds; ++p) {
 		int pct = 0;
-		if (p == 1) {
-			pct = LEDSTRING_ABOVE_PCT;   // NES's window
-		} else if (p >= 7 && p < 12) {
-			pct = LEDSTRING_SELF_PCT;    // SMS, the selection
+		if (p < keepEndFor(1)) {
+			pct = LEDSTRING_ABOVE_PCT;
+		}
+		if (p >= 7 && p < 12) {
+			pct = LEDSTRING_SELF_PCT;
 		}
 		int bucket = (pct == 0) ? 0 : ((pct - 1) * 9) / 100 + 1;
 		putchar(kRamp[bucket]);
 	}
 	printf("|\n");
 
-	// (c) the selection alone.
+	// (c) the selection alone -- LEDSTRING_ABOVE_PCT = 0.
 	{
 		StripFrame f = baseFrame();
 		f.effect = StripEffect::RESTING;
-		f.from = windowFor(1);
-		f.keepEnd = 0;  // nothing kept above
-		f.consoleStart = consoleStartFor(1);
+		f.abovePct = 0;
+		applyResting(f, 1);
 		render(f, "(c) selection window only");
 	}
 }

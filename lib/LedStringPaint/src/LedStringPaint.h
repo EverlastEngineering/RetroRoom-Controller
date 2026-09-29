@@ -240,18 +240,10 @@ struct SelectionEffectConfig {
 };
 
 // The exclusive pixel index the strip settles to: the lit prefix is
-// [0, result). This is what "reduces down to only the ones above the
-// selected console" means concretely.
-//
-// `includeSelf` selects between the two readings of that phrase:
-//   true  -- light everything from the top of the strip down to and
-//            including the selected console's own window. The stack
-//            reads as lit down to the selection.
-//   false -- stop just short, so only the pixels physically above the
-//            selected console's window stay lit and the selection
-//            itself goes dark. Reads oddly (the thing you just selected
-//            turns off) but is the literal reading of the wording, so
-//            it stays available as a tuning knob.
+// [0, result). Superseded by the per-window `aboveWindows` list on
+// StripFrame -- the consoles do not tile the strip, so "above" is a set
+// of windows rather than a prefix -- and retained only as the
+// degenerate single-window case for callers that want one.
 int computeKeepEnd(int ledPosition, int ledWidth, int totalLeds,
                    bool includeSelf);
 
@@ -264,23 +256,19 @@ int twinkleSample(int pixel, std::uint32_t tick);
 // Brightness percentage (0..100) for one pixel at `elapsedMs` into the
 // selection effect. `pixel` must be < totalLeds.
 //
-// The pixel settles on one of three values, matching the resting paint
-// exactly:
-//
-//   pixel <  consoleStart -> cfg.abovePct   (the stack above the selection)
-//   pixel <  keepEnd      -> cfg.selfPct    (the selection itself)
-//   otherwise             -> 0             (below the selection, goes dark)
-//
-// The split is not cosmetic. A single flat settle level would leave the
-// whole prefix at console brightness and then visibly dim the moment the
-// effect handed back to the resting paint -- a flash at exactly the
-// moment the operator is looking at the result.
+// `finalPct[pixel]` is what the pixel settles to, and is expected to be
+// the same array computeStripFrame() would produce for the RESTING
+// picture. Taking the target as an input rather than deriving it from
+// split points is what makes the handoff from the effect back to the
+// resting paint exact by construction: there is only one resting
+// picture, and both paths use it. (It also means the lit set can be an
+// arbitrary set of windows rather than two contiguous bands, which the
+// consoles-above list needs.)
 //
 // Twinkles with the rest of the strip for the first `twinkleMs`, then
 // ramps to its final value over a ramp that starts `pixel *
-// staggerMs` late. Returns the settled value once the effect is over, so
-// the caller can use the last frame as the resting paint.
-int computeSelectScale(int pixel, int keepEnd, int consoleStart, int totalLeds,
+// staggerMs` late. Returns the settled value once the effect is over.
+int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg);
 
@@ -314,33 +302,37 @@ struct StripFrame {
 	int totalLeds = 0;
 
 	// Console windows, resolved by the caller (it owns the console
-	// list). Only the ones the current effect needs are read:
-	// RESTING reads `from`, TRANSIT reads both, PREVIEW reads `to`.
+	// list). `from` is the console being shown, TRANSIT's departure, or
+	// the selection at rest. `aboveWindows` are the windows of the
+	// consoles above it, in whatever order collectAboveWindows() put
+	// them; `to` is TRANSIT's destination or the preview target.
 	LedRange from;
 	LedRange to;
 
-	// TRANSIT only. Clamped to [0, 1000].
+	// The consoles above the one being shown, and how many entries
+	// `aboveWindows` actually has. Read by RESTING and SELECTING.
+	//
+	// This is a *list*, not a prefix, on purpose. The consoles do not
+	// tile the strip -- between one console's window and the next there
+	// are pixels belonging to no console at all, because that is where
+	// the physical gap between shelves is. Filling those gaps makes the
+	// strip read as one continuous bar from the top of the cabinet
+	// rather than as a stack of separate consoles, which is not what
+	// "the ones above the selected console" describes. So the lit set is
+	// the union of the windows above, and the gaps stay dark.
+	//
+	// May be null with aboveCount 0, which lights nothing above.
+	const LedRange* aboveWindows = 0;
+	int aboveCount = 0;
+
+	// TRANSIT only.
 	int fractionPermille = 0;
 
-	// RESTING and SELECTING. The selected console's own window, as a
-	// split point. The three brightness tiers fall out of this plus
-	// keepEnd:
-	//
-	//   [0, consoleStart)          the stack above the selection
-	//   [consoleStart, keepEnd)    the selection itself
-	//   [keepEnd, totalLeds)       below the selection, dark
-	//
-	// In the default (inclusive) configuration keepEnd is the console
-	// window's end, so the middle band is exactly the console. In the
-	// exclusive one keepEnd == consoleStart, the middle band is empty,
-	// and the selection goes dark -- which is what
-	// LEDSTRING_KEEP_INCLUDES_SELECTED promises.
-	int keepEnd = 0;
-	int consoleStart = 0;
-
-	// Brightness percentages, all 0..100.
-	int abovePct = 0;   // RESTING: the pixels above the selection
-	int selfPct = 100;  // RESTING: the selection's own window
+	// Brightness percentages, all 0..100. abovePct applies to
+	// `aboveWindows`; setting it to 0 lights only the console itself,
+	// which is the third reading of the same phrase.
+	int abovePct = 0;   // RESTING + SELECTING: the consoles above
+	int selfPct = 100;  // RESTING + SELECTING: the console itself
 	int fromPct = 0;    // TRANSIT: the console being left
 	int toPct = 0;      // TRANSIT: the console being approached
 	int blobPct = 100;  // TRANSIT: the travelling blob
@@ -361,6 +353,20 @@ struct StripFrame {
 	SelectionEffectConfig select;
 };
 
+// Pick the console windows that sit entirely above `selectedStart`,
+// writing at most `outCapacity` of them into `out` and returning how
+// many were written.
+//
+// "Above" is `window.start + window.width <= selectedStart`: a window
+// only counts if it is wholly on the far side, so a hand-edited config
+// with overlapping or out-of-order windows degrades to skipping the
+// odd one rather than lighting a console's pixels twice at the wrong
+// brightness. Order of the input is preserved and no sorting is done,
+// so the lit set is exactly the set, which is what the eye reads.
+int collectAboveWindows(const LedRange* windows, int count,
+                        int selectedStart, LedRange* out,
+                        int outCapacity);
+
 // Resolve one whole frame into `out[0 .. totalLeds)`, one brightness
 // percentage per pixel. `out` is fully overwritten, so callers do not
 // need to clear it first.
@@ -374,6 +380,10 @@ struct StripFrame {
 // top of it, then the blob on top of both. A wider destination therefore
 // wins over the window it is approaching, and the blob is always the
 // brightest thing on the strip while it moves.
+//
+// SELECTING animates *toward* the RESTING picture and shares its code
+// path, so the last frame of the selection effect is the resting paint
+// by construction rather than by two pieces of code happening to agree.
 void computeStripFrame(const StripFrame& frame, int* out);
 
 }  // namespace retroroom_core

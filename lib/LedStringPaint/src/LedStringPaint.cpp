@@ -298,16 +298,10 @@ int twinkleSample(int pixel, std::uint32_t tick) {
 	return static_cast<int>((a ^ b) & 0x3ffu);  // 0..1023
 }
 
-int computeSelectScale(int pixel, int keepEnd, int consoleStart, int totalLeds,
+int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg) {
-	// Three tiers, matching the resting paint exactly. In the default
-	// inclusive configuration keepEnd is the console window's end, so
-	// the middle band is the console; in the exclusive one keepEnd ==
-	// consoleStart, the band is empty, and the selection goes dark.
-	const int finalScale = (pixel < consoleStart)
-		? cfg.abovePct
-		: ((pixel < keepEnd) ? cfg.selfPct : 0);
+	const int finalScale = (finalPct != 0) ? finalPct[pixel] : 0;
 	if (cfg.totalMs == 0 || elapsedMs >= cfg.totalMs) {
 		return finalScale;
 	}
@@ -372,7 +366,52 @@ void fillWindow(int* out, const LedRange& w, int percent) {
 	}
 }
 
+// The resting picture: the consoles above, dim, then the console itself
+// bright. This is the single definition of what the strip looks like
+// when nothing is happening -- RESTING renders it directly, and
+// SELECTING animates toward it. One function, so the two cannot drift.
+//
+// Clears `out` itself rather than assuming it is already clear,
+// because SELECTING calls it on a scratch buffer.
+void paintRestingInto(const StripFrame& f, int* out) {
+	for (int i = 0; i < f.totalLeds; ++i) {
+		out[i] = 0;
+	}
+	// The count is trusted only alongside the pointer. A frame with a
+	// count but a null list is a bug in the caller, and reading through
+	// it would be an out-of-bounds read rather than an obviously wrong
+	// frame -- so degrade to "nothing above" instead.
+	if (f.aboveWindows != 0 && f.aboveCount > 0 && f.abovePct > 0) {
+		for (int i = 0; i < f.aboveCount; ++i) {
+			fillWindow(out, f.aboveWindows[i], f.abovePct);
+		}
+	}
+	// The selection goes on top, and on last: it is the brightest thing
+	// on the strip and nothing may paint over it.
+	fillWindow(out, f.from, f.selfPct);
+}
+
 }  // namespace
+
+int collectAboveWindows(const LedRange* windows, int count,
+                        int selectedStart, LedRange* out,
+                        int outCapacity) {
+	if (windows == 0 || out == 0 || count <= 0 || outCapacity <= 0) {
+		return 0;
+	}
+	int written = 0;
+	for (int i = 0; i < count && written < outCapacity; ++i) {
+		// Wholly above, or not at all. A window that straddles the
+		// selection's start is left out rather than clipped, so a
+		// hand-edited config with overlapping windows shows one console
+		// dark instead of painting pixels twice.
+		if (windows[i].width > 0 &&
+			windows[i].start + windows[i].width <= selectedStart) {
+			out[written++] = windows[i];
+		}
+	}
+	return written;
+}
 
 void computeStripFrame(const StripFrame& frame, int* out) {
 	if (out == 0) {
@@ -382,31 +421,18 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 	if (total <= 0) {
 		return;
 	}
+	// Clear first, every effect. The caller hands back the same buffer
+	// each tick, so any pixel the current effect does not touch has to
+	// be zeroed or the previous frame ghosts through. TRANSIT and
+	// PREVIEW only ever write their own windows and rely on this.
 	for (int i = 0; i < total; ++i) {
 		out[i] = 0;
 	}
 
 	switch (frame.effect) {
-	case StripEffect::RESTING: {
-		// The prefix runs over the console's own window when keepEnd
-		// says "inclusive", and the brighter self fill paints over it
-		// -- which is the point, the selection should be the brightest
-		// thing on a resting strip.
-		//
-		// consoleStart < keepEnd is exactly the inclusive test. In the
-		// exclusive configuration they are equal, the middle band is
-		// empty, and the selection is not painted at all -- which is
-		// what LEDSTRING_KEEP_INCLUDES_SELECTED promises. Gating on it
-		// here rather than assuming keeps RESTING and SELECTING landing
-		// on the same picture in both modes.
-		for (int i = 0; i < total && i < frame.keepEnd; ++i) {
-			out[i] = frame.abovePct;
-		}
-		if (frame.consoleStart < frame.keepEnd) {
-			fillWindow(out, frame.from, frame.selfPct);
-		}
+	case StripEffect::RESTING:
+		paintRestingInto(frame, out);
 		break;
-	}
 	case StripEffect::TRANSIT: {
 		// The magnitude, not the signed value. The gate's position is
 		// signed to say *which side* of the anchor the operator is on --
@@ -438,9 +464,17 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 		break;
 	}
 	case StripEffect::SELECTING: {
+		// Build the resting picture and animate toward it. Resolving the
+		// target through the same helper RESTING uses is what guarantees
+		// the last frame of the effect equals the resting paint; when
+		// this was two independent band-splitting expressions they
+		// agreed only by hand, and a mismatch showed up as the whole
+		// strip dimming at the handoff.
+		int target[64];
+		paintRestingInto(frame, target);
 		for (int i = 0; i < total; ++i) {
-			out[i] = computeSelectScale(i, frame.keepEnd, frame.consoleStart,
-										total, frame.elapsedMs, frame.select);
+			out[i] = computeSelectScale(i, target, total, frame.elapsedMs,
+										frame.select);
 		}
 		break;
 	}
