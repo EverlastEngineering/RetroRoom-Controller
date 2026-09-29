@@ -216,20 +216,95 @@
 #define LEDSTRING_DIM_PCT 22
 #endif
 
-// Base color of the strip. Everything is this hue at a percentage of
-// its intensity, which keeps the cabinet visually coherent and means
-// retuning brightness never means re-picking a color. Dim warm white
-// reads as soft beige-on-black in person without blowing out a dark
-// room; the values are deliberately conservative so a misconfiguration
-// can't glare the operator.
-#ifndef LEDSTRING_COLOR_R
-#define LEDSTRING_COLOR_R 48
+// ---------------------------------------------------------------------------
+// Colours
+// ---------------------------------------------------------------------------
+//
+// The strip can be showing several things at once, and brightness alone
+// cannot separate them: two things at 45% are indistinguishable from
+// two things at 45%. Each role the strip can be showing therefore gets
+// its own colour, and the LEDSTRING_*_PCT values above scale that
+// colour's intensity rather than picking a shade.
+//
+// The defaults are a warm amber for everything the operator is being
+// *offered* and a cool blue for the context they are choosing against.
+// That is the one distinction worth having by eye alone: which lights
+// are the thing you are about to turn on, and which are already-on
+// state. Tune the two groups independently -- a cabinet that reads as
+// one colour in a dark room may want the context group much dimmer
+// rather than a different hue.
+//
+// Conservative values throughout: this strip sits next to a television
+// in a dark room, and a misconfigured colour here is a glare problem
+// rather than an aesthetic one.
+#ifndef LEDSTRING_COLOR_SELECTED_R
+#define LEDSTRING_COLOR_SELECTED_R 48
 #endif
-#ifndef LEDSTRING_COLOR_G
-#define LEDSTRING_COLOR_G 36
+#ifndef LEDSTRING_COLOR_SELECTED_G
+#define LEDSTRING_COLOR_SELECTED_G 36
 #endif
-#ifndef LEDSTRING_COLOR_B
-#define LEDSTRING_COLOR_B 24
+#ifndef LEDSTRING_COLOR_SELECTED_B
+#define LEDSTRING_COLOR_SELECTED_B 24
+#endif
+
+// The console a click would select, pulsing. The amber of the
+// selection: it is the same promise, made before you have committed.
+#ifndef LEDSTRING_COLOR_PROPOSAL_R
+#define LEDSTRING_COLOR_PROPOSAL_R 64
+#endif
+#ifndef LEDSTRING_COLOR_PROPOSAL_G
+#define LEDSTRING_COLOR_PROPOSAL_G 40
+#endif
+#ifndef LEDSTRING_COLOR_PROPOSAL_B
+#define LEDSTRING_COLOR_PROPOSAL_B 8
+#endif
+
+// The block of light moving between consoles. The brightest thing on
+// the strip while it moves, because it is the only thing that is
+// moving and the eye goes to motion first.
+#ifndef LEDSTRING_COLOR_TRAVEL_R
+#define LEDSTRING_COLOR_TRAVEL_R 80
+#endif
+#ifndef LEDSTRING_COLOR_TRAVEL_G
+#define LEDSTRING_COLOR_TRAVEL_G 60
+#endif
+#ifndef LEDSTRING_COLOR_TRAVEL_B
+#define LEDSTRING_COLOR_TRAVEL_B 24
+#endif
+
+// The knob-turn progression indicator. Cool, so it never reads as a
+// console that is on.
+#ifndef LEDSTRING_COLOR_FILL_R
+#define LEDSTRING_COLOR_FILL_R 16
+#endif
+#ifndef LEDSTRING_COLOR_FILL_G
+#define LEDSTRING_COLOR_FILL_G 40
+#endif
+#ifndef LEDSTRING_COLOR_FILL_B
+#define LEDSTRING_COLOR_FILL_B 56
+#endif
+
+// Context: the consoles above the selection at rest, and the console
+// being turned away from during a browse. The same cool blue as the
+// fill but darker, so the two never compete.
+#ifndef LEDSTRING_COLOR_STACK_R
+#define LEDSTRING_COLOR_STACK_R 12
+#endif
+#ifndef LEDSTRING_COLOR_STACK_G
+#define LEDSTRING_COLOR_STACK_G 28
+#endif
+#ifndef LEDSTRING_COLOR_STACK_B
+#define LEDSTRING_COLOR_STACK_B 40
+#endif
+
+#ifndef LEDSTRING_COLOR_LEAVING_R
+#define LEDSTRING_COLOR_LEAVING_R 20
+#endif
+#ifndef LEDSTRING_COLOR_LEAVING_G
+#define LEDSTRING_COLOR_LEAVING_G 34
+#endif
+#ifndef LEDSTRING_COLOR_LEAVING_B
+#define LEDSTRING_COLOR_LEAVING_B 48
 #endif
 
 // Brightness percentages for the browse blob and for the two console

@@ -49,6 +49,24 @@ using retroroom_core::StripFrame;
 void setUp(void) {}
 void tearDown(void) {}
 
+// Brightness per pixel. The core resolves a frame into a role and a
+// level per pixel (see computeStripFrame); most of these tests only
+// care about how bright, so this drops the role. Tests that care about
+// the role render it directly.
+static void frameLevels(const StripFrame& f, int* out, int count = 64) {
+	// Zero-initialised: a frame with a smaller totalLeds than the
+	// buffer leaves the tail untouched, and reading it would be
+	// undefined rather than a useful zero.
+	retroroom_core::StripPixel px[64] = {};
+	computeStripFrame(f, px);
+	// `count` is explicit because some of these tests deliberately hand
+	// in a short buffer to prove the core does not scribble past the
+	// strip it was told about.
+	for (int i = 0; i < count; ++i) {
+		out[i] = px[i].level;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DetentGate
 // ---------------------------------------------------------------------------
@@ -82,7 +100,11 @@ static void test_gate_needs_five_detents_for_a_deliberate_step(void) {
 	TEST_ASSERT_EQUAL(0, ev.fractionPermille);
 }
 
+
 static void test_gate_snaps_back_to_the_anchor_after_advancing(void) {
+	// After a step completes the position is back at the anchor, and
+	// the next step starts from there rather than from where the last
+	// one finished.
 	DetentGate gate;
 	gate.configure(DetentGateConfig(5, 2, 1000));
 	uint32_t t = 0;
@@ -91,8 +113,6 @@ static void test_gate_snaps_back_to_the_anchor_after_advancing(void) {
 		gate.onDetent(1, t, kListSize, kAnchor);
 	}
 	TEST_ASSERT_EQUAL(0, gate.fractionPermille());
-	// The next step starts from scratch, not from where the last one
-	// finished.
 	t += kSlowGapMs;
 	gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(200, gate.fractionPermille());
@@ -594,7 +614,7 @@ static void test_frame_clears_every_pixel_first(void) {
 	StripFrame f = configuredFrame(StripEffect::PREVIEW);
 	f.totalLeds = 8;
 	f.to = {0, 0};  // nothing to light
-	computeStripFrame(f, out);
+	frameLevels(f, out, 8);
 	for (int i = 0; i < 8; ++i) {
 		TEST_ASSERT_EQUAL_MESSAGE(0, out[i], "untouched pixels must be cleared");
 	}
@@ -606,7 +626,7 @@ static void test_resting_frame_splits_prefix_from_selection(void) {
 	f.from = computeConsoleWindow(27, 15, 64);  // MAME
 	f.aboveWindows = 0;
 	f.aboveCount = 0;
-		computeStripFrame(f, out);
+		frameLevels(f, out);
 
 	TEST_ASSERT_EQUAL(0, out[0]);
 	TEST_ASSERT_EQUAL(0, out[26]);
@@ -625,7 +645,7 @@ static void test_preview_frame_pulses_only_the_target(void) {
 	f.to = computeConsoleWindow(7, 5, 64);
 	f.from = computeConsoleWindow(1, 1, 64);  // must be ignored
 	f.elapsedMs = 0;
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	// Only the target window is lit at all, and at the dim end of the
 	// glow on the first frame.
 	TEST_ASSERT_EQUAL(0, out[1]);
@@ -651,13 +671,13 @@ static void test_selecting_frame_ends_on_the_resting_paint(void) {
 	s.aboveWindows = above;
 	s.aboveCount = 1;
 	s.elapsedMs = s.select.totalMs;
-	computeStripFrame(s, selecting);
+	frameLevels(s, selecting);
 
 	StripFrame r = configuredFrame(StripEffect::RESTING);
 	r.from = s.from;
 	r.aboveWindows = above;
 	r.aboveCount = 1;
-	computeStripFrame(r, resting);
+	frameLevels(r, resting);
 
 	for (int p = 0; p < 64; ++p) {
 		TEST_ASSERT_EQUAL_MESSAGE(resting[p], selecting[p],
@@ -667,13 +687,21 @@ static void test_selecting_frame_ends_on_the_resting_paint(void) {
 
 
 static void test_frame_rejects_a_bad_strip_size(void) {
-	int out[4] = {9, 9, 9, 9};
+	// A frame that does not know how long the strip is must not write
+	// anywhere. Asserted against computeStripFrame() directly, because
+	// the level helper reads the whole buffer and would paper over it.
+	retroroom_core::StripPixel out[4];
+	for (int i = 0; i < 4; ++i) {
+		out[i].role = retroroom_core::LedRole::TRAVEL;
+		out[i].level = 77;
+	}
 	StripFrame f = configuredFrame(StripEffect::RESTING);
 	f.totalLeds = 0;
 	computeStripFrame(f, out);
 	for (int i = 0; i < 4; ++i) {
-		TEST_ASSERT_EQUAL_MESSAGE(9, out[i],
+		TEST_ASSERT_EQUAL_MESSAGE(77, out[i].level,
 			"a zero-sized strip must not write into the caller's buffer");
+		TEST_ASSERT_TRUE(out[i].role == retroroom_core::LedRole::TRAVEL);
 	}
 	// And a null destination is a no-op, not a crash.
 	computeStripFrame(f, 0);
@@ -688,7 +716,7 @@ static void test_frame_clamps_windows_that_overrun_the_strip(void) {
 	f.from = computeConsoleWindow(12, 20, 16);  // truncated to width 4
 	f.aboveWindows = 0;
 	f.aboveCount = 0;
-	computeStripFrame(f, out);
+	frameLevels(f, out, 16);
 	TEST_ASSERT_EQUAL(100, out[15]);
 }
 
@@ -714,7 +742,7 @@ static void test_resting_frame_lights_each_window_above(void) {
 	f.from = computeConsoleWindow(7, 5, 64);  // SMS at [7,12)
 	f.aboveWindows = above;
 	f.aboveCount = 1;
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 
 	TEST_ASSERT_EQUAL_MESSAGE(0, out[0], "led 0 belongs to no console");
 	TEST_ASSERT_EQUAL(22, out[1]);
@@ -733,7 +761,7 @@ static void test_resting_frame_with_zero_above_lights_only_the_selection(void) {
 	StripFrame f = configuredFrame(StripEffect::RESTING);
 	f.from = computeConsoleWindow(7, 5, 64);
 	f.abovePct = 0;
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	for (int p = 0; p < 64; ++p) {
 		TEST_ASSERT_EQUAL_MESSAGE((p >= 7 && p < 12) ? 100 : 0, out[p],
 			"only the selection may be lit");
@@ -747,7 +775,7 @@ static void test_resting_frame_tolerates_a_null_above_list(void) {
 	f.from = computeConsoleWindow(7, 5, 64);
 	f.aboveWindows = 0;
 	f.aboveCount = 5;
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	TEST_ASSERT_EQUAL(0, out[1]);
 	TEST_ASSERT_EQUAL(100, out[7]);
 }
@@ -913,7 +941,7 @@ static void test_travel_ends_exactly_on_the_target_window(void) {
 	// exactly on the target the block has to "correct" on arrival, which
 	// reads as a mistake.
 	int out[64];
-	computeStripFrame(stepTravel(kNes, kSms, 1000), out);
+	frameLevels(stepTravel(kNes, kSms, 1000), out);
 	for (int p = 7; p < 12; ++p) {
 		TEST_ASSERT_EQUAL_MESSAGE(100, out[p], "target window must be fully lit");
 	}
@@ -926,7 +954,7 @@ static void test_travel_starts_on_the_console_being_leaving(void) {
 	// the console it is leaving, not under it -- otherwise the block
 	// appears to start in the gap rather than peel off the console.
 	int out[64];
-	computeStripFrame(stepTravel(kNes, kSms, 0), out);
+	frameLevels(stepTravel(kNes, kSms, 0), out);
 	TEST_ASSERT_EQUAL(100, out[1]);
 	TEST_ASSERT_EQUAL(100, out[2]);
 	TEST_ASSERT_EQUAL(0, out[0]);
@@ -943,8 +971,8 @@ static void test_travel_consumes_the_fill_behind_it(void) {
 	// sliding over a backdrop.
 	int early[64];
 	int late[64];
-	computeStripFrame(stepTravel(kNes, kSms, 0), early);
-	computeStripFrame(stepTravel(kNes, kSms, 900), late);
+	frameLevels(stepTravel(kNes, kSms, 0), early);
+	frameLevels(stepTravel(kNes, kSms, 900), late);
 	// Pixels 3..6 are fill at the start and dark by the end, having
 	// been swept over on the way.
 	for (int p = 3; p <= 5; ++p) {
@@ -961,7 +989,7 @@ static void test_travel_keeps_the_fill_ahead_of_it(void) {
 	int out[64];
 	// Early in the travel the block has barely left, so the run ahead of
 	// it is still substantial.
-    computeStripFrame(stepTravel(kNes, kSms, 0), out);
+    frameLevels(stepTravel(kNes, kSms, 0), out);
 	int ahead = 0;
     for (int p = 3; p < 7; ++p) {
 		if (out[p] == 45) ahead++;
@@ -1023,7 +1051,7 @@ static void test_travel_sweeps_a_shelf_for_a_shelf_crossing(void) {
 	int visible = 0;
 	for (std::uint32_t t = 0; t <= 1000; t += 50) {
 		int b[64];
-		computeStripFrame(travelFrame(kSms, 52, kNes, t), b);
+		frameLevels(travelFrame(kSms, 52, kNes, t), b);
 		for (int p = 0; p < 64; ++p) {
 			if (b[p] == 100) {
 				visible++;
@@ -1158,7 +1186,7 @@ static void test_fill_does_not_light_pixels_below_the_console(void) {
 	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
 	f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 1000);
 	int out[64];
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	TEST_ASSERT_EQUAL_MESSAGE(0, out[0], "LED 0 belongs to no console");
 	TEST_ASSERT_EQUAL(22, out[1]);
 	TEST_ASSERT_EQUAL(45, out[2]);
@@ -1184,10 +1212,10 @@ static void test_fill_runs_backwards_when_browsing_back(void) {
 	const int anchor = f.fillAnchor;
 	const int lead = f.fillLead;
 	f.fillLead = scaleFillLead(anchor, lead, f.fillForward, 250);
-	computeStripFrame(f, early);
+	frameLevels(f, early);
 	// At the end it reaches NES's trailing edge.
 	f.fillLead = scaleFillLead(anchor, lead, f.fillForward, 1000);
-	computeStripFrame(f, late);
+	frameLevels(f, late);
 	TEST_ASSERT_EQUAL_MESSAGE(22, early[7], "SMS itself is dim, not fill");
 	TEST_ASSERT_EQUAL_MESSAGE(0, early[12], "past SMS, outside the run");
 	TEST_ASSERT_TRUE_MESSAGE(late[2] == 45,
@@ -1206,7 +1234,7 @@ static void test_fill_never_lights_the_target_window(void) {
 	computeTravelPath(kNes, kNes.start + kNes.width, kSms, 2, f);
 	f.effect = StripEffect::FILLING;
 	int out[64];
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	TEST_ASSERT_EQUAL(kSms.start, f.fillLead);
 	for (int p = 7; p < 12; ++p) {
 		TEST_ASSERT_EQUAL_MESSAGE(0, out[p],
@@ -1244,11 +1272,126 @@ static void test_fill_uses_three_distinct_levels(void) {
 	f.from = kNes;
 	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
 	int out[64];
-	computeStripFrame(f, out);
+	frameLevels(f, out);
 	TEST_ASSERT_EQUAL(22, out[1]);
 	TEST_ASSERT_EQUAL_MESSAGE(45, out[5], "the fill is its own level");
 	TEST_ASSERT_TRUE(22 != 45);
 	TEST_ASSERT_TRUE(45 != 100);
+}
+
+// ---------------------------------------------------------------------------
+// Roles and colours
+// ---------------------------------------------------------------------------
+
+// Roles per pixel, for the tests that care what a pixel is *for* rather
+// than how bright.
+static void frameRoles(const StripFrame& f, retroroom_core::LedRole* out) {
+	retroroom_core::StripPixel px[64] = {};
+	computeStripFrame(f, px);
+	for (int i = 0; i < 64; ++i) {
+		out[i] = px[i].role;
+	}
+}
+
+static void test_the_resting_frame_distinguishes_selection_from_stack(void) {
+	// The reason colours exist: the stack and the selection are both
+	// lit, and at the same brightness they would be two identical blocks
+	// of light.
+	retroroom_core::LedRole r[64];
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.from = computeConsoleWindow(27, 15, 64);  // MAME
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
+	frameRoles(f, r);
+	TEST_ASSERT_TRUE(r[5] == retroroom_core::LedRole::STACK ||
+					 r[5] == retroroom_core::LedRole::OFF);
+	TEST_ASSERT_TRUE_MESSAGE(r[30] == retroroom_core::LedRole::SELECTED,
+		"the selection must be its own role");
+	TEST_ASSERT_TRUE(r[50] == retroroom_core::LedRole::OFF);
+}
+
+static void test_the_fill_and_the_console_left_are_different_roles(void) {
+	// Both are lit at the same time and, at the same level, were the
+	// same thing. The operator needs to see where they are and where
+	// they are going.
+	retroroom_core::LedRole r[64];
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.from = kSms;
+	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, f);
+	f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 1000);
+	frameRoles(f, r);
+	TEST_ASSERT_TRUE_MESSAGE(r[7] == retroroom_core::LedRole::LEAVING,
+		"the console being left is context, not progress");
+	TEST_ASSERT_TRUE(r[3] == retroroom_core::LedRole::FILL);
+	TEST_ASSERT_TRUE(r[12] == retroroom_core::LedRole::OFF);
+}
+
+static void test_the_preview_keeps_what_it_is_comparing_against(void) {
+	// The proposal pulses with the consoles above it still visible. If
+	// they were not, there is nothing on the strip to compare it
+	// against and the preview is just a light with no context.
+	retroroom_core::LedRole r[64];
+	StripFrame f = configuredFrame(StripEffect::PREVIEW);
+	f.to = kSms;
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
+	frameRoles(f, r);
+	TEST_ASSERT_TRUE(r[8] == retroroom_core::LedRole::PROPOSAL);
+	TEST_ASSERT_TRUE(r[50] == retroroom_core::LedRole::OFF);
+}
+
+static void test_resolve_pixel_applies_the_role_colour_and_level(void) {
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] =
+		{200, 100, 50};
+	retroroom_core::StripPixel p;
+	p.role = retroroom_core::LedRole::SELECTED;
+	p.level = 100;
+	const retroroom_core::LedColor full = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(200, full.r);
+	TEST_ASSERT_EQUAL(100, full.g);
+	TEST_ASSERT_EQUAL(50, full.b);
+	p.level = 50;
+	const retroroom_core::LedColor half = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(100, half.r);
+	TEST_ASSERT_EQUAL(50, half.g);
+	TEST_ASSERT_EQUAL(25, half.b);
+}
+
+static void test_resolve_pixel_clamps_rather_than_wrapping(void) {
+	// An over-100 level must not roll a channel over into another
+	// primary -- that would turn a brightness tweak into a colour
+	// change, silently.
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] =
+		{200, 100, 50};
+	retroroom_core::StripPixel p;
+	p.role = retroroom_core::LedRole::SELECTED;
+	p.level = 250;
+	const retroroom_core::LedColor c = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(200, c.r);
+	TEST_ASSERT_EQUAL(100, c.g);
+	TEST_ASSERT_EQUAL(50, c.b);
+}
+
+static void test_resolve_pixel_gives_black_to_an_unlit_pixel(void) {
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::OFF)] =
+		{255, 255, 255};
+	retroroom_core::StripPixel p;
+	p.role = retroroom_core::LedRole::OFF;
+	p.level = 100;
+	const retroroom_core::LedColor off = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(0, off.r);
+	TEST_ASSERT_EQUAL(0, off.g);
+	TEST_ASSERT_EQUAL(0, off.b);
+	// A lit role at zero level is black too.
+	p.role = retroroom_core::LedRole::FILL;
+	p.level = 0;
+	const retroroom_core::LedColor none = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(0, none.r);
+	TEST_ASSERT_EQUAL(0, none.g);
+	TEST_ASSERT_EQUAL(0, none.b);
 }
 
 int main(int argc, char** argv) {
@@ -1319,6 +1462,12 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_fill_lead_moves_towards_the_target);
 	RUN_TEST(test_fill_does_not_light_pixels_below_the_console);
 	RUN_TEST(test_fill_uses_three_distinct_levels);
+	RUN_TEST(test_the_resting_frame_distinguishes_selection_from_stack);
+	RUN_TEST(test_the_fill_and_the_console_left_are_different_roles);
+	RUN_TEST(test_the_preview_keeps_what_it_is_comparing_against);
+	RUN_TEST(test_resolve_pixel_applies_the_role_colour_and_level);
+	RUN_TEST(test_resolve_pixel_clamps_rather_than_wrapping);
+	RUN_TEST(test_resolve_pixel_gives_black_to_an_unlit_pixel);
 	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
 	RUN_TEST(test_fill_never_lights_the_target_window);
 	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);

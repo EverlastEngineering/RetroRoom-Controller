@@ -78,23 +78,31 @@ retroroom_core::SelectionEffectConfig effectConfig() {
 
 const retroroom_core::SelectionEffectConfig kEffect = effectConfig();
 
-const CRGB kStripColor =
-	CRGB(LEDSTRING_COLOR_R, LEDSTRING_COLOR_G, LEDSTRING_COLOR_B);
-
-// Scale the base color by a percentage. Everything on the strip is the
-// base hue at some intensity, so retuning a brightness never re-picks a
-// color. Scales are clamped rather than allowed to wrap into another
-// channel.
-CRGB scaled(int percent) {
-	if (percent < 0) {
-		percent = 0;
-	}
-	if (percent > 100) {
-		percent = 100;
-	}
-	return CRGB(static_cast<uint8_t>(kStripColor.r * percent / 100),
-				static_cast<uint8_t>(kStripColor.g * percent / 100),
-				static_cast<uint8_t>(kStripColor.b * percent / 100));
+// Assemble the colour palette from src/configuration.h. The core
+// resolves each pixel to a *role* and this says what that role looks
+// like, so the colour choices all live in one place instead of being
+// spread through here as percentages of one base hue.
+retroroom_core::RolePalette buildPalette() {
+	retroroom_core::RolePalette p;
+	p.colors[static_cast<int>(retroroom_core::LedRole::OFF)] = {0, 0, 0};
+	p.colors[static_cast<int>(retroroom_core::LedRole::STACK)] = {
+		LEDSTRING_COLOR_STACK_R, LEDSTRING_COLOR_STACK_G,
+		LEDSTRING_COLOR_STACK_B};
+	p.colors[static_cast<int>(retroroom_core::LedRole::LEAVING)] = {
+		LEDSTRING_COLOR_LEAVING_R, LEDSTRING_COLOR_LEAVING_G,
+		LEDSTRING_COLOR_LEAVING_B};
+	p.colors[static_cast<int>(retroroom_core::LedRole::FILL)] = {
+		LEDSTRING_COLOR_FILL_R, LEDSTRING_COLOR_FILL_G, LEDSTRING_COLOR_FILL_B};
+	p.colors[static_cast<int>(retroroom_core::LedRole::TRAVEL)] = {
+		LEDSTRING_COLOR_TRAVEL_R, LEDSTRING_COLOR_TRAVEL_G,
+		LEDSTRING_COLOR_TRAVEL_B};
+	p.colors[static_cast<int>(retroroom_core::LedRole::PROPOSAL)] = {
+		LEDSTRING_COLOR_PROPOSAL_R, LEDSTRING_COLOR_PROPOSAL_G,
+		LEDSTRING_COLOR_PROPOSAL_B};
+	p.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] = {
+		LEDSTRING_COLOR_SELECTED_R, LEDSTRING_COLOR_SELECTED_G,
+		LEDSTRING_COLOR_SELECTED_B};
+	return p;
 }
 
 StripMode mode = StripMode::RESTING;
@@ -187,10 +195,13 @@ uint32_t worstFrameUs = 0;
 // logic, one of which nobody would ever run.
 void pushFrame(const retroroom_core::StripFrame& frame) {
 	const uint32_t t0 = micros();
-	int pct[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
-	retroroom_core::computeStripFrame(frame, pct);
+	retroroom_core::StripPixel px[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
+	retroroom_core::computeStripFrame(frame, px);
 	for (int i = 0; i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS; ++i) {
-		selectedLeds[i] = scaled(pct[i]);
+		const retroroom_core::LedColor c = retroroom_core::resolvePixel(frame, px[i]);
+		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r),
+							  static_cast<uint8_t>(c.g),
+							  static_cast<uint8_t>(c.b));
 	}
 	FastLED.show();
 	// Time the work, not the wait. FastLED.show() is synchronous on the
@@ -241,6 +252,7 @@ retroroom_core::StripFrame baseFrame() {
 	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
 	f.travelMs = LEDSTRING_TRAVEL_MS;
 	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	f.palette = buildPalette();
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
 	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;

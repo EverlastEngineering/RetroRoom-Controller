@@ -18,6 +18,47 @@
 
 namespace retroroom_core {
 
+// An 8-bit RGB triple. The core resolves *what role* each pixel is
+// playing -- stack, fill, travelling block, proposal, selection -- and
+// the palette below says what colour that role is, so the colour
+// choices live in one place (src/configuration.h) rather than being
+// spread through the shell as percentage-of-one-base-hue.
+struct LedColor {
+	int r;
+	int g;
+	int b;
+};
+
+// Black. Used for every pixel no role claims.
+extern const LedColor kLedBlack;
+
+// The roles the strip can be showing. Each maps to one colour in
+// StripFrame::palette, which is assembled from the LEDSTRING_COLOR_*
+// defines.
+enum class LedRole {
+	OFF,      // a pixel no console owns
+	STACK,    // consoles above the selection
+	LEAVING,  // the console being turned away from, during a browse
+	FILL,     // the knob-turn progression indicator
+	TRAVEL,   // the block of light moving between consoles
+	PROPOSAL, // the console a click would select, pulsing
+	SELECTED, // the console that is actually selected
+	COUNT,
+};
+
+// The colour each role is drawn in.
+struct RolePalette {
+	LedColor colors[static_cast<int>(LedRole::COUNT)];
+};
+
+// One pixel of a resolved frame: which role it is playing, and how
+// brightly. The colour comes from the frame's palette, so the shell
+// only ever converts to hardware values.
+struct StripPixel {
+	LedRole role;
+	int level;  // 0..100
+};
+
 // Inclusive-exclusive pixel range computed from a console's LED metadata.
 // width == 0 means "nothing to paint" -- caller should clear the strip
 // to its off-color instead of touching individual pixels.
@@ -311,6 +352,15 @@ int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg);
 
+// The same, but keeping the role the pixel settles into rather than
+// flattening it to a level. The settle target is a rendered frame, so
+// it already knows whether a pixel ends up as the selection or as the
+// stack above it -- flattening that to a level first would throw away
+// the distinction the colours are for.
+StripPixel computeSelectPixel(int pixel, const StripPixel* finalPixels,
+                              int totalLeds, std::uint32_t elapsedMs,
+                              const SelectionEffectConfig& cfg);
+
 // ---------------------------------------------------------------------------
 // Whole-strip frames
 // ---------------------------------------------------------------------------
@@ -365,6 +415,10 @@ struct StripFrame {
 	const LedRange* aboveWindows = 0;
 	int aboveCount = 0;
 
+	// What each role looks like. Assembled from the LEDSTRING_COLOR_*
+	// defines in src/configuration.h; see there for what each is for.
+	RolePalette palette;
+
 	// TRANSIT only.
 	int fractionPermille = 0;
 
@@ -414,9 +468,9 @@ struct StripFrame {
 	// just a slide.
 	int travelPeakWidth = 6;
 
-	// Brightness percentages, all 0..100. abovePct applies to
-	// `aboveWindows`; setting it to 0 lights only the console itself,
-	// which is the third reading of the same phrase.
+	// Brightness percentages, all 0..100, as a *level* on top of the
+	// role's colour. abovePct applies to `aboveWindows`; setting it to 0
+	// lights nothing above the selection, which is the resting default.
 	int abovePct = 0;    // RESTING + SELECTING: the consoles above
 	int selfPct = 100;   // RESTING + SELECTING: the console itself
 	int fillPct = 45;    // FILLING + TRAVEL: the knob-turn progression
@@ -472,9 +526,8 @@ int collectAboveWindows(const LedRange* windows, int count,
                         int selectedStart, LedRange* out,
                         int outCapacity);
 
-// Resolve one whole frame into `out[0 .. totalLeds)`, one brightness
-// percentage per pixel. `out` is fully overwritten, so callers do not
-// need to clear it first.
+// Resolve one whole frame into `out[0 .. totalLeds)`. `out` is fully
+// overwritten, so callers do not need to clear it first.
 //
 // Zeros the output and returns immediately if `out` is null or
 // totalLeds <= 0, so a caller with an uninitialised strip size cannot
@@ -489,7 +542,10 @@ int collectAboveWindows(const LedRange* windows, int count,
 // SELECTING animates *toward* the RESTING picture and shares its code
 // path, so the last frame of the selection effect is the resting paint
 // by construction rather than by two pieces of code happening to agree.
-void computeStripFrame(const StripFrame& frame, int* out);
+void computeStripFrame(const StripFrame& frame, StripPixel* out);
+
+// The colour a pixel resolves to: its role's colour at its level.
+LedColor resolvePixel(const StripFrame& frame, const StripPixel& pixel);
 
 // ---------------------------------------------------------------------------
 // Browse: the knob-turn fill and the scripted travel

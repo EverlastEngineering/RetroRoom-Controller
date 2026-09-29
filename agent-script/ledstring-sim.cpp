@@ -59,6 +59,10 @@ using retroroom_core::computeKeepEnd;
 using retroroom_core::computeTravelPath;
 using retroroom_core::scaleFillLead;
 using retroroom_core::computeStripFrame;
+using retroroom_core::resolvePixel;
+using retroroom_core::LedRole;
+using retroroom_core::RolePalette;
+using retroroom_core::LedColor;
 using retroroom_core::DetentGate;
 using retroroom_core::DetentGateConfig;
 using retroroom_core::LedRange;
@@ -188,6 +192,40 @@ int wrapNext(int current, int direction) {
 	return next;
 }
 
+// Mirrors buildPalette() in src/ledstring.cpp.
+RolePalette buildPalette() {
+	RolePalette p;
+	p.colors[static_cast<int>(LedRole::OFF)] = {0, 0, 0};
+	p.colors[static_cast<int>(LedRole::STACK)] = {LEDSTRING_COLOR_STACK_R,
+		LEDSTRING_COLOR_STACK_G, LEDSTRING_COLOR_STACK_B};
+	p.colors[static_cast<int>(LedRole::LEAVING)] = {LEDSTRING_COLOR_LEAVING_R,
+		LEDSTRING_COLOR_LEAVING_G, LEDSTRING_COLOR_LEAVING_B};
+	p.colors[static_cast<int>(LedRole::FILL)] = {LEDSTRING_COLOR_FILL_R,
+		LEDSTRING_COLOR_FILL_G, LEDSTRING_COLOR_FILL_B};
+	p.colors[static_cast<int>(LedRole::TRAVEL)] = {LEDSTRING_COLOR_TRAVEL_R,
+		LEDSTRING_COLOR_TRAVEL_G, LEDSTRING_COLOR_TRAVEL_B};
+	p.colors[static_cast<int>(LedRole::PROPOSAL)] = {LEDSTRING_COLOR_PROPOSAL_R,
+		LEDSTRING_COLOR_PROPOSAL_G, LEDSTRING_COLOR_PROPOSAL_B};
+	p.colors[static_cast<int>(LedRole::SELECTED)] = {LEDSTRING_COLOR_SELECTED_R,
+		LEDSTRING_COLOR_SELECTED_G, LEDSTRING_COLOR_SELECTED_B};
+	return p;
+}
+
+// A hue glyph per role, so the two families are separable at a glance
+// in a terminal: lowercase for context, uppercase for the thing being
+// offered. `.` is a pixel no console owns.
+static char roleGlyph(LedRole r) {
+	switch (r) {
+	case LedRole::STACK: return 's';
+	case LedRole::LEAVING: return 'l';
+	case LedRole::FILL: return 'f';
+	case LedRole::TRAVEL: return 'T';
+	case LedRole::PROPOSAL: return 'P';
+	case LedRole::SELECTED: return 'S';
+	default: return '.';
+	}
+}
+
 // Mirrors the assembly in src/ledstring.cpp::baseFrame().
 StripFrame baseFrame() {
 	StripFrame f;
@@ -204,6 +242,7 @@ StripFrame baseFrame() {
 	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
 	f.travelMs = LEDSTRING_TRAVEL_MS;
 	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	f.palette = buildPalette();
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
 	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
@@ -235,12 +274,12 @@ StripFrame baseFrame() {
 const char kRamp[] = ".:-=+o*#%@";
 
 void render(const StripFrame& frame, const char* caption) {
-	int pct[kTotalLeds];
-	computeStripFrame(frame, pct);
+	retroroom_core::StripPixel px[kTotalLeds] = {};
+	computeStripFrame(frame, px);
 
 	printf("  %-34s |", caption);
 	for (int i = 0; i < kTotalLeds; ++i) {
-		int p = pct[i];
+		int p = px[i].level;
 		if (p < 0) {
 			p = 0;
 		}
@@ -250,6 +289,18 @@ void render(const StripFrame& frame, const char* caption) {
 		// Buckets: 0, then ten steps of 10 across 1..100.
 		int bucket = (p == 0) ? 0 : ((p - 1) * 9) / 100 + 1;
 		putchar(kRamp[bucket]);
+	}
+	printf("|\n");
+}
+// What each pixel is *for*, as a role glyph. Brightness alone cannot
+// separate two roles at the same level, which is the whole reason the
+// colours exist -- so the simulator has to be able to show them.
+void renderRoles(const StripFrame& frame, const char* caption) {
+	retroroom_core::StripPixel px[kTotalLeds] = {};
+	computeStripFrame(frame, px);
+	printf("  %-34s |", caption);
+	for (int i = 0; i < kTotalLeds; ++i) {
+		putchar(roleGlyph(px[i].role));
 	}
 	printf("|\n");
 }
@@ -263,8 +314,9 @@ void rule(const char* title) {
 }
 
 void banner() {
-	printf("LED string simulator -- example2.json geometry, %d pixels, %d consoles\n",
+	printf("LED string simulator -- example3-two-rows.json geometry, %d pixels, %d consoles\n",
 		   kTotalLeds, kConsoleCount);
+	printf("roles: S=selected P=proposal T=travel f=fill l=leaving s=stack .=off\n");
 	if (!kStripLengthFromFirmware) {
 		printf("  (strip length is a host fallback: it is a board/wiring value,\n"
 			   "   not a tuning knob. It matches src/configuration.h today.)\n");
@@ -315,6 +367,10 @@ void scenarioBrowse() {
 		snprintf(caption, sizeof(caption), "detent %d/%d fill",
 				 ev.detents, ev.detentsPerStep);
 		render(f, caption);
+		char roles[64];
+		snprintf(roles, sizeof(roles), "detent %d/%d roles",
+				 ev.detents, ev.detentsPerStep);
+		renderRoles(f, roles);
 	}
 
 	printf("\n  -- travel --\n");
@@ -472,6 +528,9 @@ void scenarioShelf() {
 		char caption[64];
 		snprintf(caption, sizeof(caption), "travel t=%3ums", t.elapsedMs);
 		render(t, caption);
+		char roles[64];
+		snprintf(roles, sizeof(roles), "travel t=%3ums roles", t.elapsedMs);
+		renderRoles(t, roles);
 	}
 }
 

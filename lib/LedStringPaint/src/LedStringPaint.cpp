@@ -8,6 +8,8 @@
 
 namespace retroroom_core {
 
+const LedColor kLedBlack = {0, 0, 0};
+
 LedRange computeConsoleWindow(int ledPosition, int ledWidth, int totalLeds) {
 	// Defensive: a malformed or stale JSON record could leave
 	// ledPosition outside [0, totalLeds) or ledWidth <= 0. Returning a
@@ -678,6 +680,7 @@ int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
 		pixel < frame.travelFrom.start + frame.travelFrom.width) {
 		return frame.dimPct;
 	}
+	(void)leftPermille;
 	// Then the knob-turn fill, which the block consumes as it passes.
 	// A pixel the block has already swept over goes dark; one it has not
 	// reached yet stays lit.
@@ -701,20 +704,41 @@ int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
 	return 0;
 }
 
+StripPixel computeSelectPixel(int pixel, const StripPixel* finalPixels,
+                              int totalLeds, std::uint32_t elapsedMs,
+                              const SelectionEffectConfig& cfg) {
+	// computeSelectScale() wants the settle target as bare levels, so
+	// flatten a copy rather than change its signature -- it is also
+	// called directly by the tests, and keeping it level-only keeps
+	// that honest.
+	int levels[64];
+	for (int i = 0; i < totalLeds && i < 64; ++i) {
+		levels[i] = (finalPixels != 0) ? finalPixels[i].level : 0;
+	}
+	StripPixel p;
+	p.role = (finalPixels != 0) ? finalPixels[pixel].role : LedRole::OFF;
+	p.level = computeSelectScale(pixel, levels, totalLeds, elapsedMs, cfg);
+	if (p.level <= 0) {
+		p.role = LedRole::OFF;
+	}
+	return p;
+}
+
 // ---------------------------------------------------------------------------
 // Whole-strip frames
 // ---------------------------------------------------------------------------
 
 namespace {
 
-void fillWindow(int* out, const LedRange& w, int percent) {
+void fillWindow(StripPixel* out, const LedRange& w, LedRole role, int level) {
 	if (w.width <= 0) {
 		return;
 	}
 	const int end = w.start + w.width;
 	for (int i = w.start; i < end; ++i) {
 		if (i >= 0) {
-			out[i] = percent;
+			out[i].role = role;
+			out[i].level = level;
 		}
 	}
 }
@@ -726,9 +750,10 @@ void fillWindow(int* out, const LedRange& w, int percent) {
 //
 // Clears `out` itself rather than assuming it is already clear,
 // because SELECTING calls it on a scratch buffer.
-void paintRestingInto(const StripFrame& f, int* out) {
+void paintRestingInto(const StripFrame& f, StripPixel* out) {
 	for (int i = 0; i < f.totalLeds; ++i) {
-		out[i] = 0;
+		out[i].role = LedRole::OFF;
+		out[i].level = 0;
 	}
 	// The count is trusted only alongside the pointer. A frame with a
 	// count but a null list is a bug in the caller, and reading through
@@ -736,12 +761,12 @@ void paintRestingInto(const StripFrame& f, int* out) {
 	// frame -- so degrade to "nothing above" instead.
 	if (f.aboveWindows != 0 && f.aboveCount > 0 && f.abovePct > 0) {
 		for (int i = 0; i < f.aboveCount; ++i) {
-			fillWindow(out, f.aboveWindows[i], f.abovePct);
+			fillWindow(out, f.aboveWindows[i], LedRole::STACK, f.abovePct);
 		}
 	}
 	// The selection goes on top, and on last: it is the brightest thing
 	// on the strip and nothing may paint over it.
-	fillWindow(out, f.from, f.selfPct);
+	fillWindow(out, f.from, LedRole::SELECTED, f.selfPct);
 }
 
 }  // namespace
@@ -766,7 +791,26 @@ int collectAboveWindows(const LedRange* windows, int count,
 	return written;
 }
 
-void computeStripFrame(const StripFrame& frame, int* out) {
+LedColor resolvePixel(const StripFrame& frame, const StripPixel& pixel) {
+	if (pixel.role == LedRole::OFF || pixel.level <= 0) {
+		return kLedBlack;
+	}
+	const LedColor base = frame.palette.colors[static_cast<int>(pixel.role)];
+	// Clamped rather than allowed to wrap: an over-100 level would
+	// otherwise roll a channel over into a different primary and a
+	// brightness tweak would silently become a colour change.
+	int pct = pixel.level;
+	if (pct > 100) {
+		pct = 100;
+	}
+	LedColor c;
+	c.r = (base.r * pct) / 100;
+	c.g = (base.g * pct) / 100;
+	c.b = (base.b * pct) / 100;
+	return c;
+}
+
+void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 	if (out == 0) {
 		return;
 	}
@@ -779,7 +823,8 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 	// be zeroed or the previous frame ghosts through. TRANSIT and
 	// PREVIEW only ever write their own windows and rely on this.
 	for (int i = 0; i < total; ++i) {
-		out[i] = 0;
+		out[i].role = LedRole::OFF;
+		out[i].level = 0;
 	}
 
 	switch (frame.effect) {
@@ -788,7 +833,18 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 		break;
 	case StripEffect::FILLING: {
 		for (int i = 0; i < total; ++i) {
-			out[i] = computeFillScale(i, frame);
+			const int level = computeFillScale(i, frame);
+			// The console being left is context, not progress, and gets
+			// its own role so it can be its own colour. Treated as part
+			// of the fill it was indistinguishable from the thing the
+			// operator is actually watching move.
+			if (i >= frame.fillFrom.start &&
+				i < frame.fillFrom.start + frame.fillFrom.width) {
+				out[i].role = LedRole::LEAVING;
+			} else {
+				out[i].role = (level <= 0) ? LedRole::OFF : LedRole::FILL;
+			}
+			out[i].level = level;
 		}
 		break;
 	}
@@ -807,15 +863,37 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 			frame.travelToLeftPermille, frame.travelToRightPermille, progress,
 			frame.travelPeakWidth * 1000);
 		for (int i = 0; i < total; ++i) {
-			out[i] = computeTravelScale(i, frame, edges.leftPermille,
-										edges.rightPermille);
+			const int level = computeTravelScale(i, frame, edges.leftPermille,
+												edges.rightPermille);
+			// The block, the console left behind and the fill it is
+			// consuming are three different things, and at the same
+			// level they are three identical pixels. The roles are what
+			// let them be told apart.
+			const bool onBlock =
+				coveragePercent(edges.leftPermille, edges.rightPermille, i) > 0;
+			const bool leaving =
+				(i >= frame.travelFrom.start &&
+				 i < frame.travelFrom.start + frame.travelFrom.width);
+			out[i].role = onBlock ? LedRole::TRAVEL
+								  : (leaving ? LedRole::LEAVING
+											 : ((level <= 0) ? LedRole::OFF
+																: LedRole::FILL));
+			out[i].level = level;
 		}
 		break;
 	}
 	case StripEffect::PREVIEW: {
+		// The consoles the operator is choosing between stay visible, or
+		// the proposal is showing with nothing to compare it against.
+		if (frame.aboveWindows != 0 && frame.aboveCount > 0) {
+			for (int i = 0; i < frame.aboveCount; ++i) {
+				fillWindow(out, frame.aboveWindows[i], LedRole::LEAVING,
+						   frame.dimPct);
+			}
+		}
 		const int pulse = computePulseScale(frame.elapsedMs, frame.pulsePeriodMs,
 										   frame.pulseMinPct, frame.pulseMaxPct);
-		fillWindow(out, frame.to, pulse);
+		fillWindow(out, frame.to, LedRole::PROPOSAL, pulse);
 		break;
 	}
 	case StripEffect::SELECTING: {
@@ -825,11 +903,11 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 		// this was two independent band-splitting expressions they
 		// agreed only by hand, and a mismatch showed up as the whole
 		// strip dimming at the handoff.
-		int target[64];
+		StripPixel target[64];
 		paintRestingInto(frame, target);
 		for (int i = 0; i < total; ++i) {
-			out[i] = computeSelectScale(i, target, total, frame.elapsedMs,
-										frame.select);
+			out[i] = computeSelectPixel(i, target, total, frame.elapsedMs,
+										 frame.select);
 		}
 		break;
 	}
