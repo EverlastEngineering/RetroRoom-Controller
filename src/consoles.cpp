@@ -51,6 +51,24 @@ static const char CONFIG_JSON[] PROGMEM = R"({
 })";
 
 int currentConsoleIndex = 0;
+
+// Debounced LittleFS save state. Each commit through selectConsole()
+// stamps pendingSaveDueMs = millis() + kSaveQuietMs and remembers the
+// index it wanted saved in pendingSaveIndex. consoles_loop() flushes
+// the write once the deadline passes with no further requests, so
+// back-to-back rotary clicks coalesce into a single write+sync instead
+// of paying one per click. The write still survives a power loss --
+// worst case the operator loses the last ~kSaveQuietMs of changes.
+//
+// kSaveQuietMs is the "quiet window" after the last click before we
+// actually touch the FS. 1500 ms is large enough that a normal
+// click-click-pause click sequence is one write, and small enough that
+// a single click persists well before the operator moves on.
+namespace {
+constexpr uint32_t kSaveQuietMs = 1500;
+uint32_t pendingSaveDueMs = 0;
+int pendingSaveIndex = 0;
+}  // namespace
 // millis() at the moment we last decided on the current console
 // (i.e. immediately after wraparoundNext() resolves in advanceConsole()
 // / rewindConsole()). Used by GET /state.json to surface
@@ -243,7 +261,15 @@ void selectConsole(const Console& c) {
 	// handler in src/controls.cpp moves currentConsoleIndex without
 	// committing, which is right -- it only re-lights the ring, and
 	// the press is what actually selects.
-	retroroom_store::saveLastSelectedConsole(currentConsoleIndex);
+	//
+	// DEBOUNCED: the actual LittleFS write is performed by
+	// consoles_loop() after kSaveQuietMs of silence. Without this
+	// every click would block for the LittleFS write+sync (on Pico
+	// on-flash FS that's ~1 s per click), which made the rotary feel
+	// unresponsive. Worst case now: the operator loses the last
+	// ~kSaveQuietMs of changes to a power loss, not a per-click stall.
+	pendingSaveIndex = currentConsoleIndex;
+	pendingSaveDueMs = millis() + kSaveQuietMs;
 }
 
 void advanceConsole() {
@@ -316,4 +342,19 @@ void rewindConsole() {
 		broadcastSocketMessage(msg);
 	}
 #endif
+}
+void consoles_loop() {
+	// Flush the debounced LittleFS save when the quiet window has
+	// elapsed with no further selectConsole() calls. See the comment
+	// in selectConsole() for the why; the call site for this loop
+	// pump is main.cpp::loop() so it runs alongside display_loop() /
+	// network_loop() / etc.
+	//
+	// pendingSaveDueMs is 0 until the first click arms it, so the
+	// very first loop tick after boot is a no-op. signed arithmetic
+	// on the subtraction handles a wraparound of millis() correctly.
+	if (pendingSaveDueMs != 0 && (int32_t)(millis() - pendingSaveDueMs) >= 0) {
+		retroroom_store::saveLastSelectedConsole(pendingSaveIndex);
+		pendingSaveDueMs = 0;
+	}
 }

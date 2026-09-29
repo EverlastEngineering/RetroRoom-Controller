@@ -22,6 +22,19 @@ EasyButton touchSensor(TOUCH_SENSOR_PIN,35,true,false);
 EasyButton nextConsoleButton(NEXT_CONSOLE_PIN);
 EasyButton prevConsoleButton(PREV_CONSOLE_PIN);
 
+// Defer flags for the interrupt-driven buttons. The ISR only sets the
+// flag; the actual EasyButton::read() (which can invoke the
+// _pressed_callback synchronously) runs from loop() so the callback
+// fires in non-ISR context. Running it from ISR was the bug that
+// starved the CYW43 WiFi driver (and other time-critical ISRs)
+// while selectConsole() drove the latch / I2C / PIO state machine
+// from inside the interrupt handler -- symptom was a 1-2 s stall on
+// every rotary click that propagated randomly to any of the
+// loop() handlers because the recovery happened off-loop.
+volatile bool hasRotarySelectorInterruptFired = false;
+volatile bool hasNextConsoleInterruptFired = false;
+volatile bool hasPrevConsoleInterruptFired = false;
+
 bool isTouched = false;
 volatile bool hasTouchInterruptFired = false;
 
@@ -108,10 +121,12 @@ void rotarySelectorPressed() {
 void sequenceElapsed() { Serial.println("Double click"); }
 
 void rotarySelectorISR() {
-	/*
-	  Remove this as I don't think this is safe.
-	 */
-	rotarySelector.read();
+	// Defer: only set the flag. The .read() pump in loop()
+	// calls rotarySelector.read() which may invoke the
+	// _pressed_callback. Running the callback from ISR would
+	// block the CYW43 driver and any other time-critical
+	// interrupt for the duration of selectConsole().
+	hasRotarySelectorInterruptFired = true;
 }
 
 void touchSensorISR() {
@@ -136,15 +151,16 @@ void prevConsolePressed() {
 }
 
 void nextConsoleISR() {
-	// Defer the read to next loop() iteration so we don't do anything
-	// non-trivial in an ISR. EasyButton's read() walks its own
-	// debounce state machine and may invoke _pressed_callback(); both
-	// are fine off-ISR.
-	nextConsoleButton.read();
+	// Defer to loop(). Calling EasyButton::read() from ISR was the
+	// same CYW43-starvation bug the rotarySelectorISR had -- the
+	// _pressed_callback chain (advanceConsole -> selectConsole ->
+	// latch / LCD / IR / FastLED) must run with interrupts enabled.
+	hasNextConsoleInterruptFired = true;
 }
 
 void prevConsoleISR() {
-	prevConsoleButton.read();
+	// Same deferral as nextConsoleISR(); see comment there.
+	hasPrevConsoleInterruptFired = true;
 }
 
 void touchDetected() {

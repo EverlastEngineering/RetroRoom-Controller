@@ -80,4 +80,11 @@ void advanceConsole();
 // broadcast) as advanceConsole(), just stepping -1 instead of +1.
 void rewindConsole();
 
+// Pump the debounced LittleFS save of the last-selected console. Call
+// from main.cpp::loop(). Each commit through selectConsole() requests
+// a save; the actual write fires only after kSaveQuietMs of silence so
+// back-to-back rotary clicks coalesce into one LittleFS write rather
+// than paying a write+sync per click.
+void consoles_loop();
+
 #endif

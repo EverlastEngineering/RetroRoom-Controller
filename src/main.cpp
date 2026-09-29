@@ -120,11 +120,29 @@ void loop() {
 	// Track the rotary encoder for console switching.
 	rotaryEncoderTick();
 
-	// Service the touch sensor (YD-RP2040 USR button on GP24 is mapped to
-	// TOUCH_SENSOR_PIN). EasyButton in POLL mode requires .read() (not
-	// .update()) to fire onPressed / wasReleased callbacks. The handler
-	// registered in controls_init() -- see todo/README.md.
-	touchSensor.read();
+	// Pump the deferred-button ISRs. The actual EasyButton::read()
+	// (which may invoke the _pressed_callback synchronously) is
+	// called here in loop() context, NOT in the ISR, so the
+	// callback chain -- which drives the latch, the LCD, the IR
+	// blaster, and FastLED -- never runs with interrupts blocked.
+	// Doing it in the ISR starved the CYW43 WiFi driver and surfaced
+	// as a 1-2 s stall on every rotary click.
+	if (hasRotarySelectorInterruptFired) {
+		hasRotarySelectorInterruptFired = false;
+		rotarySelector.read();
+	}
+	if (hasNextConsoleInterruptFired) {
+		hasNextConsoleInterruptFired = false;
+		nextConsoleButton.read();
+	}
+	if (hasPrevConsoleInterruptFired) {
+		hasPrevConsoleInterruptFired = false;
+		prevConsoleButton.read();
+	}
+	if (hasTouchInterruptFired) {
+		hasTouchInterruptFired = false;
+		touchSensor.read();
+	}
 
 	// Pump the network stack (currently the captive-portal DNS server).
 	// No-op when WiFi is not active.
@@ -147,6 +165,14 @@ void loop() {
 	// src/state.cpp -- without this a stuck radio looks identical
 	// to a crashed firmware from the host's perspective.
 	heartbeatTick();
+
+	// Pump the debounced LittleFS save of the last-selected console.
+	// See consoles_loop() in src/consoles.cpp -- selectConsole()
+	// arms a deadline; this loop body is what actually fires the
+	// save after the quiet window. Keeps the LittleFS write+sync off
+	// the rotary click path (which used to make the dial feel
+	// unresponsive on Pico's on-flash FS).
+	consoles_loop();
 
 	// On-board LED is driven exclusively from src/state.cpp:
 	// ledOn / ledOff / flashLed toggle the `flash` flag and drive
