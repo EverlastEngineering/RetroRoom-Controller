@@ -6,7 +6,7 @@
 `test/test_ledstring_browse/`
 **Completed:** 2026-09-29
 **Commits:** `d5ad7ce` (functional core + host tests), `2b28560`
-(shell wiring), `4c1e0a8` (frame-level core extraction + simulator)
+(shell wiring), `c76a666` (frame-level core extraction + simulator)
 **Closes:** S1 of the former
 `2026-09-25_led-string-light-shows_DRAFT.md`, rewritten into real
 todos when that draft was retired.
