@@ -291,10 +291,16 @@ int twinkleSample(int pixel, std::uint32_t tick) {
 	return static_cast<int>((a ^ b) & 0x3ffu);  // 0..1023
 }
 
-int computeSelectScale(int pixel, int keepEnd, int totalLeds,
+int computeSelectScale(int pixel, int keepEnd, int consoleStart, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg) {
-	const int finalScale = (pixel < keepEnd) ? cfg.keepScale : 0;
+	// Three tiers, matching the resting paint exactly. In the default
+	// inclusive configuration keepEnd is the console window's end, so
+	// the middle band is the console; in the exclusive one keepEnd ==
+	// consoleStart, the band is empty, and the selection goes dark.
+	const int finalScale = (pixel < consoleStart)
+		? cfg.abovePct
+		: ((pixel < keepEnd) ? cfg.selfPct : 0);
 	if (cfg.totalMs == 0 || elapsedMs >= cfg.totalMs) {
 		return finalScale;
 	}
@@ -339,6 +345,99 @@ int computeSelectScale(int pixel, int keepEnd, int totalLeds,
 	const int sample = twinkleSample(pixel, cfg.twinkleMs / twinkleTickMs);
 	const int start = lerpPercent(cfg.twinkleMin, cfg.twinkleMax, sample * 1000 / 1023);
 	return lerpPercent(start, finalScale, static_cast<int>(into) * 1000 / static_cast<int>(rampMs));
+}
+
+// ---------------------------------------------------------------------------
+// Whole-strip frames
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void fillWindow(int* out, const LedRange& w, int percent) {
+	if (w.width <= 0) {
+		return;
+	}
+	const int end = w.start + w.width;
+	for (int i = w.start; i < end; ++i) {
+		if (i >= 0) {
+			out[i] = percent;
+		}
+	}
+}
+
+}  // namespace
+
+void computeStripFrame(const StripFrame& frame, int* out) {
+	if (out == 0) {
+		return;
+	}
+	const int total = frame.totalLeds;
+	if (total <= 0) {
+		return;
+	}
+	for (int i = 0; i < total; ++i) {
+		out[i] = 0;
+	}
+
+	switch (frame.effect) {
+	case StripEffect::RESTING: {
+		// The prefix runs over the console's own window when keepEnd
+		// says "inclusive", and the brighter self fill paints over it
+		// -- which is the point, the selection should be the brightest
+		// thing on a resting strip.
+		//
+		// consoleStart < keepEnd is exactly the inclusive test. In the
+		// exclusive configuration they are equal, the middle band is
+		// empty, and the selection is not painted at all -- which is
+		// what LEDSTRING_KEEP_INCLUDES_SELECTED promises. Gating on it
+		// here rather than assuming keeps RESTING and SELECTING landing
+		// on the same picture in both modes.
+		for (int i = 0; i < total && i < frame.keepEnd; ++i) {
+			out[i] = frame.abovePct;
+		}
+		if (frame.consoleStart < frame.keepEnd) {
+			fillWindow(out, frame.from, frame.selfPct);
+		}
+		break;
+	}
+	case StripEffect::TRANSIT: {
+		// The magnitude, not the signed value. The gate's position is
+		// signed to say *which side* of the anchor the operator is on --
+		// that is already resolved by the caller choosing `to`. What
+		// travels the blob is the distance, so clamping the sign away
+		// here is correct. Getting this wrong is subtle and was caught
+		// by the simulator's reverse scenario: with the sign kept, every
+		// negative position eased to 0 and the blob sat frozen on the
+		// anchor for the whole backward half of a step.
+		int f = frame.fractionPermille;
+		if (f < 0) {
+			f = -f;
+		}
+		if (f > 1000) {
+			f = 1000;
+		}
+		fillWindow(out, frame.from, frame.fromPct);
+		fillWindow(out, frame.to, frame.toPct);
+		const LedRange blob = computeBlobWindow(
+			frame.from.start, frame.from.width, frame.to.start,
+			frame.to.width, f, frame.blobWidth, total);
+		fillWindow(out, blob, frame.blobPct);
+		break;
+	}
+	case StripEffect::PREVIEW: {
+		const int pulse = computePulseScale(frame.elapsedMs, frame.pulsePeriodMs,
+										   frame.pulseMinPct, frame.pulseMaxPct);
+		fillWindow(out, frame.to, pulse);
+		break;
+	}
+	case StripEffect::SELECTING: {
+		for (int i = 0; i < total; ++i) {
+			out[i] = computeSelectScale(i, frame.keepEnd, frame.consoleStart,
+										total, frame.elapsedMs, frame.select);
+		}
+		break;
+	}
+	}
 }
 
 }  // namespace retroroom_core

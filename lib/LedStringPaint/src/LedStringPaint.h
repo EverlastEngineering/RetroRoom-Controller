@@ -207,11 +207,13 @@ int computePulseScale(std::uint32_t elapsedMs, std::uint32_t periodMs,
 struct SelectionEffectConfig {
 	SelectionEffectConfig()
 		: totalMs(900), twinkleMs(350), staggerMs(6), twinkleMin(12),
-		  twinkleMax(100), keepScale(22) {}
+		  twinkleMax(100), abovePct(22), selfPct(100) {}
 	SelectionEffectConfig(std::uint32_t total, std::uint32_t twinkle,
-	                      std::uint32_t stagger, int tmin, int tmax, int keep)
+	                      std::uint32_t stagger, int tmin, int tmax,
+	                      int above, int self)
 		: totalMs(total), twinkleMs(twinkle), staggerMs(stagger),
-		  twinkleMin(tmin), twinkleMax(tmax), keepScale(keep) {}
+		  twinkleMin(tmin), twinkleMax(tmax), abovePct(above),
+		  selfPct(self) {}
 
 	// Whole effect. The user-visible contract is that it finishes in
 	// under a second.
@@ -227,9 +229,14 @@ struct SelectionEffectConfig {
 	// Brightness percentage of the darkest and brightest twinkle samples.
 	int twinkleMin;
 	int twinkleMax;
-	// Brightness percentage the surviving ("above the selected console")
-	// pixels settle to. Everything else settles to 0.
-	int keepScale;
+	// Brightness percentages the strip settles to. The split is not
+	// cosmetic: the effect has to land on *exactly* the resting paint,
+	// which is the stack above the console dim and the console's own
+	// window bright. A single flat level would leave the whole prefix at
+	// console brightness and then visibly dim the moment the effect
+	// handed back to the resting paint.
+	int abovePct;
+	int selfPct;
 };
 
 // The exclusive pixel index the strip settles to: the lit prefix is
@@ -257,13 +264,116 @@ int twinkleSample(int pixel, std::uint32_t tick);
 // Brightness percentage (0..100) for one pixel at `elapsedMs` into the
 // selection effect. `pixel` must be < totalLeds.
 //
+// The pixel settles on one of three values, matching the resting paint
+// exactly:
+//
+//   pixel <  consoleStart -> cfg.abovePct   (the stack above the selection)
+//   pixel <  keepEnd      -> cfg.selfPct    (the selection itself)
+//   otherwise             -> 0             (below the selection, goes dark)
+//
+// The split is not cosmetic. A single flat settle level would leave the
+// whole prefix at console brightness and then visibly dim the moment the
+// effect handed back to the resting paint -- a flash at exactly the
+// moment the operator is looking at the result.
+//
 // Twinkles with the rest of the strip for the first `twinkleMs`, then
-// ramps to its final value (keepScale if pixel < keepEnd, else 0) over a
-// ramp that starts `pixel * staggerMs` late. Returns the settled value
-// once the effect is over, so the caller can just use the last frame
-// as the resting paint.
-int computeSelectScale(int pixel, int keepEnd, int totalLeds,
+// ramps to its final value over a ramp that starts `pixel *
+// staggerMs` late. Returns the settled value once the effect is over, so
+// the caller can use the last frame as the resting paint.
+int computeSelectScale(int pixel, int keepEnd, int consoleStart, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg);
+
+// ---------------------------------------------------------------------------
+// Whole-strip frames
+// ---------------------------------------------------------------------------
+
+// What the strip is showing right now. One of the four states the shell
+// animates between.
+enum class StripEffect {
+	RESTING,    // the stack, lit down to the selection
+	TRANSIT,    // a browse in progress: a blob between two windows
+	PREVIEW,    // a browse snapped: the target console pulsing
+	SELECTING,  // a commit in progress: twinkle, then settle
+};
+
+// One frame of the strip, fully resolved: the caller has already turned
+// console indices into LED windows, and filled in the brightness
+// percentages it wants. computeStripFrame() then produces the whole
+// frame as one percentage per pixel.
+//
+// This exists so the *only* thing left in src/ledstring.cpp is
+// percentage -> CRGB and FastLED.show(). Everything that decides which
+// pixels are lit lives here, which means it is host-testable and can be
+// replayed offline by agent-script/ledstring-sim.sh -- see the
+// simulator's header for why that matters.
+struct StripFrame {
+	StripEffect effect = StripEffect::RESTING;
+
+	// Size of the physical strip. Everything is clamped to this.
+	int totalLeds = 0;
+
+	// Console windows, resolved by the caller (it owns the console
+	// list). Only the ones the current effect needs are read:
+	// RESTING reads `from`, TRANSIT reads both, PREVIEW reads `to`.
+	LedRange from;
+	LedRange to;
+
+	// TRANSIT only. Clamped to [0, 1000].
+	int fractionPermille = 0;
+
+	// RESTING and SELECTING. The selected console's own window, as a
+	// split point. The three brightness tiers fall out of this plus
+	// keepEnd:
+	//
+	//   [0, consoleStart)          the stack above the selection
+	//   [consoleStart, keepEnd)    the selection itself
+	//   [keepEnd, totalLeds)       below the selection, dark
+	//
+	// In the default (inclusive) configuration keepEnd is the console
+	// window's end, so the middle band is exactly the console. In the
+	// exclusive one keepEnd == consoleStart, the middle band is empty,
+	// and the selection goes dark -- which is what
+	// LEDSTRING_KEEP_INCLUDES_SELECTED promises.
+	int keepEnd = 0;
+	int consoleStart = 0;
+
+	// Brightness percentages, all 0..100.
+	int abovePct = 0;   // RESTING: the pixels above the selection
+	int selfPct = 100;  // RESTING: the selection's own window
+	int fromPct = 0;    // TRANSIT: the console being left
+	int toPct = 0;      // TRANSIT: the console being approached
+	int blobPct = 100;  // TRANSIT: the travelling blob
+
+	// TRANSIT. Clamped to totalLeds.
+	int blobWidth = 3;
+
+	// PREVIEW. The glow follows a parabola over the period, so it peaks
+	// mid-cycle and falls to pulseMinPct at both ends.
+	int pulseMinPct = 0;
+	int pulseMaxPct = 100;
+	std::uint32_t pulsePeriodMs = 0;
+
+	// PREVIEW and SELECTING: how far into the animation we are.
+	std::uint32_t elapsedMs = 0;
+
+	// SELECTING only.
+	SelectionEffectConfig select;
+};
+
+// Resolve one whole frame into `out[0 .. totalLeds)`, one brightness
+// percentage per pixel. `out` is fully overwritten, so callers do not
+// need to clear it first.
+//
+// Zeros the output and returns immediately if `out` is null or
+// totalLeds <= 0, so a caller with an uninitialised strip size cannot
+// scribble past its buffer.
+//
+// The layering inside TRANSIT is deliberate and is the order the pixels
+// are meant to be read in: departure window, then destination window on
+// top of it, then the blob on top of both. A wider destination therefore
+// wins over the window it is approaching, and the blob is always the
+// brightest thing on the strip while it moves.
+void computeStripFrame(const StripFrame& frame, int* out);
 
 }  // namespace retroroom_core

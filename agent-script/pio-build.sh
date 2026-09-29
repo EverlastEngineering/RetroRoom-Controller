@@ -32,6 +32,10 @@
 #   1  bad CLI args
 #   2  build failed (pio run exit code)
 #
+# Trust the exit code. Quiet mode used to append `|| true` to the
+# filtering pipeline, which reset PIPESTATUS and made every failing
+# build report "build OK" -- so check `$?`, not the last line printed.
+#
 # Note: this does NOT flash. The upload+monitor script
 # (agent-script/pio-upload-monitor.sh) is the only correct way to
 # flash, and per AGENT.md §4 that needs explicit user permission.
@@ -66,15 +70,18 @@ if [ "$VERBOSE" = 1 ]; then
     rc=${PIPESTATUS[0]}
 else
     # Quiet mode: filter the ArduinoJson StaticJsonDocument deprecation
-    # noise (pre-existing per TODO), show everything else. Errors stay
-    # visible because grep matches `-Werror`-friendly patterns; we use
-    # `set -o pipefail` so the trap catches a build that succeeded but
-    # had grep kill the stream unexpectedly.
+    # noise (pre-existing per TODO), show everything else.
+    #
+    # PIPESTATUS must be read on the line immediately after the
+    # pipeline. Do NOT append `|| true` to it: that runs a second
+    # command, which resets PIPESTATUS, so ${PIPESTATUS[0]} would then
+    # report `true`'s status and every failing build would be reported
+    # as "build OK". `set -e` is not enabled, so a non-zero grep (no
+    # lines matched) does not abort the script before the read.
     set -o pipefail
     "$PIO" run -e "$ENV" 2>&1 \
         | tee "$LOG" \
-        | grep -v -E "StaticJsonDocument.*deprecated.*JsonDocument" \
-        || true
+        | grep -v -E "StaticJsonDocument.*deprecated.*JsonDocument"
     rc=${PIPESTATUS[0]}
 fi
 

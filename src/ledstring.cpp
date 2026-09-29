@@ -70,7 +70,8 @@ retroroom_core::SelectionEffectConfig effectConfig() {
 	c.staggerMs = LEDSTRING_SELECT_STAGGER_MS;
 	c.twinkleMin = LEDSTRING_SELECT_TWINKLE_MIN_PCT;
 	c.twinkleMax = LEDSTRING_SELECT_TWINKLE_MAX_PCT;
-	c.keepScale = LEDSTRING_SELF_PCT;
+	c.abovePct = LEDSTRING_ABOVE_PCT;
+	c.selfPct = LEDSTRING_SELF_PCT;
 	return c;
 }
 
@@ -108,6 +109,7 @@ int previewIdx = 0;
 // different console list.
 int selectIdx = 0;
 int selectKeepEnd = 0;
+int selectConsoleStart = 0;
 
 // millis() when the live animation started, and when the last frame
 // went out. Both are unsigned-subtracted so a millis() wraparound is
@@ -136,81 +138,87 @@ int keepEndFor(int idx) {
 		LEDSTRING_KEEP_INCLUDES_SELECTED != 0);
 }
 
+// Turn a resolved frame into pixels and push it to the wire. This is
+// the shell's entire remaining job: the layout -- which pixels are lit
+// and how brightly -- is decided by retroroom_core::computeStripFrame(),
+// which is host-tested and replayed by agent-script/ledstring-sim.sh.
+// Keeping the decision here instead would mean two copies of the paint
+// logic, one of which nobody would ever run.
+void pushFrame(const retroroom_core::StripFrame& frame) {
+	int pct[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
+	retroroom_core::computeStripFrame(frame, pct);
+	for (int i = 0; i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS; ++i) {
+		selectedLeds[i] = scaled(pct[i]);
+	}
+	FastLED.show();
+}
+
+// Shared frame setup: the strip size and the brightness knobs, which
+// come straight from src/configuration.h. The per-effect fields are
+// filled in by the callers below.
+retroroom_core::StripFrame baseFrame() {
+	retroroom_core::StripFrame f;
+	f.totalLeds = NUM_SELECTED_CONSOLE_LED_STRING_LEDS;
+	f.abovePct = LEDSTRING_ABOVE_PCT;
+	f.selfPct = LEDSTRING_SELF_PCT;
+	f.fromPct = LEDSTRING_BROWSE_FROM_PCT;
+	f.toPct = LEDSTRING_BROWSE_TO_PCT;
+	f.blobPct = LEDSTRING_BLOB_PCT;
+	f.blobWidth = LEDSTRING_BLOB_WIDTH;
+	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
+	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
+	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
+	f.select = kEffect;
+	return f;
+}
+
 // The resting paint: the stack above the console dim, the console's own
 // window at full, everything below dark.
 void paintResting(int idx) {
-	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
-			  LEDSTRING_OFF_COLOR);
 	const int n = HowManyConsoles();
 	if (n <= 0 || idx < 0 || idx >= n) {
+		retroroom_core::StripFrame f = baseFrame();
+		f.effect = retroroom_core::StripEffect::RESTING;
+		pushFrame(f);
 		return;
 	}
-	// [0, keepEnd) is what "above" means: the strip is indexed top of
-	// the cabinet downward, so everything before the selected console's
-	// window is above it. With LEDSTRING_KEEP_INCLUDES_SELECTED the
-	// prefix runs over the console's own window too, and the brighter
-	// fill immediately below paints over it -- which is the point, the
-	// selection should be the brightest thing on the strip.
-	const retroroom_core::LedRange w = windowFor(idx);
-	const int keepEnd = keepEndFor(idx);
-	ledstring_fillRange(0, keepEnd, scaled(LEDSTRING_ABOVE_PCT));
-	if (w.width > 0) {
-		ledstring_fillRange(w.start, w.start + w.width,
-							scaled(LEDSTRING_SELF_PCT));
-	}
-	FastLED.show();
+	retroroom_core::StripFrame f = baseFrame();
+	f.effect = retroroom_core::StripEffect::RESTING;
+	f.from = windowFor(idx);
+	f.keepEnd = keepEndFor(idx);
+	f.consoleStart = f.from.start;
+	pushFrame(f);
 }
 
 void paintTransit() {
-	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
-			  LEDSTRING_OFF_COLOR);
-	const retroroom_core::LedRange a = windowFor(fromIdx);
-	const retroroom_core::LedRange b = windowFor(toIdx);
-	ledstring_fillRange(a.start, a.start + a.width,
-						scaled(LEDSTRING_BROWSE_FROM_PCT));
-	ledstring_fillRange(b.start, b.start + b.width,
-						scaled(LEDSTRING_BROWSE_TO_PCT));
-	// The blob goes down last and at full brightness so it is
-	// unmistakably the thing moving. The fraction is clamped here rather
-	// than in the core so an out-of-range value degrades to "the blob
-	// sits at one end" instead of extrapolating off the strip.
-	int f = fractionPermille;
-	if (f < 0) {
-		f = 0;
-	}
-	if (f > 1000) {
-		f = 1000;
-	}
-	const retroroom_core::LedRange blob = retroroom_core::computeBlobWindow(
-		a.start, a.width, b.start, b.width, f, LEDSTRING_BLOB_WIDTH,
-		NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
-	ledstring_fillRange(blob.start, blob.start + blob.width,
-						scaled(LEDSTRING_BLOB_PCT));
-	FastLED.show();
+	retroroom_core::StripFrame f = baseFrame();
+	f.effect = retroroom_core::StripEffect::TRANSIT;
+	f.from = windowFor(fromIdx);
+	f.to = windowFor(toIdx);
+	f.fractionPermille = fractionPermille;
+	pushFrame(f);
 }
 
 void paintPreview(uint32_t elapsedMs) {
-	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
-			  LEDSTRING_OFF_COLOR);
-	const retroroom_core::LedRange w = windowFor(previewIdx);
-	if (w.width > 0) {
-		ledstring_fillRange(
-			w.start, w.start + w.width,
-			scaled(retroroom_core::computePulseScale(
-				elapsedMs, LEDSTRING_PREVIEW_PULSE_MS,
-				LEDSTRING_PREVIEW_PULSE_MIN_PCT,
-				LEDSTRING_PREVIEW_PULSE_MAX_PCT)));
-	}
-	FastLED.show();
+	retroroom_core::StripFrame f = baseFrame();
+	f.effect = retroroom_core::StripEffect::PREVIEW;
+	f.to = windowFor(previewIdx);
+	f.elapsedMs = elapsedMs;
+	pushFrame(f);
 }
 
 void paintSelecting(uint32_t elapsedMs) {
-	for (int i = 0; i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS; ++i) {
-		selectedLeds[i] = scaled(retroroom_core::computeSelectScale(
-			i, selectKeepEnd, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
-			elapsedMs, kEffect));
-	}
-	FastLED.show();
+	retroroom_core::StripFrame f = baseFrame();
+	f.effect = retroroom_core::StripEffect::SELECTING;
+	f.keepEnd = selectKeepEnd;
+	// The console's own window start, so the effect's two brightness
+	// tiers land on the same pixels the resting paint uses. Resolved
+	// alongside selectKeepEnd in ledstring_selectEffect() for the same
+	// reason -- a reload mid-animation must not repaint against a
+	// different console.
+	f.consoleStart = selectConsoleStart;
+	f.elapsedMs = elapsedMs;
+	pushFrame(f);
 }
 
 }  // namespace
@@ -349,6 +357,8 @@ void ledstring_selectEffect(int idx) {
 	// that light up are the ones that were actually clicked on even if
 	// the console list is reloaded underneath the animation.
 	selectKeepEnd = keepEndFor(idx);
+	const retroroom_core::LedRange w = windowFor(idx);
+	selectConsoleStart = w.start;
 	animStartMs = millis();
 	paintSelecting(0);
 }

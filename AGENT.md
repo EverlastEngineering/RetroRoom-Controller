@@ -56,6 +56,7 @@ codes.
 | `pio-upload-monitor.sh` | Build + flash + serial capture on a timer. |
 | `e2e-consoles-json.sh` | Drives `/consoles.json` against a running device. |
 | `serial-snapshot.sh` | Non-interactive serial capture. |
+| `ledstring-sim.sh` | Replays the GP21 string animations as ASCII, no hardware. |
 
 `agent-script/pio-env.sh` is sourced by the others; it resolves the
 PlatformIO CLI from `PATH` or `~/.platformio/penv/bin` and fails with
@@ -63,6 +64,14 @@ install instructions if it's genuinely absent. **If a wrapper says
 "command not found", the fix is usually just that PlatformIO isn't on
 `PATH` in non-interactive shells** — add it to `~/.zprofile` (macOS) or
 `~/.bashrc`. Do not work around it by hardcoding paths into the scripts.
+
+`ledstring-sim.sh` is the exception: it needs only a host C++ compiler,
+and builds `lib/LedStringPaint` plus `agent-script/ledstring-sim.cpp`
+directly. It replays the *same* `computeStripFrame()` call the firmware
+makes, with the same `LEDSTRING_*` values, so the animations can be
+inspected and retuned without flashing. Use it before changing a timing
+or brightness in `src/configuration.h` — a wrong frame is much easier to
+see here than on a strip behind a console.
 
 ### Build and flash as two separate steps
 
@@ -150,6 +159,7 @@ including one you remember from a previous session.
 
 ```sh
 ./agent-script/pio-build.sh          # firmware compile check
+./agent-script/ledstring-sim.sh      # replay the LED string animations
 pio test -d . -e test_native         # host unit tests
 ```
 

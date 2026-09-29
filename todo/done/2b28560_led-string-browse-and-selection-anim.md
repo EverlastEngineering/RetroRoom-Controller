@@ -6,7 +6,7 @@
 `test/test_ledstring_browse/`
 **Completed:** 2026-09-29
 **Commits:** `d5ad7ce` (functional core + host tests), `2b28560`
-(shell wiring)
+(shell wiring), `4c1e0a8` (frame-level core extraction + simulator)
 **Closes:** S1 of the former
 `2026-09-25_led-string-light-shows_DRAFT.md`, rewritten into real
 todos when that draft was retired.
@@ -92,18 +92,6 @@ restores a saved selection browses relative to the live console.
 `PREVIEW`, `SELECTING`. `ledstring_loop()` returns immediately when
 resting, so the idle cost is one comparison and no PIO traffic.
 
-### Two bugs the host tests caught
-
-Both were found before the firmware ever ran them, which is the
-argument for the split:
-
-- `targetDirection` was computed from the position *before* it was
-  updated, so walking back to exactly the anchor left the target
-  pointing at the console you'd just come from.
-- The blob's travel position is continuous, so the target direction has
-  to be re-derived after the position moves — it is not a property of
-  the detent.
-
 ### Commit is the single reset point
 
 `controls_browseReset()` is called from `selectConsole()` in
@@ -115,20 +103,61 @@ call sits outside the `HAS_LEDS` guard even though it resets the LED
 string, because the gate lives in `controls.cpp` regardless of whether
 the second strip is wired.
 
+### The shell is now almost empty
+
+`retroroom_core::computeStripFrame()` resolves a whole frame — which
+pixels, at what brightness — from a `StripFrame` the caller fills in.
+`src/ledstring.cpp` is left with percentage-to-CRGB and
+`FastLED.show()`, plus the four-state machine. That was done *after* the
+first working version, which had the paint logic in the shell: the
+simulator would otherwise have needed a second copy of it, and a second
+copy of animation logic is one nobody ever runs.
+
+## Bugs found before the firmware ever ran them
+
+All three were found by the host tests and the simulator rather than on
+the bench, which is the argument for the split:
+
+- **`targetDirection` was computed before the position updated.** Walking
+  back to exactly the anchor left the target pointing at the console you
+  had just come from. The target has to be re-derived *after* the
+  position moves — it is a property of the position, not of the detent.
+- **The settle used one flat brightness level.** The whole surviving
+  prefix settled at console brightness and then visibly dimmed the
+  instant the effect handed back to the resting paint — a flash at
+  exactly the moment the operator looks at the result. Fixed by making
+  the settle three-tier, keyed on the console window's *start*, so the
+  effect's last frame is pixel-identical to the resting paint. Asserted
+  by `test_selecting_frame_ends_on_the_resting_paint`.
+- **The blob froze when travelling backwards.** The frame clamped the
+  signed fraction to `[0, 1000]`, which eased every negative position to
+  zero and parked the blob on the anchor for the whole backward half of
+  a step. The travel wants the *magnitude*; the sign has already been
+  consumed by the caller choosing the target window. No blob unit test
+  caught this because they all pass a non-negative fraction — it took
+  the simulator's reverse scenario.
+
 ## Tuning
 
 Every value is a `#define` in `src/configuration.h` under the "LED
 string (GP21) browse + selection feel" block, grouped by which of the
 three behaviours it shapes. Nothing in the logic hard-codes a timing.
 
-Two are worth calling out because they are judgement calls rather than
-values:
+**Change a value, then run `./agent-script/ledstring-sim.sh`.** It
+replays the same `computeStripFrame()` call the firmware makes with the
+same values and prints each frame as an ASCII strip, so the effect can
+be seen without a flash. `browse`, `fastspin`, `reverse`, `select` and
+`frames` are the scenarios; `all` runs them.
+
+Two values are judgement calls rather than numbers:
 
 - `LEDSTRING_KEEP_INCLUDES_SELECTED` — whether the resting prefix
   includes the selected console's own window. Defaults to 1; setting it
   to 0 takes the literal reading of "only the ones above the selected
   console", which turns the thing you just chose off and reads as a
-  glitch.
+  glitch. It also has to gate the console's *own* fill, not just the
+  prefix length, or the define is a lie —
+  `test_resting_frame_honours_the_exclusive_configuration` pins that.
 - `LEDSTRING_ABOVE_PCT` / `LEDSTRING_SELF_PCT` — the resting state is
   the console window *and* everything above it, and those overlap. The
   brighter self fill paints over the dim prefix fill, so the selection
