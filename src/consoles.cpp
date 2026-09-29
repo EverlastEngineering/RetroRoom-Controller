@@ -6,6 +6,7 @@
 
 #include "lighting.h"
 #include "ledstring.h"
+#include "controls.h"
 #include "consoleconfig_store.h"
 #include "display.h"
 #if defined(HAS_IR)
@@ -250,19 +251,28 @@ void selectConsole(const Console& c) {
 	display_show_console(c.name.c_str(), c.tagline.c_str());
 	display_wake();
 #if defined(HAS_LEDS)
-	// Paint the active console's LED window on the second strip (GP21).
-	// This one insertion point covers every commit path: rotary press,
-	// NEXT_CONSOLE_BTN, PREV_CONSOLE_BTN, HTTP /next, /prev, and the
-	// WebSocket "console" message -- because they all funnel through
-	// selectConsole() on the way to driving the StackSelector.
+	// Play the selection effect on the second strip (GP21): the whole
+	// string twinkles, then collapses to the pixels above the selected
+	// console. This one insertion point covers every commit path --
+	// rotary press, NEXT_CONSOLE_BTN, PREV_CONSOLE_BTN, HTTP /next,
+	// /prev, and the WebSocket "console" message -- because they all
+	// funnel through selectConsole() on the way to driving the
+	// StackSelector.
 	//
-	// No animation here; this is the steady-state "light the right
-	// pixels on commit" path. The pull-tween animation between zones
-	// is tracked under
-	// todo/open/2026-09-25_led-string-light-shows_DRAFT.md (S1) and is
-	// NOT part of this commit.
-	ledstring_setConsole(currentConsoleIndex);
+	// The effect is non-blocking: it hands the strip to a state machine
+	// that ledstring_loop() advances from loop(), so this commit does
+	// not sit waiting ~LEDSTRING_SELECT_EFFECT_MS before returning.
+	ledstring_selectEffect(currentConsoleIndex);
 #endif
+	// The commit also ends the browse: forget any half-accumulated
+	// detents and drop the blob, so the operator's next turn starts a
+	// fresh step from the console that is now live. Pairs with the
+	// effect above -- the strip keeps animating, but the browse that was
+	// feeding it is over. Deliberately outside the HAS_LEDS guard: the
+	// detent gate lives in controls.cpp regardless of whether the second
+	// strip is wired, and a commit that forgot to clear it would leave
+	// the next turn starting a step from the wrong place.
+	controls_browseReset();
 
 	// Remember the selection so it survives a power cycle.
 	// selectConsole() is the single commit point for every selection
@@ -293,9 +303,8 @@ void selectConsole(const Console& c) {
 	// spinning the knob and then clicking settles dark.
 	//
 	// Placed last so that everything above -- including the LED string
-	// paint, which is a different strip and is NOT affected -- has run.
-	// The twinkle that replaces the string's static lighting when this
-	// lands should hook in around here.
+	// selection effect, which is a different strip and is NOT affected
+	// -- has run.
 #if defined(HAS_LEDS)
 	lightRingForceOff();
 #endif

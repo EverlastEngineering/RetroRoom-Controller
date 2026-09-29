@@ -33,9 +33,10 @@
 // lighting_init().
 extern void ledstring_init();
 
-// Paint the window [ledPosition, ledPosition+ledWidth) of the current
-// console (currentConsoleIndex -- index into src/consoles.cpp::consoles)
-// with a dim warm white, all other pixels black, push FastLED.show().
+// Paint the resting state for `idx`: every pixel above the console's
+// window dimly lit, the console's own window at full, everything below
+// dark. Called from ledstring_init() at boot and whenever the strip
+// leaves an animation.
 //
 // Safe to call when HAS_LEDS is defined but the device has no second
 // strip wired -- the FastLED controller buffers a frame that won't go
@@ -45,9 +46,53 @@ extern void ledstring_init();
 // it must be called after consoleDefinitions() has populated the
 // vector. Callers in this repo are limited to:
 //   - ledstring_init() at boot (once the first console is loaded)
-//   - selectConsole() on every commit (rotary press, NEXT/PREV buttons,
-//     /next, /prev, WebSocket console)
+//   - controls_browseReset() when an abandoned browse is abandoned
+//     back to the selected console
 extern void ledstring_setConsole(int idx);
+
+// Pump the in-flight animation, if there is one. Call from loop().
+//
+// Returns immediately when the strip is resting, so the common case
+// costs a single comparison and no PIO traffic. While an animation is
+// running it repaints at LEDSTRING_FRAME_INTERVAL_MS and, for the
+// selection effect, ends itself back in the resting paint.
+//
+// No-op when HAS_LEDS is undefined.
+extern void ledstring_loop();
+
+// ---- browse ------------------------------------------------------------
+
+// The operator turned a detent but has not yet committed to a console:
+// draw the blob part-way between `fromIdx` and `toIdx`.
+//
+// `fractionPermille` is the browse position from
+// retroroom_core::DetentGate::onDetent(): 0 puts the blob on `fromIdx`,
+// 1000 lands it centred on `toIdx`, and the value is continuous so
+// turning the knob back walks the blob back the way it came. It is
+// deliberately *not* constrained to [0, 1000] -- the shell clamps.
+extern void ledstring_browseProgress(int fromIdx, int toIdx,
+                                     int fractionPermille);
+
+// The browse snapped onto `idx`: stop the blob and pulse the console's
+// JSON-defined window, showing which console a click would select.
+// Replaces the static paint that used to be the only browse feedback
+// (which was a serial line and nothing else).
+extern void ledstring_browseSnap(int idx);
+
+// The browse was abandoned (the ring gave up, or a commit happened):
+// drop back to the resting paint for the selected console.
+extern void ledstring_browseClear();
+
+// ---- selection ---------------------------------------------------------
+
+// Play the selection effect for `idx`: the whole strip twinkles, then
+// collapses in under LEDSTRING_SELECT_EFFECT_MS to just the pixels
+// above the selected console. Ends back in the resting paint.
+//
+// Called from selectConsole(), so it covers every commit path: the
+// rotary click, NEXT/PREV buttons, /next, /prev, and the WebSocket
+// console message. It cancels any browse animation already in flight.
+extern void ledstring_selectEffect(int idx);
 
 // Blank every pixel on the GP21 strip and push the frame to the wire.
 // Used on the way down to a reset (the "Rebooting" state armed by a

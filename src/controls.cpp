@@ -5,6 +5,8 @@
 #include "stackselector.h"
 #include "consoles.h"
 #include "lighting.h"
+#include "ledstring.h"
+#include <LedStringPaint.h>  // retroroom_core::DetentGate + wraparoundNext
 
 // No IRAM_ATTR shim needed anymore -- ESP8266 is gone. RP2040 / Pico does
 // not require a special attribute for ISR handlers (the vector system
@@ -41,6 +43,31 @@ bool isTouched = false;
 // already near the knob still registers an approach.
 static bool proximityActive = false;
 
+// Browse state for the rotary knob. Owned here rather than in
+// src/ledstring.cpp because the *decision* (how many detents a console
+// step costs, and where the blob has got to) belongs with the rest of
+// the browse cursor, while ledstring.cpp only turns that decision into
+// pixels.
+//
+// browseAnchorIndex is the console the LED blob departs from -- the last
+// one the browse snapped onto. It is deliberately not the same thing as
+// browsedConsoleIndex (which reports the console being *approached*) or
+// currentConsoleIndex (the live one). -1 means the browse has not run
+// since boot, so the first detent seeds it.
+static retroroom_core::DetentGate browseGate;
+static int browseAnchorIndex = -1;
+
+namespace {
+// The browse "feel" is configured once from src/configuration.h, the
+// same way src/ledstring.cpp assembles its effect config. See
+// src/configuration.h for what each value trades off.
+retroroom_core::DetentGateConfig browseGateConfig() {
+	return retroroom_core::DetentGateConfig(
+		LEDSTRING_DETENTS_PER_STEP, LEDSTRING_FAST_DETENTS_PER_STEP,
+		LEDSTRING_FAST_SPIN_WINDOW_MS);
+}
+}  // namespace
+
 // checkPosition() ISR for the rotary encoder. Defined unconditionally now
 // that ESP8266 and AVR are gone.
 void checkPosition() {
@@ -48,6 +75,12 @@ void checkPosition() {
 }
 
 void controls_init() {
+	// Configure the browse gate before the encoder can fire. configure()
+	// also resets any accumulated state, so doing it here rather than
+	// lazily keeps the first detent after boot honest.
+	browseGate.configure(browseGateConfig());
+	browseAnchorIndex = -1;
+
 	encoder = new RotaryEncoder(ROTARY_PIN_IN2, ROTARY_PIN_IN1,
 								RotaryEncoder::LatchMode::TWO03);
 	attachInterrupt(digitalPinToInterrupt(ROTARY_PIN_IN2), checkPosition,
@@ -141,13 +174,18 @@ void rotarySelectorPressed() {
 // Only the cursor moves. The ring's own pixel counter
 // (currentRingLED in src/lighting.cpp) is a free-running spinner and is
 // intentionally left alone -- see the comment in rotaryEncoderTick().
+//
+// This is the same end-of-browse as a commit, so it routes through
+// controls_browseReset(): the LED string drops its blob/pulse and the
+// detent gate forgets its accumulated progress, not just the cursor.
 void controls_ringFadedOut() {
-	if (browsedConsoleIndex == currentConsoleIndex) {
+	if (browsedConsoleIndex == currentConsoleIndex &&
+		browseAnchorIndex == currentConsoleIndex) {
 		return;
 	}
-	browsedConsoleIndex = currentConsoleIndex;
 	Serial.print("Ring faded; browse cursor reverted to index ");
-	Serial.println(browsedConsoleIndex);
+	Serial.println(currentConsoleIndex);
+	controls_browseReset();
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }
@@ -275,12 +313,75 @@ void rotaryEncoderTick() {
 		// therefore keeps reporting the live console while the operator
 		// spins, and an abandoned spin reverts cleanly.
 		//
-		// Wraps rather than clamping, so the operator can spin freely
+		// A console step is LEDSTRING_DETENTS_PER_STEP detents, not
+		// one, so the LED string can show a blob creeping toward the
+		// next console as they turn and snap when they commit to it.
+		// The gate below owns the threshold arithmetic; see
+		// lib/LedStringPaint for why the position is a continuous
+		// fraction rather than a detent count.
+		//
+		// The anchor is the console the blob currently departs from --
+		// the last one the browse *snapped* onto, which is not
+		// necessarily the selected console. Anchor -1 means the browse
+		// has never run since boot; seed it from the live selection the
+		// first time the knob turns, so the first blob travels from
+		// where the strip is actually painted.
+		if (browseAnchorIndex < 0) {
+			browseAnchorIndex = currentConsoleIndex;
+		}
+
+		const retroroom_core::DetentEvent ev =
+			browseGate.onDetent(direction, millis());
+
+		// The console the operator is heading toward, and the one the
+		// blob is departing. targetDirection is the sign of the
+		// *position*, not of the detent, so turning back mid-transit
+		// keeps aiming at the same side while the blob walks back.
+		const int targetIndex = retroroom_core::wraparoundNext(
+			browseAnchorIndex, num_consoles, ev.targetDirection);
+
+		if (!ev.advanced) {
+			// Still travelling. Move the blob and leave the cursor where
+			// it is -- the console being approached is what the cursor
+			// reports, but the anchor (and therefore what a commit
+			// would mean) has not moved yet.
+			browsedConsoleIndex = targetIndex;
+#if defined(HAS_LEDS)
+			ledstring_browseProgress(browseAnchorIndex, targetIndex,
+									 ev.fractionPermille);
+#endif
+			Serial.print("Browse ");
+			Serial.print(ev.detents);
+			Serial.print("/");
+			Serial.print(ev.detentsPerStep);
+			Serial.print(ev.fastMode ? " (fast) -> " : " -> ");
+			Serial.println(consoles[targetIndex].name.c_str());
+			return;
+		}
+
+		// The step completed: the blob lands and the cursor follows.
+		// Browses rather than clamping, so the operator can spin freely
 		// through the whole list in either direction. Same policy
 		// advanceConsole()/rewindConsole() already use.
-		browsedConsoleIndex =
-			retroroom_core::wraparoundNext(browsedConsoleIndex, num_consoles, direction);
-		Serial.print("Highlight Console: ");
-		Serial.println(BrowsedConsole().name.c_str());
+		browseAnchorIndex = targetIndex;
+		browsedConsoleIndex = targetIndex;
+#if defined(HAS_LEDS)
+		ledstring_browseSnap(targetIndex);
+#endif
+		Serial.print("Browse snapped -> ");
+		Serial.println(consoles[targetIndex].name.c_str());
 	}
+}
+
+void controls_browseReset() {
+	// End the browse and put the strip back. Called from
+	// selectConsole(), so it covers every commit path -- see the
+	// declaration in controls.h for why it lives there rather than at
+	// each caller.
+	browseGate.reset();
+	browsedConsoleIndex = currentConsoleIndex;
+	browseAnchorIndex = currentConsoleIndex;
+#if defined(HAS_LEDS)
+	ledstring_browseClear();
+#endif
 }

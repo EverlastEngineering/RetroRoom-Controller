@@ -17,6 +17,166 @@
 #define RING_HIGHLIGHT_IDLE_MS 5000
 #endif
 
+// ---------------------------------------------------------------------------
+// LED string (GP21) browse + selection feel
+// ---------------------------------------------------------------------------
+//
+// Every number that shapes how the string strip *feels* lives here, so
+// the whole effect can be retuned on the bench without touching
+// src/ledstring.cpp or lib/LedStringPaint. src/ledstring.cpp reads these
+// once at init and builds the corresponding retroroom_core config
+// structs; nothing else hard-codes a timing.
+//
+// The three behaviours these drive, in the order the operator meets
+// them:
+//
+//   1. BROWSE. A console step no longer takes one detent -- it takes
+//      LEDSTRING_DETENTS_PER_STEP of them, with a blob creeping along
+//      the strip toward the next console as they accumulate. The final
+//      detent snaps the cursor and starts the preview pulse. Spin fast
+//      and the requirement drops to LEDSTRING_FAST_DETENTS_PER_STEP.
+//
+//   2. PREVIEW. The console about to be selected pulses in its
+//      JSON-defined window (ledPosition / ledWidth).
+//
+//   3. SELECT. On commit the whole strip twinkles and collapses in
+//      under a second to just the pixels above the selected console.
+
+// Detents of the rotary knob required to move the browse cursor one
+// console when the operator is turning deliberately.
+#ifndef LEDSTRING_DETENTS_PER_STEP
+#define LEDSTRING_DETENTS_PER_STEP 5
+#endif
+
+// Detents required once they are spinning. Clamped to
+// LEDSTRING_DETENTS_PER_STEP at init if set higher.
+#ifndef LEDSTRING_FAST_DETENTS_PER_STEP
+#define LEDSTRING_FAST_DETENTS_PER_STEP 2
+#endif
+
+// A detent arriving within this many ms of the previous one marks the
+// spin as fast. 0 disables the escalation. Note this measures the gap
+// between detents, not the length of the whole browse, so it has to be
+// comfortably longer than the gap between detents of a *deliberate*
+// turn or nothing would ever register as deliberate.
+#ifndef LEDSTRING_FAST_SPIN_WINDOW_MS
+#define LEDSTRING_FAST_SPIN_WINDOW_MS 1000
+#endif
+
+// Width in pixels of the travelling blob. Wider reads as more mass
+// moving; 1-2 reads as a cursor. The blob clamps into the strip, so a
+// value larger than the strip is truncated rather than wrapping.
+#ifndef LEDSTRING_BLOB_WIDTH
+#define LEDSTRING_BLOB_WIDTH 3
+#endif
+
+// How long one cycle of the preview pulse takes. Shorter reads as a
+// heartbeat, longer as a slow breath. The glow follows a parabola over
+// the cycle, so it peaks mid-cycle and falls away at both ends.
+#ifndef LEDSTRING_PREVIEW_PULSE_MS
+#define LEDSTRING_PREVIEW_PULSE_MS 1100
+#endif
+
+// Brightness of the preview pulse at its dimmest and brightest, as a
+// percentage of LEDSTRING_COLOR_*. The dim end should stay clearly
+// non-zero or the pulse strobes rather than breathes.
+#ifndef LEDSTRING_PREVIEW_PULSE_MIN_PCT
+#define LEDSTRING_PREVIEW_PULSE_MIN_PCT 30
+#endif
+#ifndef LEDSTRING_PREVIEW_PULSE_MAX_PCT
+#define LEDSTRING_PREVIEW_PULSE_MAX_PCT 100
+#endif
+
+// Total length of the selection effect. The requirement is that it
+// finishes in under a second; the per-pixel stagger is subtracted from
+// the ramp rather than added to the total, so raising it cannot push
+// the effect past this budget.
+#ifndef LEDSTRING_SELECT_EFFECT_MS
+#define LEDSTRING_SELECT_EFFECT_MS 900
+#endif
+
+// Portion of the selection effect spent twinkling the whole strip
+// before it starts collapsing. Clamped to LEDSTRING_SELECT_EFFECT_MS.
+#ifndef LEDSTRING_SELECT_TWINKLE_MS
+#define LEDSTRING_SELECT_TWINKLE_MS 350
+#endif
+
+// Per-pixel delay on the collapse ramp, so the strip settles as a
+// ripple rather than snapping in one frame. The cost is taken out of
+// the ramp length, so the total stays inside LEDSTRING_SELECT_EFFECT_MS.
+#ifndef LEDSTRING_SELECT_STAGGER_MS
+#define LEDSTRING_SELECT_STAGGER_MS 6
+#endif
+
+// Dimmest and brightest samples of the twinkle, as a percentage of
+// LEDSTRING_COLOR_*. The twinkle deliberately dips near zero so the
+// sparkle has contrast.
+#ifndef LEDSTRING_SELECT_TWINKLE_MIN_PCT
+#define LEDSTRING_SELECT_TWINKLE_MIN_PCT 10
+#endif
+#ifndef LEDSTRING_SELECT_TWINKLE_MAX_PCT
+#define LEDSTRING_SELECT_TWINKLE_MAX_PCT 100
+#endif
+
+// What the two ends of the strip are painted with once everything
+// settles:
+//
+//   ABOVE -- the pixels above the selected console, dimly lit so the
+//            stack reads as filled down to the selection.
+//   SELF  -- the selected console's own window, at full. 0 excludes
+//            it and leaves only the strictly-above prefix.
+#ifndef LEDSTRING_ABOVE_PCT
+#define LEDSTRING_ABOVE_PCT 22
+#endif
+#ifndef LEDSTRING_SELF_PCT
+#define LEDSTRING_SELF_PCT 100
+#endif
+
+// Set to 0 to light only the pixels strictly above the selected
+// console's window. Defaults to 1, which includes the selected console
+// itself: turning the thing you just chose off reads as a glitch.
+// See computeKeepEnd() in lib/LedStringPaint for the two readings.
+#ifndef LEDSTRING_KEEP_INCLUDES_SELECTED
+#define LEDSTRING_KEEP_INCLUDES_SELECTED 1
+#endif
+
+// Base color of the strip. Everything is this hue at a percentage of
+// its intensity, which keeps the cabinet visually coherent and means
+// retuning brightness never means re-picking a color. Dim warm white
+// reads as soft beige-on-black in person without blowing out a dark
+// room; the values are deliberately conservative so a misconfiguration
+// can't glare the operator.
+#ifndef LEDSTRING_COLOR_R
+#define LEDSTRING_COLOR_R 48
+#endif
+#ifndef LEDSTRING_COLOR_G
+#define LEDSTRING_COLOR_G 36
+#endif
+#ifndef LEDSTRING_COLOR_B
+#define LEDSTRING_COLOR_B 24
+#endif
+
+// Brightness percentages for the browse blob and for the two console
+// windows it travels between. The windows are dim so the blob is
+// unmistakably the brightest thing on the strip while it moves.
+#ifndef LEDSTRING_BLOB_PCT
+#define LEDSTRING_BLOB_PCT 100
+#endif
+#ifndef LEDSTRING_BROWSE_FROM_PCT
+#define LEDSTRING_BROWSE_FROM_PCT 25
+#endif
+#ifndef LEDSTRING_BROWSE_TO_PCT
+#define LEDSTRING_BROWSE_TO_PCT 45
+#endif
+
+// How often an in-flight frame is pushed to the wire while an
+// animation is running. Above ~20 ms a WS2812B strip reads as stepped
+// rather than smooth; below it wastes PIO time next to the CYW43.
+#ifndef LEDSTRING_FRAME_INTERVAL_MS
+#define LEDSTRING_FRAME_INTERVAL_MS 16
+#endif
+
+
 // ESP8266 (NodeMCU v2) and AVR boards were dropped on session/merge-pico-json.
 // Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
 // are supported. The ESP-only `#define MANUAL_OE_PIN` is intentionally gone;

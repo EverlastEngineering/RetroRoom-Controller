@@ -50,6 +50,16 @@ extern void controls_touchTick();
 // Called when the ring's fade completes. Snaps the browsed cursor back
 // to the selected console.
 extern void controls_ringFadedOut();
+// End the browse: drop the accumulated detents, re-anchor the blob on
+// the selected console, and return the LED string to its resting paint.
+//
+// Called from selectConsole() in src/consoles.cpp, which is the single
+// commit point for every selection path (rotary click, NEXT/PREV
+// buttons, /next, /prev, WebSocket). Doing it there rather than at each
+// caller means a browse can never be left half-finished -- a leftover
+// detent count would make the operator's next turn start a step in the
+// wrong place.
+extern void controls_browseReset();
 extern int currentConsoleIndex;
 
 void rotarySelectorPressed();

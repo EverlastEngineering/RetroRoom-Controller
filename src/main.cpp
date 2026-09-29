@@ -164,6 +164,11 @@ void loop() {
 	if (lighting_loop()) {
 		controls_ringFadedOut();
 	}
+	// Advance whatever the GP21 string is animating -- the preview pulse
+	// while a browse is snapped on a console, the twinkle-then-settle
+	// after a commit. Returns immediately when the strip is resting, so
+	// this costs one comparison in the common case.
+	ledstring_loop();
 #endif
 
 	// Pump the LCD driver -- welcome -> live transition, scrolling,
