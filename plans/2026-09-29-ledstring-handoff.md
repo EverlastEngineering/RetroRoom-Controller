@@ -196,6 +196,25 @@ dark on the fourth of five detents.
 `LedRange activeWindow;` holds whatever was on the stack. This showed
 up as a frame drawing a proposal over a random span of the strip.
 
+### A mode in `ledstring_loop()` can become time-dependent without anyone noticing
+
+`ledstring_loop()` decides what to repaint per mode. `FILLING` was
+documented as a deliberate no-op, because the fill's *length* is the
+detent gate's position and only changes on a click.
+
+It stopped being true when the candidate behind the fill started
+pulsing — that level is a function of `elapsedMs` — but the comment was
+never revisited, so the pulse froze at whatever level the last click
+landed on. Symptom: the console stops breathing the moment you touch
+the knob and starts again when you stop.
+
+There is no host test for this; the loop is in the shell. What *is*
+testable, and is the thing to check, is the premise: does anything in
+this frame move with time? `test_a_fill_frame_depends_on_the_clock`
+asserts that exactly one thing does. If a mode's frame ever gains
+another clock-driven element, that test is where it shows up — and if
+the answer ever becomes "nothing", the no-op becomes correct again.
+
 ### `Console.shelf` has no default member initialiser — on purpose
 
 Under C++11 a default member initialiser stops `Console` being an

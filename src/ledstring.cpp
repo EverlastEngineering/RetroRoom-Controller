@@ -500,9 +500,21 @@ void ledstring_loop() {
 
 	switch (mode) {
 	case StripMode::FILLING:
-		// Deliberately a no-op. The fill's length is the detent gate's
-		// position and only changes when a detent arrives, which
-		// repaints immediately -- there is nothing to advance here.
+		// Not a no-op any more, and the comment that used to say so was
+		// the bug. The fill's *length* is the detent gate's position and
+		// only changes when a detent arrives -- but the candidate
+		// sitting behind it is pulsing, and that is a function of the
+		// clock. Painting only on a detent froze the pulse at whatever
+		// level the last click happened to land on, so the console
+		// stopped breathing the instant the operator touched the knob
+		// and went back to breathing when they stopped.
+		//
+		// This is the second time a mode here has been justified as
+		// "nothing to advance" and been wrong: the frame stopped being
+		// static before the loop was told. The pulse is computed from
+		// elapsedMs, so the test is whether the frame is time-dependent
+		// at all, and it now is.
+		paintFilling();
 		break;
 	case StripMode::TRAVEL: {
 		// The one effect that runs on a clock rather than on the knob.

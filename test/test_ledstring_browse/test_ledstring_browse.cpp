@@ -1616,6 +1616,50 @@ static void test_only_the_active_console_and_the_candidate_are_lit(void) {
 		"the proposal never replaces the console being played as the lit one");
 }
 
+static void test_a_fill_frame_depends_on_the_clock(void) {
+	// The premise behind repainting a fill on the frame clock instead of
+	// only on a detent.
+	//
+	// The fill's *length* is the detent gate's position, and that really
+	// is static between clicks -- which is why the loop used to treat
+	// FILLING as a no-op. But the candidate behind it is pulsing, and
+	// its level is a function of elapsedMs. A loop that only repaints on
+	// a detent therefore freezes the pulse at whatever level the last
+	// click happened to land on, and the console stops breathing the
+	// moment the operator touches the knob.
+	//
+	// So the test is not "does the fill move", it is "does anything in
+	// this frame move with time" -- and exactly one thing does.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.from = kNes;
+	f.activeWindow = kSms;
+	f.candidateWindow = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	f.elapsedMs = 0;
+	int dim[64];
+	frameLevels(f, dim);
+
+	// Half a pulse period later: the other end of the breath. The
+	// configured pulse is 30..100 over 1100ms, so 0 is the dim end and
+	// 550 the bright end.
+	f.elapsedMs = 550;
+	int bright[64];
+	frameLevels(f, bright);
+	TEST_ASSERT_TRUE_MESSAGE(dim[1] != bright[1],
+		"the candidate must breathe between two frames of the same fill");
+	TEST_ASSERT_EQUAL(computePulseScale(0, 1100, 30, 100), dim[1]);
+	TEST_ASSERT_EQUAL(computePulseScale(550, 1100, 30, 100), bright[1]);
+	// Nothing else in the frame moves with time, which is what keeps the
+	// detent-driven length working.
+	for (int p = 0; p < 64; ++p) {
+		if (p == 1) {
+			continue;
+		}
+		TEST_ASSERT_TRUE_MESSAGE(dim[p] == bright[p],
+			"only the candidate may change with the clock");
+	}
+}
+
 static void test_a_fill_with_no_candidate_does_not_pulse(void) {
 	// Before the first snap the anchor is the console already selected,
 	// and that one is shown as selected, not offered as a proposal. A
@@ -1706,6 +1750,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_resolve_pixel_clamps_rather_than_wrapping);
 	RUN_TEST(test_resolve_pixel_gives_black_to_an_unlit_pixel);
 	RUN_TEST(test_only_the_active_console_and_the_candidate_are_lit);
+	RUN_TEST(test_a_fill_frame_depends_on_the_clock);
 	RUN_TEST(test_a_fill_with_no_candidate_does_not_pulse);
 	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
 	RUN_TEST(test_fill_never_lights_the_target_window);
