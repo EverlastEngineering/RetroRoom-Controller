@@ -70,6 +70,26 @@ static int browseAnchorIndex = -1;
 static uint32_t settleLockoutUntilMs = 0;
 
 namespace {
+// The ring's free-running spinner: the only thing that answers a turn
+// the browse is not going to act on.
+//
+// The operator does not need to know the browse is being helped along.
+// A knob that visibly turns while the strip refuses to follow reads as
+// a dropped input or a broken encoder, which is a worse outcome than
+// the one the settle lockout exists to prevent. So the ring moves on
+// every turn, and only the browse ignores some of them.
+//
+// Held in a helper because it now has two call sites -- one here for
+// the locked-out case, one below for the ordinary one -- and two copies
+// of "which way is this turning" is one more thing to keep in step.
+void spinRingFor(int direction) {
+	if (direction == -1) {
+		ringLEDPrevious();
+	} else {
+		ringLEDNext();
+	}
+}
+
 // The browse "feel" is configured once from src/configuration.h, the
 // same way src/ledstring.cpp assembles its effect config. See
 // src/configuration.h for what each value trades off.
@@ -340,14 +360,15 @@ void rotaryEncoderTick() {
 		// never reaches it. Leaving the gate untouched also means the
 		// lockout cannot perturb the fast-spin clock, which measures
 		// gaps between detents.
+		//
+		// The ring still moves. A turn the operator is not allowed to
+		// act on is still a turn they made, and the ring is the one
+		// indicator that reports turns without committing to them.
 		const uint32_t nowMs = millis();
 		if (LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS > 0 &&
 			settleLockoutUntilMs != 0 &&
 			(int32_t)(nowMs - settleLockoutUntilMs) < 0) {
-			// Ring included. The ring's spinner answers "which way am I
-			// turning", and a turn the operator is not allowed to act
-			// on should not be announced either -- the freeze at the
-			// ends of the list is already justified that way.
+			spinRingFor(direction);
 			return;
 		}
 
@@ -407,12 +428,10 @@ void rotaryEncoderTick() {
 		// position counter and is deliberately independent of both the
 		// browsed and the selected console -- it answers "which way am
 		// I turning", not "which console am I on". Moved *after* the
-		// freeze check so a frozen knob does not spin the ring either.
-		if (direction == -1) {
-			ringLEDPrevious();
-		} else {
-			ringLEDNext();
-		}
+		// freeze check so a frozen knob does not spin the ring either:
+		// at the end of the list the strip stops, and a ring still
+		// spinning would say the list continues.
+		spinRingFor(direction);
 
 		// The console the operator is heading toward, and the one the
 		// blob is departing. targetDirection is the sign of the
