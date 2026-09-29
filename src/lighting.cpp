@@ -6,40 +6,77 @@ CRGB leds[NUM_RING_LEDS];
 #define LED_BRIGHTNESS 150
 
 int currentRingLED = 0;
-bool ringLit = false;
-bool ringFading = false;
 
-void lightRing(bool lit) {
-	if (lit && (ringFading || !ringLit)) {
-		ringLit = true;
-		ringFading = false;
-		lightSingle(currentRingLED);
-		FastLED.show();
+// Ring state. lightSingle() is the only path that turns the ring on,
+// and it always arms a deadline to turn it off, so there is no
+// reachable state in which the ring is lit with nothing scheduled to
+// darken it. That invariant is what fixes the ring sticking on when a
+// rotary turn repainted it mid-fade.
+static bool ringLit = false;
+static bool ringFading = false;
+static bool ringProximityHold = false;
+// Set by an explicit request to go dark (a select, or the hand leaving
+// the pad) as opposed to the idle deadline expiring. Kept separate from
+// the deadline so that RING_HIGHLIGHT_IDLE_MS = 0 disables the *timeout*
+// without also disabling the explicit paths.
+static bool ringFadeRequested = false;
+static uint32_t ringHoldUntilMs = 0;
+
+// One fadeToBlackBy step. The caller must keep calling until
+// ringFading clears itself. Returns true on the tick it completes.
+static bool fadeStep() {
+	fadeToBlackBy(leds, NUM_RING_LEDS, 1);
+	ringFading = true;
+	FastLED.show();
+	if (leds[currentRingLED].r + leds[currentRingLED].b + leds[currentRingLED].g == 0) {
+		ringFading = ringLit = false;
+		return true;
 	}
-	else if (!lit && ringLit) {
-		fadeToBlackBy(leds,NUM_RING_LEDS,1);
-		ringFading = true;
-		FastLED.show();
-		if (leds[currentRingLED].r + leds[currentRingLED].b + leds[currentRingLED].g == 0) {
-			ringFading = ringLit = false;
-			// Serial.println("Fade To Black Complete");
-		}
+	return false;
+}
+
+// See lighting.h for the contract. The proximity hold is checked first
+// because it overrides the idle timeout: a hand at the knob means the
+// operator is still engaged, so the ring stays on and the deadline is
+// pushed out rather than allowed to fire.
+bool lighting_loop() {
+	if (ringFading) {
+		return fadeStep();
+	}
+	if (ringProximityHold) {
+		ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
+		return false;
+	}
+	const bool deadlineExpired =
+		RING_HIGHLIGHT_IDLE_MS != 0 && ringLit &&
+		(int32_t)(millis() - ringHoldUntilMs) >= 0;
+	if (ringFadeRequested || deadlineExpired) {
+		ringFadeRequested = false;
+		return fadeStep();
+	}
+	return false;
+}
+
+void lightRingSetProximityHold(bool held) {
+	if (held) {
+		ringProximityHold = true;
+		// A new approach supersedes any fade the departure just started.
+		ringFadeRequested = false;
+		lightSingle(currentRingLED);
+	} else {
+		ringProximityHold = false;
+		// Hand has left, so the interaction is over. Fade now rather
+		// than making the operator wait out the full idle timeout after
+		// they have already taken their hand away.
+		ringFadeRequested = true;
 	}
 }
 
-// Drives the lightRing(false) fade to completion. lightRing() takes a
-// single fadeToBlackBy step per call and re-arms ringFading, so whoever
-// asked for the ring to go dark has to keep asking until ringFading
-// clears itself.
-//
-// lightSingle() / ringLEDNext() / ringLEDPrevious() do not consult
-// ringFading -- they repaint unconditionally -- so turning the encoder
-// during a fade simply overwrites it, which is the wanted behaviour:
-// the operator is actively using the control.
-void lighting_loop() {
-	if (ringFading) {
-		lightRing(false);
-	}
+void lightRingForceOff() {
+	// Cancel any hold first: an explicit select outranks a hand that may
+	// still be resting on the pad.
+	ringProximityHold = false;
+	ringFadeRequested = true;
 }
 
 void lighting_init() {
@@ -143,11 +180,29 @@ void lightCycleTick() {
 void lightSingle (int led) {
 	// Serial.print("Lit pixel #");
 	// Serial.println(currentRingLED);
+	// The ring has fewer pixels than the console list may have entries
+	// (NUM_RING_LEDS vs HowManyConsoles()), and this is called with a
+	// console index, so clamp rather than write past the end of leds[].
+	if (led < 0) {
+		led = 0;
+	}
+	if (led > NUM_RING_LEDS - 1) {
+		led = NUM_RING_LEDS - 1;
+	}
 	fill_solid(leds, NUM_RING_LEDS, CRGB::DarkBlue);
 	// fill_rainbow(leds,NUM_LEDS,50,32);
 	// fadeLightBy(leds,NUM_LEDS,150);
 	leds[led] = CRGB::White;
 	FastLED.show();
+	// Arm the off-switch here, at the single choke point. Anything that
+	// repaints the ring also schedules its expiry, which is what makes
+	// "lit with no way to go dark" unreachable. A repaint also cancels a
+	// fade that was already under way -- turning the encoder mid-fade is
+	// the operator actively using the control, not a reason to go dark.
+	ringLit = true;
+	ringFading = false;
+	ringFadeRequested = false;
+	ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
 }
 
 void ringLEDNext() {

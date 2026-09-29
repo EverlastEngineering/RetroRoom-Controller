@@ -155,11 +155,15 @@ void loop() {
 	// No-op when `flash` is false; 1 Hz toggle while it's true.
 	flashLedTick();
 
-	// Finish any ring fade that controls_touchTick() started when the
-	// operator's hand left the proximity pad. No-op when no fade is in
-	// flight. No-op when HAS_LEDS is undefined.
+	// Finish any ring fade that a rotary turn or the proximity pad
+	// started, and decide when one should start. The tick that completes
+	// a fade is the cue to snap the browsed cursor back to the selected
+	// console, so an abandoned spin does not leave it stranded.
+	// No-op when HAS_LEDS is undefined.
 #if defined(HAS_LEDS)
-	lighting_loop();
+	if (lighting_loop()) {
+		controls_ringFadedOut();
+	}
 #endif
 
 	// Pump the LCD driver -- welcome -> live transition, scrolling,

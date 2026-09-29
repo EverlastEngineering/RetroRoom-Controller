@@ -4,6 +4,19 @@
 // lighting
 #define NUM_RING_LEDS 8
 
+// How long the ring stays lit after a rotary turn before it fades out
+// and the browsed cursor reverts to the selected console. Suppressed
+// entirely while the capacitive proximity pad reports a hand at the
+// knob. 0 disables the timeout (the ring then only goes dark on an
+// explicit select).
+//
+// A #define for now. Several tunables are expected to move into
+// /consoles.json later, and this is one of them; the knob is read from
+// exactly one place so that move should not need rework.
+#ifndef RING_HIGHLIGHT_IDLE_MS
+#define RING_HIGHLIGHT_IDLE_MS 5000
+#endif
+
 // ESP8266 (NodeMCU v2) and AVR boards were dropped on session/merge-pico-json.
 // Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
 // are supported. The ESP-only `#define MANUAL_OE_PIN` is intentionally gone;

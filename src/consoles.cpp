@@ -51,6 +51,13 @@ static const char CONFIG_JSON[] PROGMEM = R"({
 })";
 
 int currentConsoleIndex = 0;
+// The console the operator is *looking at*, which is not the same as
+// currentConsoleIndex until they commit with the rotary click. Moved by
+// rotaryEncoderTick() on each detent; reverted to currentConsoleIndex
+// when the ring gives up. Kept in lockstep with currentConsoleIndex
+// whenever the selection changes by any other route (next/prev buttons,
+// /next, /prev, the WS commands, the post-boot restore).
+int browsedConsoleIndex = 0;
 
 // Debounced LittleFS save state. Each commit through selectConsole()
 // stamps pendingSaveDueMs = millis() + kSaveQuietMs and remembers the
@@ -92,6 +99,10 @@ const Console& CurrentConsole() {
 	return consoles[currentConsoleIndex];
 }
 
+const Console& BrowsedConsole() {
+	return consoles[browsedConsoleIndex];
+}
+
 void restoreLastSelectedConsole() {
 	// The console list has to be populated before this is worth
 	// calling: the stored value is an index into it.
@@ -118,6 +129,10 @@ void restoreLastSelectedConsole() {
 		// CurrentConsole() at the startup->welcome handover -- so the
 		// console is booted into rather than selected after the fact.
 		currentConsoleIndex = clamped;
+		// The browsed cursor starts wherever the selection did, so a
+		// detent immediately after boot browses relative to the live
+		// console rather than to console 0.
+		browsedConsoleIndex = clamped;
 	} else {
 		// No file, no filesystem, or a mount failure. The cursor stays
 		// where setup() left it, but the latch below is still driven:
@@ -270,6 +285,20 @@ void selectConsole(const Console& c) {
 	// ~kSaveQuietMs of changes to a power loss, not a per-click stall.
 	pendingSaveIndex = currentConsoleIndex;
 	pendingSaveDueMs = millis() + kSaveQuietMs;
+
+	// A commit ends the interaction, so the ring goes dark rather than
+	// holding for the rest of the idle timeout. The rotary-click path
+	// additionally painted the ring on its way in (ringLEDNext /
+	// ringLEDPrevious); this is the matching off-switch, and it is why
+	// spinning the knob and then clicking settles dark.
+	//
+	// Placed last so that everything above -- including the LED string
+	// paint, which is a different strip and is NOT affected -- has run.
+	// The twinkle that replaces the string's static lighting when this
+	// lands should hook in around here.
+#if defined(HAS_LEDS)
+	lightRingForceOff();
+#endif
 }
 
 void advanceConsole() {
@@ -283,6 +312,9 @@ void advanceConsole() {
 		return;
 	}
 	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, +1);
+	// A commit moves the browsed cursor with it, so the next detent
+	// browses from the console that is now live.
+	browsedConsoleIndex = currentConsoleIndex;
 	// Stamp the selection time at-the-moment-of-decision (after
 	// wraparoundNext but before any side effects / WS broadcast) so the
 	// e2e harness can read `selectedAtUptimeMs` from /state.json and
@@ -291,11 +323,6 @@ void advanceConsole() {
 	Serial.print("Button: advance -> index ");
 	Serial.println(currentConsoleIndex);
 	const Console& c = CurrentConsole();
-	// Paint the new selection on the LED ring so the operator gets visual
-	// confirmation on the perfboard. lightSingle writes one bright pixel
-	// at the index (the rest dark blue) and is harmless if no ring is
-	// wired (e.g. pico_yd with no external LEDs).
-	lightSingle(currentConsoleIndex);
 	selectConsole(c);
 #if defined(HAS_WIFI)
 	// Mirror the change to any connected web UI over WebSocket so the
@@ -324,6 +351,8 @@ void rewindConsole() {
 		return;
 	}
 	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, -1);
+	// Same cursor sync as advanceConsole(); see the comment there.
+	browsedConsoleIndex = currentConsoleIndex;
 	// Stamp the selection time at-the-moment-of-decision (after
 	// wraparoundNext but before any side effects / WS broadcast) -- same
 	// contract as advanceConsole(). See comment there.
@@ -331,7 +360,6 @@ void rewindConsole() {
 	Serial.print("Button: rewind -> index ");
 	Serial.println(currentConsoleIndex);
 	const Console& c = CurrentConsole();
-	lightSingle(currentConsoleIndex);
 	selectConsole(c);
 #if defined(HAS_WIFI)
 	{

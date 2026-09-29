@@ -123,7 +123,31 @@ void rotarySelectorPressed() {
 	// it was a method on the legacy Console class. The legacy class has been
 	// removed (now an alias for retroroom_core::Console from lib/ConsoleConfig),
 	// and the core type is pure -- no I/O, no Serial, no selectStack.
+	//
+	// The commit point for a rotary browse: whatever the operator spun
+	// to becomes the selection, and only now. Everything downstream of
+	// currentConsoleIndex follows from this assignment.
+	if (HowManyConsoles() > 0) {
+		currentConsoleIndex = browsedConsoleIndex;
+	}
 	selectConsole(CurrentConsole());
+}
+
+// The ring gave up -- idle timeout expired, or the hand left the
+// proximity pad. Snap the browsed cursor back to the selected console so
+// the next detent browses relative to what is actually live, rather than
+// being stranded wherever an abandoned spin happened to land.
+//
+// Only the cursor moves. The ring's own pixel counter
+// (currentRingLED in src/lighting.cpp) is a free-running spinner and is
+// intentionally left alone -- see the comment in rotaryEncoderTick().
+void controls_ringFadedOut() {
+	if (browsedConsoleIndex == currentConsoleIndex) {
+		return;
+	}
+	browsedConsoleIndex = currentConsoleIndex;
+	Serial.print("Ring faded; browse cursor reverted to index ");
+	Serial.println(browsedConsoleIndex);
 }
 
 void sequenceElapsed() { Serial.println("Double click"); }
@@ -157,7 +181,7 @@ void controls_touchTick() {
 	Serial.print("Proximity ");
 	Serial.println(near ? "near -- ring on" : "clear -- ring off");
 #if defined(HAS_LEDS)
-	lightRing(near);
+	lightRingSetProximityHold(near);
 #endif
 }
 
@@ -203,12 +227,6 @@ void touchReleaseDetected() {
 
 
 void rotaryEncoderTick() {
-	// Note: the touch sensor is now polled from loop() via touchSensor.update()
-	// (which fires onPressed / wasReleased handlers correctly under EasyButton's
-	// debounce). The previous "isPressed() ? touchDetected() : touchReleaseDetected()"
-	// poll here caused touchDetected() to fire on every loop iteration while the
-	// USR button on the YD-RP2040 was held, which painted a white pixel via
-	// lightSingle() and overrode the smoke-test WS2812 cycle. Removing that poll.
 	static int pos = 0;
 
 	encoder->tick(); // just call tick() to check the state.
@@ -232,22 +250,37 @@ void rotaryEncoderTick() {
 		// Serial.print(" num_consoles:");
 		// Serial.println(num_consoles);
 
+		if (direction != -1 && direction != 1) {
+			return;
+		}
+
+		// Ring pixel only. The free-running spinner is the ring's own
+		// position counter and is deliberately independent of both the
+		// browsed and the selected console -- it answers "which way am
+		// I turning", not "which console am I on".
 		if (direction == -1) {
 			ringLEDPrevious();
-			if (currentConsoleIndex == 0) {
-				return;
-			}
-			currentConsoleIndex--;
-		} else if (direction == 1) {
+		} else {
 			ringLEDNext();
-			if (currentConsoleIndex == (num_consoles - 1)) {
-				return;
-			}
-			currentConsoleIndex++;
 		}
-		// Serial.print(" currentConsoleIndex:");
-		// Serial.println(currentConsoleIndex);
+
+		if (num_consoles <= 0) {
+			return;
+		}
+
+		// Browse only -- this deliberately does NOT touch
+		// currentConsoleIndex. Turning the knob previews a console; the
+		// rotary click is what commits it. Anything reading the
+		// selection (the strip, the LCD, /state.json, the WS broadcast)
+		// therefore keeps reporting the live console while the operator
+		// spins, and an abandoned spin reverts cleanly.
+		//
+		// Wraps rather than clamping, so the operator can spin freely
+		// through the whole list in either direction. Same policy
+		// advanceConsole()/rewindConsole() already use.
+		browsedConsoleIndex =
+			retroroom_core::wraparoundNext(browsedConsoleIndex, num_consoles, direction);
 		Serial.print("Highlight Console: ");
-		Serial.println(CurrentConsole().name.c_str());
+		Serial.println(BrowsedConsole().name.c_str());
 	}
 }

@@ -44,9 +44,12 @@ extern volatile bool hasPrevConsoleInterruptFired;
 
 extern void controls_init();
 extern void rotaryEncoderTick();
-// Proximity tick for touchSensor. Drains the deferred ISR flag and
-// lights / fades the ring on the approach and departure edges.
+// Proximity tick for touchSensor. Reads it and drives the ring's
+// proximity hold off the approach and departure edges.
 extern void controls_touchTick();
+// Called when the ring's fade completes. Snaps the browsed cursor back
+// to the selected console.
+extern void controls_ringFadedOut();
 extern int currentConsoleIndex;
 
 void rotarySelectorPressed();

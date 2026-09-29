@@ -26,16 +26,20 @@
 
 #if defined(HAS_LEDS)
 extern void lighting_init();
-// Advances the lightRing(false) fade toward completion. lightRing()
-// only steps the fade one increment per call, so the caller that asked
-// for the ring to go dark has to keep asking; this does it from loop().
-extern void lighting_loop();
+// Advances the ring fade, and decides when the fade starts. Returns
+// true on the single tick where a fade completed, which is the cue for
+// the browsed cursor to revert to the selected console.
+extern bool lighting_loop();
+// Holds the ring lit while a hand is at the knob (the capacitive
+// proximity pad), suppressing the idle timeout. Releasing the hold also
+// expires the timeout immediately rather than waiting it out.
+extern void lightRingSetProximityHold(bool held);
+// Starts the fade now, regardless of the idle timeout. Used on select,
+// where the interaction is over and the ring should not linger.
+extern void lightRingForceOff();
 extern void lightSingle(int led);
 extern void ringLEDNext();
 extern void ringLEDPrevious();
-// lightRing(true) snaps the ring on. lightRing(false) starts a fade to
-// black that finishes only once lighting_loop() has pumped it enough.
-extern void lightRing(bool lit);
 // Continuous smoke-test cycle (red -> green -> blue). Used by loop() on
 // the pico_yd env to exercise the FastLED PIO driver after lighting_init().
 // Returns immediately if the cycle period hasn't elapsed.

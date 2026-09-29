@@ -7,6 +7,19 @@
 #include <vector>
 
 extern std::vector<Console> consoles;
+// The *selected* console. Written only by a commit: the rotary click
+// (which moves it to browsedConsoleIndex first), selectConsole(),
+// advanceConsole(), rewindConsole() and the post-boot restore. Every
+// downstream consumer -- ledstring_setConsole, display_show_console,
+// GET /state.json, the console: WS broadcast, the LittleFS save -- reads
+// this, and so all of them report the selection rather than whatever
+// the operator is currently browsing toward.
+extern int currentConsoleIndex;
+// The console the operator is browsing to with the rotary, distinct from
+// currentConsoleIndex until they commit. Reverts to currentConsoleIndex
+// when the ring's idle timeout expires, so an abandoned spin does not
+// leave the cursor stranded away from the live console.
+extern int browsedConsoleIndex;
 // millis() at the moment we last decided on the current console.
 // RAM-only (zeroed on every boot along with currentConsoleIndex).
 // Exposed so GET /state.json can surface `selectedAtUptimeMs`.
@@ -20,6 +33,7 @@ extern uint32_t lcdBacklightOffAfterMs;
 void addConsole(const Console& console);
 int HowManyConsoles();
 const Console& CurrentConsole();
+const Console& BrowsedConsole();
 
 // Loads the embedded console-configuration JSON via the functional core
 // (lib/ConsoleConfig). The legacy "consoleDefinitions()" name is kept so
