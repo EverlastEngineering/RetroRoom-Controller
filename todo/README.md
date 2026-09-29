@@ -81,7 +81,8 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-*(none — `2026-09-25_led-string-light-control` closed on 2026-09-28, see done/.)*
+- `2026-09-25_led-string-wiring-diagram` — S3 of the old DRAFT: the 6-segment serpentine wiring diagram and the per-segment LED count at 30/60 LED/m. Document only, no code.
+- `2026-09-25_led-string-e2e-readback` — S4 of the old DRAFT: `/leds.json` snapshot endpoint so the browse/selection frames can be asserted from the host. Blocked on deciding whether the endpoint is worth it now the animations are in.
 
 ### deferred/
 - `stackselector-daisy-chain` — only matters if the perfboard has >1 module
@@ -90,6 +91,7 @@ with current ones. Per-file gives:
 - `stackselector-perfboard-pinmap` — confirm GP8/9/10 ARM/CYCLE/ENABLE on the perfboard
 
 ### done/
+- `2b28560` — browse + selection animation on the GP21 string: N detents per console with a travelling blob, a pulsing preview of the target console, fast-spin escalation, and the twinkle-then-settle on commit. Closes S1 of `2026-09-25_led-string-light-shows_DRAFT.md`.
 - `f93927b` — ring highlight lifecycle: `lightSingle()` is the single choke point and always arms an idle deadline, so the ring can no longer be left lit with nothing to turn it off. `lighting_loop()` owns the fade and returns on completion so the browsed cursor reverts. Split `browsedConsoleIndex` from `currentConsoleIndex` so the knob is browse-only and the click commits. Prerequisite for the GP21 twinkle in `2026-09-25_led-string-light-shows_DRAFT.md` S1.
 - `9c1304b` — second-strip LED driver on GP21 (`src/ledstring.{h,cpp}` + `lib/LedStringPaint`); lights `[ledPosition, ledPosition+ledWidth)` from `selectConsole()`. Companion draft `2026-09-25_led-string-light-shows_DRAFT.md` parks the pulled-out sub-items (animation, shows, wiring diagram, e2e readback).
 - `c6005c7` — USR button advances `currentConsoleIndex`

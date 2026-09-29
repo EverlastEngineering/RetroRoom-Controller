@@ -21,11 +21,19 @@ to reach for the remote.
 
 ## What it does
 
-- Rotary encoder to select a console, click or the hardware
-  next/prev buttons to step through them.
+- Rotary encoder to browse the console list, click (or the hardware
+  next/prev buttons) to commit. A console step takes several detents,
+  and the LED strip shows a blob creeping toward the next console as
+  they accumulate; the final detent snaps it onto a pulsing preview of
+  the console a click would select. Spinning fast drops the detent
+  requirement so long runs stay quick.
 - FastLED ring around the encoder showing the current selection.
 - A second LED strip segment per console, driven from the console's
-  declared `ledPosition` / `ledWidth`.
+  declared `ledPosition` / `ledWidth`. Committing twinkles the whole
+  strip and settles it on the pixels above the selected console, so the
+  strip reads as the stack filled down to your choice. Every timing and
+  brightness is a `#define` in [`src/configuration.h`](src/configuration.h)
+  — the feel can be retuned without touching the logic.
 - 16×2 I²C LCD showing the console name and a per-console tagline,
   with a backlight that dims when the box is idle.
 - IR blaster to switch the TV to the matching input.
