@@ -46,9 +46,16 @@ void tearDown(void) {}
 // DetentGate
 // ---------------------------------------------------------------------------
 
-// One millisecond between detents is well inside the 1000 ms fast-spin
-// window, so these tests run in "deliberate" territory until they say
-// otherwise. Slower detents are spelled out per test.
+// The list the gate is browsing in the tests that do not care about
+// the ends of it: long enough that a handful of detents in either
+// direction never reaches an end, so the freeze path is exercised on
+// its own terms further down rather than by accident here.
+static const int kListSize = 64;
+static const int kAnchor = 32;
+
+// Two seconds between detents is well outside any fast-spin window, so
+// these tests run in "deliberate" territory until they say otherwise.
+// Slower detents are spelled out per test.
 static const std::uint32_t kSlowGapMs = 2000;
 
 static void test_gate_needs_five_detents_for_a_deliberate_step(void) {
@@ -56,13 +63,13 @@ static void test_gate_needs_five_detents_for_a_deliberate_step(void) {
 	gate.configure(DetentGateConfig(5, 2, 1000));
 
 	for (int i = 1; i <= 4; ++i) {
-		retroroom_core::DetentEvent ev = gate.onDetent(1, i * kSlowGapMs);
+		retroroom_core::DetentEvent ev = gate.onDetent(1, i * kSlowGapMs, kListSize, kAnchor);
 		TEST_ASSERT_FALSE_MESSAGE(ev.advanced, "advanced before the 5th detent");
 		TEST_ASSERT_EQUAL(i, ev.detents);
 		TEST_ASSERT_FALSE(ev.fastMode);
 		TEST_ASSERT_EQUAL(5, ev.detentsPerStep);
 	}
-	retroroom_core::DetentEvent ev = gate.onDetent(1, 5 * kSlowGapMs);
+	retroroom_core::DetentEvent ev = gate.onDetent(1, 5 * kSlowGapMs, kListSize, kAnchor);
 	TEST_ASSERT_TRUE_MESSAGE(ev.advanced, "5th detent must complete the step");
 	TEST_ASSERT_EQUAL(1, ev.targetDirection);
 	TEST_ASSERT_EQUAL(0, ev.fractionPermille);
@@ -74,13 +81,13 @@ static void test_gate_snaps_back_to_the_anchor_after_advancing(void) {
 	uint32_t t = 0;
 	for (int i = 0; i < 5; ++i) {
 		t += kSlowGapMs;
-		gate.onDetent(1, t);
+		gate.onDetent(1, t, kListSize, kAnchor);
 	}
 	TEST_ASSERT_EQUAL(0, gate.fractionPermille());
 	// The next step starts from scratch, not from where the last one
 	// finished.
 	t += kSlowGapMs;
-	gate.onDetent(1, t);
+	gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(200, gate.fractionPermille());
 }
 
@@ -91,13 +98,13 @@ static void test_gate_escalates_to_two_detents_when_spinning(void) {
 	uint32_t t = 0;
 	// Deliberate first, so the first detent can't self-trigger fast mode.
 	t += kSlowGapMs;
-	retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+	retroroom_core::DetentEvent ev = gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_FALSE(ev.fastMode);
 
 	// Now spin: 20 ms apart, well inside the window.
 	for (int i = 0; i < 4; ++i) {
 		t += 20;
-		ev = gate.onDetent(1, t);
+		ev = gate.onDetent(1, t, kListSize, kAnchor);
 	}
 	TEST_ASSERT_TRUE_MESSAGE(ev.fastMode, "fast mode must engage on a fast detent");
 	TEST_ASSERT_EQUAL(2, ev.detentsPerStep);
@@ -112,12 +119,12 @@ static void test_fast_spin_completes_a_step_in_two_detents(void) {
 	// the position over the line, so this step lands on the second fast
 	// detent at the latest.
 	uint32_t t = kSlowGapMs;
-	gate.onDetent(1, t);
+	gate.onDetent(1, t, kListSize, kAnchor);
 	t += 20;
-	retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+	retroroom_core::DetentEvent ev = gate.onDetent(1, t, kListSize, kAnchor);
 	if (!ev.advanced) {
 		t += 20;
-		ev = gate.onDetent(1, t);
+		ev = gate.onDetent(1, t, kListSize, kAnchor);
 	}
 	TEST_ASSERT_TRUE_MESSAGE(ev.advanced, "fast spin must not need 5 detents");
 }
@@ -135,14 +142,14 @@ static void test_slowing_back_down_returns_to_the_deliberate_cadence(void) {
 
 	uint32_t t = 0;
 	t += 20;
-	gate.onDetent(1, t);
+	gate.onDetent(1, t, kListSize, kAnchor);
 	t += 20;
-	retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+	retroroom_core::DetentEvent ev = gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_TRUE_MESSAGE(ev.fastMode, "a tight gap must read as fast");
 
 	// Now turn deliberately.
 	t += 2000;
-	ev = gate.onDetent(1, t);
+	ev = gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_FALSE_MESSAGE(ev.fastMode,
 		"slowing back down must return to the deliberate threshold");
 	TEST_ASSERT_EQUAL(5, ev.detentsPerStep);
@@ -158,7 +165,7 @@ static void test_zero_window_never_escalates(void) {
 	uint32_t t = 0;
 	for (int i = 0; i < 20; ++i) {
 		t += 5;  // absurdly fast
-		const retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+		const retroroom_core::DetentEvent ev = gate.onDetent(1, t, kListSize, kAnchor);
 		TEST_ASSERT_FALSE(ev.fastMode);
 		TEST_ASSERT_EQUAL(5, ev.detentsPerStep);
 	}
@@ -169,10 +176,10 @@ static void test_zero_window_never_escalates(void) {
 	t = 0;
 	for (int i = 0; i < 4; ++i) {
 		t += 5;
-		TEST_ASSERT_FALSE(slow.onDetent(1, t).advanced);
+		TEST_ASSERT_FALSE(slow.onDetent(1, t, kListSize, kAnchor).advanced);
 	}
 	t += 5;
-	TEST_ASSERT_TRUE(slow.onDetent(1, t).advanced);
+	TEST_ASSERT_TRUE(slow.onDetent(1, t, kListSize, kAnchor).advanced);
 }
 
 static void test_reversing_walks_the_position_back(void) {
@@ -181,7 +188,7 @@ static void test_reversing_walks_the_position_back(void) {
 	uint32_t t = 0;
 	for (int i = 0; i < 3; ++i) {
 		t += kSlowGapMs;
-		gate.onDetent(1, t);
+		gate.onDetent(1, t, kListSize, kAnchor);
 	}
 	const int forward = gate.fractionPermille();
 	TEST_ASSERT_TRUE(forward > 0);
@@ -189,7 +196,7 @@ static void test_reversing_walks_the_position_back(void) {
 	// Turn the knob back. The blob must retreat along the same path
 	// toward the same side, not jump to the other console.
 	t += kSlowGapMs;
-	retroroom_core::DetentEvent ev = gate.onDetent(-1, t);
+	retroroom_core::DetentEvent ev = gate.onDetent(-1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(forward - 200, ev.fractionPermille);
 	TEST_ASSERT_FALSE(ev.advanced);
 	TEST_ASSERT_EQUAL_MESSAGE(1, ev.targetDirection,
@@ -210,28 +217,28 @@ static void test_crossing_the_anchor_flips_the_target_side(void) {
 	retroroom_core::DetentEvent ev;
 
 	t += kSlowGapMs;
-	ev = gate.onDetent(1, t);
+	ev = gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(200, ev.fractionPermille);
 	TEST_ASSERT_EQUAL(1, ev.targetDirection);
 
 	t += kSlowGapMs;
-	ev = gate.onDetent(1, t);
+	ev = gate.onDetent(1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(400, ev.fractionPermille);
 	TEST_ASSERT_EQUAL(1, ev.targetDirection);
 
 	t += kSlowGapMs;
-	ev = gate.onDetent(-1, t);
+	ev = gate.onDetent(-1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(200, ev.fractionPermille);
 	TEST_ASSERT_EQUAL_MESSAGE(1, ev.targetDirection, "still short of the anchor");
 
 	t += kSlowGapMs;
-	ev = gate.onDetent(-1, t);
+	ev = gate.onDetent(-1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(0, ev.fractionPermille);
 	TEST_ASSERT_EQUAL_MESSAGE(-1, ev.targetDirection,
 		"back on the anchor and turning back, so the target flips sides");
 
 	t += kSlowGapMs;
-	ev = gate.onDetent(-1, t);
+	ev = gate.onDetent(-1, t, kListSize, kAnchor);
 	TEST_ASSERT_EQUAL(-200, ev.fractionPermille);
 	TEST_ASSERT_EQUAL(-1, ev.targetDirection);
 }
@@ -243,7 +250,7 @@ static void test_backward_step_completes_and_reports_direction(void) {
 	retroroom_core::DetentEvent ev;
 	for (int i = 0; i < 5; ++i) {
 		t += kSlowGapMs;
-		ev = gate.onDetent(-1, t);
+		ev = gate.onDetent(-1, t, kListSize, kAnchor);
 	}
 	TEST_ASSERT_TRUE(ev.advanced);
 	TEST_ASSERT_EQUAL(-1, ev.targetDirection);
@@ -260,7 +267,7 @@ static void test_thresholds_that_do_not_divide_1000_still_arrive(void) {
 		bool advanced = false;
 		for (int i = 0; i < step; ++i) {
 			t += kSlowGapMs;
-			advanced = gate.onDetent(1, t).advanced;
+			advanced = gate.onDetent(1, t, kListSize, kAnchor).advanced;
 		}
 		TEST_ASSERT_TRUE_MESSAGE(advanced, "step must complete in exactly N detents");
 	}
@@ -281,9 +288,9 @@ static void test_config_is_clamped_to_something_usable(void) {
 static void test_non_detent_direction_is_a_no_op(void) {
 	DetentGate gate;
 	gate.configure(DetentGateConfig(5, 2, 1000));
-	gate.onDetent(1, 1000);
+	gate.onDetent(1, 1000, kListSize, kAnchor);
 	const int before = gate.fractionPermille();
-	retroroom_core::DetentEvent ev = gate.onDetent(0, 1200);
+	retroroom_core::DetentEvent ev = gate.onDetent(0, 1200, kListSize, kAnchor);
 	TEST_ASSERT_FALSE(ev.advanced);
 	TEST_ASSERT_EQUAL(before, ev.fractionPermille);
 }
@@ -858,6 +865,84 @@ static void test_collect_above_is_defensive_about_bad_arguments(void) {
 		"a short buffer must truncate, not overrun");
 }
 
+static void test_gate_freezes_at_the_end_of_the_list(void) {
+	// The cabinet has physical ends. Turning off the end of it reaches
+	// nothing, so the position must not move at all -- if it kept
+	// filling, the operator would watch a full four-detent progression
+	// animate and then nothing happen, which reads as a broken strip
+	// rather than as an end.
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 1000));
+	uint32_t t = 0;
+	for (int i = 0; i < 12; ++i) {
+		t += kSlowGapMs;
+		const retroroom_core::DetentEvent ev =
+			gate.onDetent(1, t, /*listSize=*/3, /*anchorIndex=*/2);
+		TEST_ASSERT_TRUE_MESSAGE(ev.frozen, "every detent off the end must freeze");
+		TEST_ASSERT_FALSE(ev.advanced);
+		TEST_ASSERT_EQUAL(0, ev.fractionPermille);
+		TEST_ASSERT_EQUAL_MESSAGE(0, gate.fractionPermille(),
+			"the position must not move while frozen");
+	}
+}
+
+static void test_gate_freezes_at_the_start_of_the_list(void) {
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 1000));
+	uint32_t t = 0;
+	for (int i = 0; i < 12; ++i) {
+		t += kSlowGapMs;
+		const retroroom_core::DetentEvent ev =
+			gate.onDetent(-1, t, /*listSize=*/3, /*anchorIndex=*/0);
+		TEST_ASSERT_TRUE(ev.frozen);
+		TEST_ASSERT_EQUAL(0, gate.fractionPermille());
+	}
+}
+
+static void test_gate_unfreezes_once_turned_back(void) {
+	// Freezing is per detent, not a latched state: turn back and the
+	// browse has to resume, or the knob would be dead at the end of the
+	// list until something else reset it.
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 1000));
+	uint32_t t = 0;
+	for (int i = 0; i < 6; ++i) {
+		t += kSlowGapMs;
+		gate.onDetent(1, t, 3, 2);
+	}
+	t += kSlowGapMs;
+	retroroom_core::DetentEvent ev = gate.onDetent(-1, t, 3, 2);
+	TEST_ASSERT_FALSE_MESSAGE(ev.frozen, "turning back must resume the browse");
+	TEST_ASSERT_FALSE(ev.advanced);
+	TEST_ASSERT_TRUE(gate.fractionPermille() < 0);
+	TEST_ASSERT_EQUAL(-1, ev.targetDirection);
+}
+
+static void test_gate_freeze_does_not_wreck_the_fast_mode_clock(void) {
+	// A frozen knob is not a pause in the spin. The detent is still
+	// recorded, so the gap since the previous one stays honest and a
+	// frozen knob followed by a fast spin still escalates.
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 1000));
+	uint32_t t = 0;
+	for (int i = 0; i < 6; ++i) {
+		t += kSlowGapMs;
+		gate.onDetent(1, t, 3, 2);
+	}
+	t += 20;
+	const retroroom_core::DetentEvent ev = gate.onDetent(1, t, 3, 2);
+	TEST_ASSERT_TRUE_MESSAGE(ev.fastMode,
+		"a tight gap after a frozen detent must still read as fast");
+}
+
+static void test_gate_on_an_empty_list_always_freezes(void) {
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 1000));
+	const retroroom_core::DetentEvent ev = gate.onDetent(1, 100, 0, 0);
+	TEST_ASSERT_TRUE(ev.frozen);
+	TEST_ASSERT_FALSE(ev.advanced);
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -876,6 +961,11 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_thresholds_that_do_not_divide_1000_still_arrive);
 	RUN_TEST(test_config_is_clamped_to_something_usable);
 	RUN_TEST(test_non_detent_direction_is_a_no_op);
+	RUN_TEST(test_gate_freezes_at_the_end_of_the_list);
+	RUN_TEST(test_gate_freezes_at_the_start_of_the_list);
+	RUN_TEST(test_gate_unfreezes_once_turned_back);
+	RUN_TEST(test_gate_freeze_does_not_wreck_the_fast_mode_clock);
+	RUN_TEST(test_gate_on_an_empty_list_always_freezes);
 
 	// Blob travel.
 	RUN_TEST(test_ease_endpoints_and_midpoint);

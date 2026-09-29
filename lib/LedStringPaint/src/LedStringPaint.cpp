@@ -80,13 +80,15 @@ int DetentGate::detentsPerStep() const {
 	return fastMode_ ? cfg_.fastDetentsPerStep : cfg_.detentsPerStep;
 }
 
-DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs) {
+DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
+                                 int listSize, int anchorIndex) {
 	DetentEvent ev;
 	ev.fractionPermille = fraction_;
 	ev.detentsPerStep = detentsPerStep();
 	ev.fastMode = fastMode_;
 	ev.targetDirection = (fraction_ > 0) ? 1 : ((fraction_ < 0) ? -1 : 0);
 	ev.advanced = false;
+	ev.frozen = false;
 	ev.direction = direction;
 	ev.detents = 0;
 
@@ -118,6 +120,27 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs) {
 
 	ev.detentsPerStep = detentsPerStep();
 	ev.fastMode = fastMode_;
+
+	// Recompute the target from the *post-update* position... (see the
+	// ordering comment further down; the targetDirection that matters
+	// here is the one this detent would aim at, before the position
+	// moves.)
+	const int aimed =
+		(fraction_ != 0) ? ((fraction_ > 0) ? 1 : -1) : direction;
+
+	// Is there anywhere to go? The cabinet has physical ends, and
+	// turning off one of them reaches nothing. Freeze *before* touching
+	// the position, so the progression indicator stops dead rather than
+	// filling toward a console that is not there.
+	//
+	// The detent is still recorded above, so the gap since the last one
+	// stays honest: a frozen knob is not a pause in the spin.
+	const int target = anchorIndex + aimed;
+	if (listSize <= 0 || target < 0 || target >= listSize) {
+		ev.frozen = true;
+		ev.detents = detentProgressPermille(ev.detentsPerStep);
+		return ev;
+	}
 
 	// Advance the position by exactly 1/detentsPerStep of a console
 	// step, carrying the division remainder. `fraction_` is continuous

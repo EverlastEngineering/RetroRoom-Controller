@@ -112,6 +112,16 @@ struct DetentEvent {
 	// is the direction the cursor moved.
 	bool advanced;
 
+	// True when there was nowhere to step: the anchor is at one end of
+	// the list and the operator is turning off the end of it. The
+	// position is frozen -- this is the signal for the caller to stop
+	// moving its indicators, because a knob that keeps turning while
+	// the light goes nowhere reads as a fault rather than as an end.
+	//
+	// The detent is still recorded, so the gap since the previous one
+	// stays honest and the fast-mode decision is unaffected.
+	bool frozen;
+
 	// Whole detents consumed toward the current step. For logging.
 	int detents;
 
@@ -137,7 +147,20 @@ class DetentGate {
 	// reported as a no-op so the caller can still repaint. `nowMs` is
 	// a millis() reading -- the gate stores the previous one to decide
 	// whether the spin has picked up.
-	DetentEvent onDetent(int direction, std::uint32_t nowMs);
+	//
+	// `listSize` and `anchorIndex` are the list being browsed and where
+	// the anchor sits in it, so the gate can tell whether a step in the
+	// current direction exists at all. At either end there is none, and
+	// the gate freezes: `advanced` stays false, `frozen` comes back
+	// true, and the position does not move. The shell freezes its
+	// indicators on that flag rather than filling toward a console that
+	// is not there.
+	//
+	// The gate needs the bounds because it is the thing that decides
+	// whether a step completes. Handing it a direction and asking it to
+	// trust that the caller checked first is how the two disagree.
+	DetentEvent onDetent(int direction, std::uint32_t nowMs, int listSize,
+	                     int anchorIndex);
 
 	int fractionPermille() const { return fraction_; }
 	bool fastMode() const { return fastMode_; }

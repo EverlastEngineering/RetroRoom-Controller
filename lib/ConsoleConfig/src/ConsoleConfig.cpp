@@ -175,6 +175,7 @@ int wraparoundNext(int current, int n, int direction) {
 	return ((next % n) + n) % n;
 }
 
+
 int clampIndex(int requested, int n) {
 	if (n <= 0) {
 		return 0;
@@ -186,6 +187,39 @@ int clampIndex(int requested, int n) {
 		return n - 1;
 	}
 	return requested;
+}
+
+int stepWithin(int current, int n, int direction) {
+	// The cabinet has physical ends. Turning past the first or last
+	// console reaches nothing, so the cursor stays put and the caller
+	// is expected to *freeze* whatever it was indicating -- a knob that
+	// visibly keeps moving with no destination reads as a fault.
+	//
+	// n <= 0 has no in-range answer, so it matches wraparoundNext()'s
+	// empty-list fallback rather than inventing one.
+	if (n <= 0) {
+		return 0;
+	}
+	if (direction == 0) {
+		return clampIndex(current, n);
+	}
+	// Fold a stale index into range first. A step function is only
+	// meaningful for a cursor that is already on the list, and a caller
+	// that got that wrong -- a hand-edited config, a restore that lost
+	// its clamp -- should get a sane fixed point rather than have the
+	// bad value carried onward and stepped from again.
+	const int at = clampIndex(current, n);
+	int next = at + (direction > 0 ? 1 : -1);
+	if (next < 0 || next >= n) {
+		return at;
+	}
+	return next;
+}
+
+bool canStepWithin(int current, int n, int direction) {
+	// "Would stepWithin() actually move?" A caller that wants to freeze
+	// an indication needs to ask without performing the step.
+	return stepWithin(current, n, direction) != current;
 }
 
 bool validateConsoleConfigJson(const std::string& json, LoadResult& out) {

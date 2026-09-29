@@ -4,6 +4,8 @@
 #include <string>
 
 using retroroom_core::Console;
+using retroroom_core::stepWithin;
+using retroroom_core::canStepWithin;
 using retroroom_core::IrCode;
 using retroroom_core::LoadResult;
 using retroroom_core::Selection;
@@ -352,10 +354,56 @@ void test_loads_lcd_backlight_clamps_out_of_range(void) {
 	TEST_ASSERT_EQUAL_UINT32(0, neg.lcdBacklightOffAfterMs);
 }
 
+static void test_step_within_moves_inside_the_list(void) {
+	TEST_ASSERT_EQUAL(1, stepWithin(0, 4, 1));
+	TEST_ASSERT_EQUAL(3, stepWithin(2, 4, 1));
+	TEST_ASSERT_EQUAL(1, stepWithin(2, 4, -1));
+	TEST_ASSERT_EQUAL(0, stepWithin(1, 4, -1));
+}
+
+static void test_step_within_stops_at_both_ends(void) {
+	// The cabinet has physical ends. Turning past one reaches nothing,
+	// so the cursor stays put rather than wrapping to the far end.
+	TEST_ASSERT_EQUAL(3, stepWithin(3, 4, 1));
+	TEST_ASSERT_EQUAL_MESSAGE(3, stepWithin(3, 4, 1), "must not wrap to 0");
+	TEST_ASSERT_EQUAL(0, stepWithin(0, 4, -1));
+	TEST_ASSERT_EQUAL_MESSAGE(0, stepWithin(0, 4, -1), "must not wrap to 3");
+	// A single-console list is a fixed point in both directions.
+	TEST_ASSERT_EQUAL(0, stepWithin(0, 1, 1));
+	TEST_ASSERT_EQUAL(0, stepWithin(0, 1, -1));
+}
+
+static void test_step_within_degenerate_inputs(void) {
+	TEST_ASSERT_EQUAL(0, stepWithin(0, 0, 1));
+	TEST_ASSERT_EQUAL(0, stepWithin(5, 0, -1));
+	// direction 0 is a no-op, not a step.
+	TEST_ASSERT_EQUAL(2, stepWithin(2, 4, 0));
+	// An out-of-range current is clamped to an end rather than
+	// escaping: a stale index from a hand-edited config must not walk
+	// off the list.
+	TEST_ASSERT_EQUAL(3, stepWithin(99, 4, 1));
+	TEST_ASSERT_EQUAL(0, stepWithin(-5, 4, -1));
+}
+
+static void test_can_step_within_agrees_with_step(void) {
+	TEST_ASSERT_TRUE(canStepWithin(0, 4, 1));
+	TEST_ASSERT_TRUE(canStepWithin(3, 4, -1));
+	TEST_ASSERT_FALSE(canStepWithin(3, 4, 1));
+	TEST_ASSERT_FALSE(canStepWithin(0, 4, -1));
+	TEST_ASSERT_FALSE(canStepWithin(0, 1, 1));
+	TEST_ASSERT_FALSE(canStepWithin(0, 1, -1));
+	TEST_ASSERT_FALSE(canStepWithin(2, 4, 0));
+	TEST_ASSERT_FALSE(canStepWithin(0, 0, 1));
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
 	UNITY_BEGIN();
+	RUN_TEST(test_step_within_moves_inside_the_list);
+	RUN_TEST(test_step_within_stops_at_both_ends);
+	RUN_TEST(test_step_within_degenerate_inputs);
+	RUN_TEST(test_can_step_within_agrees_with_step);
 	RUN_TEST(test_loads_valid_config);
 	RUN_TEST(test_loads_multiple_consoles);
 	RUN_TEST(test_resolves_display_name_from_console_names);

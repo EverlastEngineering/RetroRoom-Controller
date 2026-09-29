@@ -167,13 +167,53 @@ int collectAboveFor(int idx, retroroom_core::LedRange* out) {
 // which is host-tested and replayed by agent-script/ledstring-sim.sh.
 // Keeping the decision here instead would mean two copies of the paint
 // logic, one of which nobody would ever run.
+// Per-animation frame accounting, consumed by reportFrameTiming().
+uint32_t frameCount = 0;
+uint32_t totalFrameUs = 0;
+uint32_t worstFrameUs = 0;
+
+// Turn a resolved frame into pixels and push it to the wire. This is
+// the shell's entire remaining job: the layout -- which pixels are lit
+// and how brightly -- is decided by retroroom_core::computeStripFrame(),
+// which is host-tested and replayed by agent-script/ledstring-sim.sh.
+// Keeping the decision here instead would mean two copies of the paint
+// logic, one of which nobody would ever run.
 void pushFrame(const retroroom_core::StripFrame& frame) {
+	const uint32_t t0 = micros();
 	int pct[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
 	retroroom_core::computeStripFrame(frame, pct);
 	for (int i = 0; i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS; ++i) {
 		selectedLeds[i] = scaled(pct[i]);
 	}
 	FastLED.show();
+	// Time the work, not the wait. FastLED.show() is synchronous on the
+	// RP2040 PIO backend -- it blocks until the last bit of the frame
+	// has clocked out -- so this is the floor on the frame interval.
+	const uint32_t cost = micros() - t0;
+	if (cost > worstFrameUs) {
+		worstFrameUs = cost;
+	}
+	totalFrameUs += cost;
+	++frameCount;
+}
+
+// Print what the last animation actually achieved, so the frame rate is
+// set from the board rather than guessed at. See the comment on
+// LEDSTRING_FRAME_INTERVAL_MS in src/configuration.h.
+void reportFrameTiming() {
+	if (frameCount == 0) {
+		return;
+	}
+	Serial.print("[ledstring] ");
+	Serial.print(frameCount);
+	Serial.print(" frames, mean work ");
+	Serial.print(totalFrameUs / frameCount);
+	Serial.print("us, worst frame ");
+	Serial.print(worstFrameUs);
+	Serial.print("us");
+	frameCount = 0;
+	totalFrameUs = 0;
+	worstFrameUs = 0;
 }
 
 // Shared frame setup: the strip size and the brightness knobs, which
@@ -332,6 +372,7 @@ void ledstring_loop() {
 			// pixel-identical to the boot paint.
 			mode = StripMode::RESTING;
 			paintResting(selectIdx);
+			reportFrameTiming();
 		}
 		break;
 	}

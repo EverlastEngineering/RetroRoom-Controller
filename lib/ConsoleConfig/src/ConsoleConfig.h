@@ -79,6 +79,22 @@ class Selection {
 // even if the Selection class isn't used at the call site.
 int wraparoundNext(int current, int n, int direction);
 
+// Clamped step: one console in `direction`, or `current` unchanged when
+// that would leave [0, n). The policy the cabinet actually wants -- the
+// list has physical ends, so turning past one reaches nothing.
+//
+// The counterpart to wraparoundNext(), and the reason both exist is
+// that "what happens at the end" is a product decision, not a detail:
+// wrapping is right for a ring of items, stopping is right for a row of
+// shelves. Clamps rather than throwing, so a stale index from a
+// hand-edited config degrades to "no move" instead of UB.
+int stepWithin(int current, int n, int direction);
+
+// "Would stepWithin() actually move?" For callers that need to freeze an
+// indication when there is nowhere to go, and must not perform the step
+// to find out.
+bool canStepWithin(int current, int n, int direction);
+
 // Clamp a persisted index into [0, n). Out-of-bounds (negative or >=
 // n) collapses to the nearest in-bounds value; n == 0 returns 0. Used by
 // the shell when restoring a saved index across reboots and after the

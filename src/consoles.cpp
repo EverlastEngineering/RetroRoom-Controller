@@ -78,7 +78,7 @@ uint32_t pendingSaveDueMs = 0;
 int pendingSaveIndex = 0;
 }  // namespace
 // millis() at the moment we last decided on the current console
-// (i.e. immediately after wraparoundNext() resolves in advanceConsole()
+// (i.e. immediately after stepWithin() resolves in advanceConsole()
 // / rewindConsole()). Used by GET /state.json to surface
 // `selectedAtUptimeMs` so the e2e harness can verify the device
 // actually moved (delta changes) without trusting response codes.
@@ -320,12 +320,23 @@ void advanceConsole() {
 		Serial.println("advanceConsole: no consoles loaded");
 		return;
 	}
-	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, +1);
+	// The list has physical ends. Turning past the last console (or back
+	// before the first) reaches nothing, so this is a no-op: no latch
+	// step, no IR, no broadcast, and no selection stamp. The stamp
+	// matters -- the e2e harness asserts on `selectedAtUptimeMs`
+	// changing, so writing it on a no-op would make a device that is
+	// stuck at the end of the list look alive.
+	const int before = currentConsoleIndex;
+	currentConsoleIndex = retroroom_core::stepWithin(currentConsoleIndex, n, +1);
+	if (currentConsoleIndex == before) {
+		Serial.println("Button: advance -- at end of list");
+		return;
+	}
 	// A commit moves the browsed cursor with it, so the next detent
 	// browses from the console that is now live.
 	browsedConsoleIndex = currentConsoleIndex;
 	// Stamp the selection time at-the-moment-of-decision (after
-	// wraparoundNext but before any side effects / WS broadcast) so the
+	// stepWithin but before any side effects / WS broadcast) so the
 	// e2e harness can read `selectedAtUptimeMs` from /state.json and
 	// assert the device actually moved (delta changes across calls).
 	currentConsoleSelectedAtMs = millis();
@@ -350,20 +361,28 @@ void rewindConsole() {
 	// Wrap-around console rewind (counterpart of advanceConsole()).
 	// Exposed for the /prev HTTP endpoint and the "prev" WebSocket
 	// command so external scripts can drive the device in either
-	// direction without needing the physical button. Same wraparound
-	// math as advanceConsole() but stepping -1; the math itself
-	// lives in the functional core (wraparoundNext) so the policy
-	// stays unit-testable on the host.
+	// direction without needing the physical button. Steps -1 against
+	// the same clamped policy advanceConsole() uses; the math lives in
+	// the functional core (stepWithin) so the policy stays unit-testable
+	// on the host.
 	int n = HowManyConsoles();
 	if (n <= 0) {
 		Serial.println("rewindConsole: no consoles loaded");
 		return;
 	}
-	currentConsoleIndex = retroroom_core::wraparoundNext(currentConsoleIndex, n, -1);
+	// The list has physical ends; see advanceConsole() for why a
+	// no-op must not stamp the selection time.
+	const int before = currentConsoleIndex;
+	currentConsoleIndex =
+		retroroom_core::stepWithin(currentConsoleIndex, n, -1);
+	if (currentConsoleIndex == before) {
+		Serial.println("Button: rewind -- at start of list");
+		return;
+	}
 	// Same cursor sync as advanceConsole(); see the comment there.
 	browsedConsoleIndex = currentConsoleIndex;
 	// Stamp the selection time at-the-moment-of-decision (after
-	// wraparoundNext but before any side effects / WS broadcast) -- same
+	// stepWithin but before any side effects / WS broadcast) -- same
 	// contract as advanceConsole(). See comment there.
 	currentConsoleSelectedAtMs = millis();
 	Serial.print("Button: rewind -> index ");

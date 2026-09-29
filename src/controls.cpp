@@ -6,7 +6,7 @@
 #include "consoles.h"
 #include "lighting.h"
 #include "ledstring.h"
-#include <LedStringPaint.h>  // retroroom_core::DetentGate + wraparoundNext
+#include <LedStringPaint.h>  // retroroom_core::DetentGate
 
 // No IRAM_ATTR shim needed anymore -- ESP8266 is gone. RP2040 / Pico does
 // not require a special attribute for ISR handlers (the vector system
@@ -292,16 +292,6 @@ void rotaryEncoderTick() {
 			return;
 		}
 
-		// Ring pixel only. The free-running spinner is the ring's own
-		// position counter and is deliberately independent of both the
-		// browsed and the selected console -- it answers "which way am
-		// I turning", not "which console am I on".
-		if (direction == -1) {
-			ringLEDPrevious();
-		} else {
-			ringLEDNext();
-		}
-
 		if (num_consoles <= 0) {
 			return;
 		}
@@ -330,14 +320,50 @@ void rotaryEncoderTick() {
 			browseAnchorIndex = currentConsoleIndex;
 		}
 
+		// The gate is told the list size and the anchor because it is
+		// the thing deciding whether a step completes, and a step off
+		// the end of the list does not exist.
 		const retroroom_core::DetentEvent ev =
-			browseGate.onDetent(direction, millis());
+			browseGate.onDetent(direction, millis(), num_consoles,
+								browseAnchorIndex);
+
+		if (ev.frozen) {
+			// Off the end of the list. The cabinet has physical ends and
+			// turning past one reaches nothing, so every indication
+			// freezes: the LED string keeps whatever it was showing, the
+			// ring's spinner does not advance, and the browsed cursor
+			// does not move. A knob that visibly keeps turning while
+			// nothing goes anywhere reads as a fault rather than as an
+			// end.
+			//
+			// Note this does override the ring's free-running spinner,
+			// which normally answers "which way am I turning" without
+			// reference to the list. The browse takes priority over it
+			// here because the ring and the strip are both telling the
+			// operator the same thing, and them disagreeing is worse
+			// than neither moving.
+			Serial.print("Browse at end of list (");
+			Serial.print(browsedConsoleIndex);
+			Serial.println(") -- frozen");
+			return;
+		}
+
+		// Ring pixel only. The free-running spinner is the ring's own
+		// position counter and is deliberately independent of both the
+		// browsed and the selected console -- it answers "which way am
+		// I turning", not "which console am I on". Moved *after* the
+		// freeze check so a frozen knob does not spin the ring either.
+		if (direction == -1) {
+			ringLEDPrevious();
+		} else {
+			ringLEDNext();
+		}
 
 		// The console the operator is heading toward, and the one the
 		// blob is departing. targetDirection is the sign of the
 		// *position*, not of the detent, so turning back mid-transit
 		// keeps aiming at the same side while the blob walks back.
-		const int targetIndex = retroroom_core::wraparoundNext(
+		const int targetIndex = retroroom_core::stepWithin(
 			browseAnchorIndex, num_consoles, ev.targetDirection);
 
 		if (!ev.advanced) {
@@ -359,10 +385,9 @@ void rotaryEncoderTick() {
 			return;
 		}
 
-		// The step completed: the blob lands and the cursor follows.
-		// Browses rather than clamping, so the operator can spin freely
-		// through the whole list in either direction. Same policy
-		// advanceConsole()/rewindConsole() already use.
+		// The step completed: the animation lands and the cursor
+		// follows. Reaching here means the step was legal -- the gate
+		// freezes at either end of the list, so it cannot have wrapped.
 		browseAnchorIndex = targetIndex;
 		browsedConsoleIndex = targetIndex;
 #if defined(HAS_LEDS)

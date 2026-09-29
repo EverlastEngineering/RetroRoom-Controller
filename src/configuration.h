@@ -184,10 +184,24 @@
 #endif
 
 // How often an in-flight frame is pushed to the wire while an
-// animation is running. Above ~20 ms a WS2812B strip reads as stepped
-// rather than smooth; below it wastes PIO time next to the CYW43.
+// animation is running.
+//
+// This is a *sampling rate*, not a step count: every frame is computed
+// from the animation's elapsed time, so raising it produces the same
+// animation played more smoothly rather than the same animation played
+// faster. Halve it and the motion is twice as finely sampled; the
+// duration and the easing are untouched.
+//
+// The ceiling is how long FastLED.show() takes to clock 64 WS2812B
+// pixels out, plus whatever the rest of loop() needs. That is a
+// property of the board and the strip, not something to guess at, so
+// the driver measures it: when an animation finishes it prints the
+// frame count, the achieved mean frame period, and the worst single
+// frame. Read that line on the bench and set this number from it --
+// if the worst frame is close to this interval, you are the limit, and
+// lowering the number further only starves the rest of the loop.
 #ifndef LEDSTRING_FRAME_INTERVAL_MS
-#define LEDSTRING_FRAME_INTERVAL_MS 16
+#define LEDSTRING_FRAME_INTERVAL_MS 8
 #endif
 
 
