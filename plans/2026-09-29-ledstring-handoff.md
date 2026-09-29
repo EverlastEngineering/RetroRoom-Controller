@@ -136,9 +136,28 @@ The browse goes both ways, and several things silently assumed forward:
   the block starts from. It used to be measured from the source's
   trailing edge in both directions, so a backwards run lay *inside* the
   console being left and the indicator crept the wrong way.
+- **A step between shelves is not a big gap — it is a different rule.**
+  The block enters the destination shelf at the end the string does
+  *not* arrive at, and sweeps that whole shelf. Which end that is
+  depends on the direction of the crossing: the shelves are one chain,
+  so the bridge joins the high end of the lower shelf to the low end of
+  the upper one. Stepping up enters at the shelf's high end, stepping
+  back down enters at its low end. Taking the high end unconditionally
+  looked right going up and collapsed coming back, because the console
+  you are returning to sits at the bridge end of its own shelf — two
+  pixels from where you were, so the "sweep" was a one-pixel nudge.
+  On a two-row layout the hard cases are always the consoles *either
+  side of the bridge*, and they are the two nobody tests.
+
+In `computeFillGeometry()` the discriminator is that a within-shelf step
+always enters **inside** the stretch of pixels the two consoles occupy
+(its entry is the source's trailing edge, which is on the far edge of
+that stretch), while a crossing enters outside it. That test has to be
+strict for the same reason.
 
 **Forward-only unit tests will not find any of these.** Use the
-simulator's two-row geometry.
+simulator's two-row geometry — `ledstring-sim.sh shelfback` is the
+crossing that goes right to left.
 
 ### The last *drawn* detent is 100%, not the last detent
 
@@ -175,7 +194,8 @@ in `c76a666`. Never append `|| true` to a pipeline you are reading
 ```sh
 ./agent-script/ledstring-sim.sh            # every scenario
 ./agent-script/ledstring-sim.sh carry      # a candidate that keeps pulsing
-./agent-script/ledstring-sim.sh shelf      # a step between shelves
+./agent-script/ledstring-sim.sh shelf      # a step between shelves, up
+./agent-script/ledstring-sim.sh shelfback  # the same crossing, back down
 ./agent-script/ledstring-sim.sh browse     # fill + travel
 ./agent-script/ledstring-sim.sh select     # the commit twinkle
 ./agent-script/ledstring-sim.sh frames     # the resting stack

@@ -287,9 +287,10 @@ void paintResting(int idx) {
 //
 // For a step within a shelf that is the trailing edge of the console
 // being left -- the block peels off it and crosses the gap. For a step
-// *between* shelves it is the far end of the destination shelf, so the
-// block sweeps the whole shelf and lands on the console. The knob goes
-// one way and the light goes the other, which is odd and deliberate.
+// *between* shelves it is the far end of the destination shelf: the one
+// end of it the string does not arrive at, so the block sweeps the
+// whole shelf and lands on the console. The knob goes one way and the
+// light goes the other, which is odd and deliberate.
 //
 // The shelves are strung as one continuous chain, so pixel order alone
 // cannot tell you where one ends -- this is why the console's `shelf`
@@ -304,20 +305,41 @@ int travelEntryFor(int from, int to) {
 	if (consoles[from].shelf == consoles[to].shelf) {
 		return leaveEnd;
 	}
-	// Crossed a shelf: enter at the far end of the shelf we are landing
-	// on, so the block sweeps all of it.
+	// Crossed the bridge between shelves. The block enters the shelf it
+	// is landing on at the end the string does *not* arrive at, and
+	// sweeps the whole of that shelf to the target -- so a step that is
+	// two pixels wide in index space still reads as the long way round
+	// the cabinet that it physically is.
+	//
+	// Which end that is depends on the direction of the crossing, and
+	// this used to ignore that. The shelves are strung as one chain, so
+	// the bridge joins the high end of the lower shelf to the low end
+	// of the upper one: stepping *up* enters at the top of the shelf,
+	// stepping back *down* enters at its bottom. Always taking the high
+	// end looked right going up and collapsed going back, because the
+	// console you are returning to sits at the bridge end of its own
+	// shelf and so had nothing left to sweep.
 	const int targetShelf = consoles[to].shelf;
-	int far = windowFor(to).start + windowFor(to).width;
+	int lo = -1;
+	int hi = -1;
 	for (int i = 0; i < HowManyConsoles(); ++i) {
 		if (consoles[i].shelf != targetShelf) {
 			continue;
 		}
 		const retroroom_core::LedRange w = windowFor(i);
-		if (w.start + w.width > far) {
-			far = w.start + w.width;
+		if (lo < 0 || w.start < lo) {
+			lo = w.start;
+		}
+		if (hi < 0 || w.start + w.width > hi) {
+			hi = w.start + w.width;
 		}
 	}
-	return far;
+	if (lo < 0) {
+		return leaveEnd;
+	}
+	// The source is on the far side of that whole span, so its end
+	// against the span's start says which side of it we are on.
+	return (leaveEnd <= lo) ? hi : lo;
 }
 
 // Resolve a frame's browse path: which way the block comes from, and how

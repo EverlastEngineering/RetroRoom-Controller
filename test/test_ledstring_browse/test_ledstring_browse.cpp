@@ -1265,6 +1265,82 @@ static void test_shelf_crossing_sweeps_the_whole_destination_shelf(void) {
 	TEST_ASSERT_FALSE(crossing.fillForward);
 }
 
+static void test_a_return_across_the_bridge_sweeps_the_shelf_too(void) {
+	// The same crossing made in reverse, and the one that was broken.
+	// Going back over the bridge the block enters at the *low* end of
+	// the destination shelf -- still the end the string does not arrive
+	// at -- and sweeps the whole shelf the other way.
+	//
+	// The entry used to always be the high end of the destination
+	// shelf. Going up that is the far end and it is right. Coming back
+	// it is the console being returned to, so the run was measured as
+	// the gap between the two windows -- two pixels across the bridge
+	// -- and a step that had just sent the light the width of a shelf
+	// came back as a one-pixel nudge.
+	//
+	// MAME and GEN are the two consoles either side of the bridge, both
+	// at the bridge end of their own shelf, which is what makes them the
+	// hard case: there is no gap to show in either direction.
+	const LedRange mame = {19, 6};
+	const LedRange gen = {26, 3};
+	StripFrame f = travelFrame(gen, /*entryPixel=*/1, mame, 0);
+	TEST_ASSERT_EQUAL_MESSAGE(1, f.fillAnchor,
+		"a return crossing sweeps in from the far end of the shelf");
+	TEST_ASSERT_EQUAL(19, f.fillLead);
+	TEST_ASSERT_TRUE(f.fillForward);
+	// And the block itself travels the shelf rather than the gap: it
+	// leaves at the low end and lands on MAME's window.
+	TEST_ASSERT_EQUAL(0, f.travelFromLeftPermille);
+	TEST_ASSERT_EQUAL_MESSAGE(mame.start * 1000, f.travelToLeftPermille,
+		"the block lands on the console being returned to");
+
+	StripFrame g = configuredFrame(StripEffect::FILLING);
+	g.dimPct = 22;
+	g.fillPct = 45;
+	g.minFillLeds = 0;
+	g.from = gen;
+	g.activeWindow = gen;
+	computeFillGeometry(gen, 1, mame, 0, 64, g);
+	int out[64];
+	frameLevels(g, out);
+	TEST_ASSERT_EQUAL_MESSAGE(45, out[1],
+		"the run starts at the far end of the destination shelf");
+	TEST_ASSERT_EQUAL_MESSAGE(45, out[12],
+		"and runs the length of it, over the consoles already in the stack");
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[19],
+		"stopping short of the console the block lands on");
+	TEST_ASSERT_EQUAL_MESSAGE(22, out[26],
+		"the console being left stays dim, not fill");
+}
+
+static void test_a_step_within_a_shelf_still_measures_the_gap(void) {
+	// The guard on the rule above. Within a shelf the block enters at
+	// the source's trailing edge, which lands exactly *on* the far edge
+	// of the two consoles together -- so "entered from outside them" has
+	// to be a strict test. Made non-strict, every ordinary backwards
+	// step reads as a shelf crossing and fills over the console being
+	// left on the way out of it.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.minFillLeds = 0;
+	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, f);
+	TEST_ASSERT_EQUAL_MESSAGE(kSms.start, f.fillAnchor,
+		"a backwards step still anchors on the source, not the entry");
+	TEST_ASSERT_EQUAL_MESSAGE(kNes.start + kNes.width, f.fillLead,
+		"and still runs to the far side of the target");
+	TEST_ASSERT_FALSE(f.fillForward);
+	// The forward case, for the same reason: its entry is short of the
+	// target but still inside the two consoles, and it must stay the
+	// gap between them rather than becoming a crossing.
+	StripFrame g = configuredFrame(StripEffect::FILLING);
+	g.minFillLeds = 0;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, g);
+	TEST_ASSERT_EQUAL_MESSAGE(kNes.start + kNes.width, g.fillAnchor,
+		"a forwards step still anchors just past the source");
+	TEST_ASSERT_EQUAL_MESSAGE(kSms.start, g.fillLead,
+		"and still stops just short of the target");
+	TEST_ASSERT_TRUE(g.fillForward);
+}
+
 static void test_fill_uses_three_distinct_levels(void) {
 	// Stack, fill and selection must not collapse into each other, or
 	// "where the stack ends" and "how far I have got" become the same
@@ -1548,6 +1624,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
 	RUN_TEST(test_fill_never_lights_the_target_window);
 	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);
+	RUN_TEST(test_a_return_across_the_bridge_sweeps_the_shelf_too);
+	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);
 	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_resting_frame_lights_each_window_above);
 	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);

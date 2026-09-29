@@ -511,21 +511,13 @@ void computeTravelPath(const LedRange& leave, int entryPixel,
 	// The fill covers the path the block will sweep, and never the
 	// target's own window -- that is where the block lands, and lighting
 	// it dim in the meantime would make the arrival mean nothing.
+	// computeFillGeometry() works out where the run starts and ends from
+	// the same two windows and the same entry pixel, so that decision
+	// lives in exactly one place. An earlier version of this function
+	// also derived a `fillToPixel` here, and it was dead: the geometry
+	// call below recomputed the same thing. It was tempting to fix the
+	// backwards crossing in both places, and the two would have drifted.
 	//
-	// Which end of the target the run stops short of depends on which
-	// way the operator is turning, and getting that wrong is what left
-	// a backwards browse with a zero-length run.
-	const int leaveEnd = leave.start + leave.width;
-	int fillToPixel;
-	if (entryPixel > leaveEnd) {
-		// Shelf crossing: the block comes in from beyond the target, so
-		// the fill spans the whole path it will sweep.
-		fillToPixel = entryPixel;
-	} else if (target.start >= leaveEnd) {
-		fillToPixel = target.start;                    // forwards
-	} else {
-		fillToPixel = target.start + target.width;     // backwards
-	}
 	// The strip size and the floor come from the frame the caller
 	// already assembled, so the fill and the block are resolved
 	// against the same numbers. Passing zeroes here clamped every
@@ -574,14 +566,37 @@ void computeFillGeometry(const LedRange& leave, int entryPixel,
 	// starts at the far end of the destination shelf, so the run does
 	// too, and a run sized to the two-pixel gap would have left the
 	// block sliding over a backdrop.
-	const bool fromBeyond = (entryPixel > leave.start + leave.width);
+	const int leaveEnd = leave.start + leave.width;
+	const int targetEnd = target.start + target.width;
+	// The stretch of pixels the two consoles occupy together. A step
+	// *within* a shelf always enters inside it -- at the source's
+	// trailing edge, which is between the two windows however the
+	// operator is turning.
+	//
+	// An entry outside that stretch is a step that crossed the bridge
+	// between shelves. There the entry is over on the far side of the
+	// target, so the run is not the gap between the two windows: it is
+	// the whole destination shelf, from the end the block entered at to
+	// the target.
+	//
+	// Going back over the bridge is the case that was missing, and it
+	// is the one the operator meets on the way home. The entry lands
+	// *before* the target, which is not "between the two consoles" by
+	// any reading, so it fell through to the same-shelf backwards
+	// branch -- where the run is the gap between the windows. Across a
+	// bridge that gap is two pixels, so a step that had just sent the
+	// light the width of a shelf in the other direction came back as a
+	// one-pixel nudge.
+	const int spanLo = (leave.start < target.start) ? leave.start : target.start;
+	const int spanHi = (leaveEnd > targetEnd) ? leaveEnd : targetEnd;
+	const bool fromOutside = (entryPixel < spanLo || entryPixel > spanHi);
 	int anchor;
 	int lead;
-	if (fromBeyond) {
+	if (fromOutside) {
 		anchor = entryPixel;                  // the far end of the shelf
 		lead = target.start;                  // where it lands
-	} else if (target.start >= leave.start + leave.width) {
-		anchor = leave.start + leave.width;   // just past the source
+	} else if (target.start >= leaveEnd) {
+		anchor = leaveEnd;                    // just past the source
 		lead = target.start;                  // just short of the target
 	} else {
 		anchor = leave.start;                 // just short of the source

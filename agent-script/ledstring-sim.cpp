@@ -152,25 +152,36 @@ int collectAboveFor(int idx, LedRange* out, int capacity) {
 // scenario that shows a resting or selection frame, so the sim cannot
 // drift from the shell's own assembly.
 // Mirrors travelEntryFor() in src/ledstring.cpp: the trailing edge of
-// the console being left within a shelf, or the far end of the
-// destination shelf when the step crosses between them.
+// the console being left within a shelf, or the end of the destination
+// shelf the string does not arrive at when the step crosses between
+// them. That is the shelf's high end stepping up and its low end
+// stepping back down -- always taking the high end collapsed the
+// return crossing, because the console being returned to sits at the
+// bridge end of its own shelf.
 int travelEntryFor(int from, int to) {
 	const LedRange leave = windowFor(from);
 	const int leaveEnd = leave.start + leave.width;
 	if (kConsoles[from].shelf == kConsoles[to].shelf) {
 		return leaveEnd;
 	}
-	int far = windowFor(to).start + windowFor(to).width;
+	int lo = -1;
+	int hi = -1;
 	for (int i = 0; i < kConsoleCount; ++i) {
 		if (kConsoles[i].shelf != kConsoles[to].shelf) {
 			continue;
 		}
 		const LedRange w = windowFor(i);
-		if (w.start + w.width > far) {
-			far = w.start + w.width;
+		if (lo < 0 || w.start < lo) {
+			lo = w.start;
+		}
+		if (hi < 0 || w.start + w.width > hi) {
+			hi = w.start + w.width;
 		}
 	}
-	return far;
+	if (lo < 0) {
+		return leaveEnd;
+	}
+	return (leaveEnd <= lo) ? hi : lo;
 }
 
 // Mirrors applyBrowsePath() in src/ledstring.cpp.
@@ -548,6 +559,63 @@ void scenarioShelf() {
 }
 
 
+// The same crossing, made in reverse: GEN (shelf 1) back to MAME
+// (shelf 0). The two are two pixels apart in index space, so a naive
+// fill has nothing to show and the operator gets a one-pixel nudge
+// instead of a sweep. The knob goes LEFT and the light goes RIGHT, for
+// the same reason it goes the other way going forwards: the block
+// enters the destination shelf at the end the string does not arrive
+// at, and sweeps all of it.
+void scenarioShelfBack() {
+	rule("SHELF CROSSING, REVERSE -- GEN (shelf 1) -> MAME (shelf 0)");
+	printf("Knob goes LEFT one console, back over the bridge. The light\n"
+		   "goes RIGHT, across the whole destination shelf, and lands on\n"
+		   "MAME.\n\n");
+
+	const int from = 4;  // GEN
+	const int to = 3;    // MAME
+	scenarioActive = from;
+
+	StripFrame rest = baseFrame();
+	rest.effect = StripEffect::RESTING;
+	applyResting(rest, from);
+	render(rest, "resting (GEN selected)");
+
+	StripFrame f = baseFrame();
+	f.effect = StripEffect::FILLING;
+	f.from = windowFor(from);
+	applyBrowsePath(f, from, to);
+	f.minFillLeds = 0;
+	render(f, "fill spans the destination shelf");
+	renderRoles(f, "fill spans the destination shelf");
+
+	for (int step = 0; step <= 4; ++step) {
+		StripFrame t = baseFrame();
+		t.effect = StripEffect::FILLING;
+		t.from = windowFor(from);
+		applyBrowsePath(t, from, to);
+		t.fillLead = scaleFillLead(t.fillAnchor, t.fillLead, t.fillForward,
+								   step * 250);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "detent %d/4", step);
+		render(t, caption);
+	}
+
+	for (int step = 0; step <= 10; ++step) {
+		StripFrame t = baseFrame();
+		t.effect = StripEffect::TRAVEL;
+		applyBrowsePath(t, from, to);
+		t.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 10);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "travel t=%3ums", t.elapsedMs);
+		render(t, caption);
+		char roles[64];
+		snprintf(roles, sizeof(roles), "travel t=%3ums roles", t.elapsedMs);
+		renderRoles(t, roles);
+	}
+}
+
+
 // The multi-step browse: SMS is active, the operator has already browsed
 // onto NES (so NES is pulsing as a candidate), and is now filling onward
 // toward SMS. NES must keep pulsing -- a press right now would still
@@ -624,6 +692,9 @@ int main(int argc, char** argv) {
 	if (all || which == "shelf") {
 		scenarioShelf();
 	}
+	if (all || which == "shelfback") {
+		scenarioShelfBack();
+	}
 	if (all || which == "select") {
 		scenarioSelect(4);
 	}
@@ -633,10 +704,11 @@ int main(int argc, char** argv) {
 	if (all || which == "above") {
 		scenarioAbove();
 	}
-	if (!all && which != "browse" && which != "shelf" && which != "carry" && which != "select" &&
+	if (!all && which != "browse" && which != "shelf" &&
+		which != "shelfback" && which != "carry" && which != "select" &&
 		which != "frames" && which != "above") {
 		fprintf(stderr, "unknown scenario '%s'\n", which.c_str());
-		fprintf(stderr, "try: browse, carry, shelf, select, frames, above, all\n");
+		fprintf(stderr, "try: browse, carry, shelf, shelfback, select, frames, above, all\n");
 		return 1;
 	}
 	printf("\n");
