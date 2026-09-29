@@ -62,7 +62,7 @@ void ledstring_init() {
 	// RR_FASTLED_DATA_PIN), so each strip gets its own PIO program and
 	// its own show() cadence. On RP2350 the rp2040 PIO backend
 	// transparently supports this (rpcommon/platforms/arm/rp2040).
-	FastLED.addLeds<WS2812B, RR_FASTLED_STRING_DATA_PIN, GRB>(
+	FastLED.addLeds<WS2812B, SELECTED_CONSOLE_LED_STRING_DATA, GRB>(
 		selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
 	// Push black on boot. The strip powers up dark; ledstring_setConsole()
 	// paints the active console's window after consoleDefinitions() lands

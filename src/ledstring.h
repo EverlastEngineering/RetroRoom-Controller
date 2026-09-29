@@ -17,21 +17,12 @@
 //
 // Macro dance (mirrors src/lighting.h's pattern) -- configuration.h MUST
 // be included BEFORE <FastLED.h> so SELECTED_CONSOLE_LED_STRING_DATA is
-// a numeric pin in this TU. FastLED's RP2040 PIO backend uses DATA_PIN
-// as a template parameter NAME, which would collide with our #define
-// of the same name from configuration.h; we save it under
-// RR_FASTLED_STRING_DATA_PIN before #undef'ing DATA_PIN for the FastLED
-// include, then restore. The bare DATA_PIN macro is also restored at the
-// end so other code in the TU keeps resolving to the ring pin number.
+// a numeric pin in this TU. 
 
 #if defined(HAS_LEDS)
 #include "configuration.h"
-#pragma push_macro("DATA_PIN")
-#define RR_FASTLED_STRING_DATA_PIN SELECTED_CONSOLE_LED_STRING_DATA
-#undef DATA_PIN
 #define FASTLED_INTERNAL  // silence FastLED's pragma messages
 #include <FastLED.h>
-#pragma pop_macro("DATA_PIN")
 #endif
 
 #if defined(HAS_LEDS)

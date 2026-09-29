@@ -2,7 +2,7 @@
 
 
 
-CRGB leds[NUM_LEDS];
+CRGB leds[NUM_RING_LEDS];
 #define LED_BRIGHTNESS 150
 
 int currentRingLED = 0;
@@ -17,7 +17,7 @@ void lightRing(bool lit) {
 		FastLED.show();
 	}
 	else if (!lit && ringLit) {
-		fadeToBlackBy(leds,NUM_LEDS,1);
+		fadeToBlackBy(leds,NUM_RING_LEDS,1);
 		ringFading = true;
 		FastLED.show();
 		if (leds[currentRingLED].r + leds[currentRingLED].b + leds[currentRingLED].g == 0) {
@@ -55,13 +55,13 @@ void lighting_init() {
 	// (because FastLED's rp2040 backend uses DATA_PIN as a template
 	// parameter name). We use RR_FASTLED_DATA_PIN, defined in lighting.h
 	// to the numeric pin number from configuration.h.
-	FastLED.addLeds<WS2812B, RR_FASTLED_DATA_PIN, GRB>(leds, NUM_LEDS);
+	FastLED.addLeds<WS2812B, LED_RING_DATA_PIN, GRB>(leds, NUM_RING_LEDS);
 	FastLED.setBrightness(LED_BRIGHTNESS);
 	// Clear the ring at boot. The previous boot-time R/G/B smoke test was
 	// removed on session/merge-pico-json (per user request); the LED will
 	// stay dark until something (lightSingle, lightRing, lightCycleTick,
 	// etc.) drives it.
-	fill_solid(leds, NUM_LEDS, CRGB::Black);
+	fill_solid(leds, NUM_RING_LEDS, CRGB::Black);
 	FastLED.show();
 }
 
@@ -108,7 +108,7 @@ void lightCycleTick() {
 		// Push one black frame after a toggle-off, then idle until
 		// the user re-enables.
 		if (lightCycleNeedsBlack) {
-			fill_solid(leds, NUM_LEDS, CRGB::Black);
+			fill_solid(leds, NUM_RING_LEDS, CRGB::Black);
 			FastLED.show();
 			lightCycleNeedsBlack = false;
 			Serial.println("lightCycle: strip cleared");
@@ -125,15 +125,15 @@ void lightCycleTick() {
 	lightCyclePhase = (lightCyclePhase + 1) % 3;
 	switch (lightCyclePhase) {
 	case 0:
-		fill_solid(leds, NUM_LEDS, CRGB::Red);
+		fill_solid(leds, NUM_RING_LEDS, CRGB::Red);
 		Serial.println("lightCycle: red");
 		break;
 	case 1:
-		fill_solid(leds, NUM_LEDS, CRGB::Green);
+		fill_solid(leds, NUM_RING_LEDS, CRGB::Green);
 		Serial.println("lightCycle: green");
 		break;
 	case 2:
-		fill_solid(leds, NUM_LEDS, CRGB::Blue);
+		fill_solid(leds, NUM_RING_LEDS, CRGB::Blue);
 		Serial.println("lightCycle: blue");
 		break;
 	}
@@ -143,7 +143,7 @@ void lightCycleTick() {
 void lightSingle (int led) {
 	// Serial.print("Lit pixel #");
 	// Serial.println(currentRingLED);
-	fill_solid(leds, NUM_LEDS, CRGB::DarkBlue);
+	fill_solid(leds, NUM_RING_LEDS, CRGB::DarkBlue);
 	// fill_rainbow(leds,NUM_LEDS,50,32);
 	// fadeLightBy(leds,NUM_LEDS,150);
 	leds[led] = CRGB::White;
@@ -152,12 +152,12 @@ void lightSingle (int led) {
 
 void ringLEDNext() {
 	currentRingLED++;
-	if (currentRingLED > NUM_LEDS-1) currentRingLED = 0;
+	if (currentRingLED > NUM_RING_LEDS-1) currentRingLED = 0;
 	lightSingle(currentRingLED);
 }
 
 void ringLEDPrevious() {
-	if (currentRingLED == 0) currentRingLED = NUM_LEDS-1;
+	if (currentRingLED == 0) currentRingLED = NUM_RING_LEDS-1;
 	else currentRingLED--;
 	lightSingle(currentRingLED);
 }

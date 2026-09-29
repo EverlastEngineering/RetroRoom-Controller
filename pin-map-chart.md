@@ -39,7 +39,7 @@ GP16 (free) SPI0 MISO                 ┐
 GP17 (free) SPI0 SS                   │ SPI0 block — 4 contiguous,
 GP18 (free) SPI0 SCK                  │ fully free
 GP19 (free) SPI0 MOSI                 ┘
-GP20 DATA_PIN (FastLED ring)          ┐
+GP20 LED_RING_DATA_PIN (FastLED ring)          ┐
 GP21 SELECTED_CONSOLE_LED_STRING_DATA │ output pins
 GP22 IR_CONTROL_PIN                   ┘
 GP23 (free)                           ┐

@@ -2,7 +2,7 @@
 #define RRCONFIGURATION_H
 
 // lighting
-#define NUM_LEDS 20
+#define NUM_RING_LEDS 8
 
 // ESP8266 (NodeMCU v2) and AVR boards were dropped on session/merge-pico-json.
 // Only the Raspberry Pi Pico (RP2040) + Earle Philhower's arduino-pico core
@@ -50,7 +50,7 @@
 	#define ROTARY_SELECTOR_PIN 13
 	#define ROTARY_PIN_IN1    14
 	#define ROTARY_PIN_IN2    15
-	#define DATA_PIN          20  // FastLED ring 
+	#define LED_RING_DATA_PIN          20  // FastLED ring 
 	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // FastLED strip
 	#define IR_CONTROL_PIN    22
 	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
@@ -89,7 +89,7 @@
 	#define ROTARY_SELECTOR_PIN 13
 	#define ROTARY_PIN_IN1    14
 	#define ROTARY_PIN_IN2    15
-	#define DATA_PIN          23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
+	#define LED_RING_DATA_PIN 23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
 	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Placeholder; no second strip wired on the YD.
 	#define IR_CONTROL_PIN    22
 	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64

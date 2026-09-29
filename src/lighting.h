@@ -20,16 +20,8 @@
 
 #if defined(HAS_LEDS)
 #include "configuration.h"
-#pragma push_macro("DATA_PIN")
-#pragma push_macro("RGB_ORDER")
-#define RR_FASTLED_DATA_PIN DATA_PIN
-#define RR_FASTLED_RGB_ORDER RGB_ORDER
-#undef DATA_PIN
-#undef RGB_ORDER
 #define FASTLED_INTERNAL //to get rid of the pragma messages from FastLED
 #include <FastLED.h>
-#pragma pop_macro("RGB_ORDER")
-#pragma pop_macro("DATA_PIN")
 #endif
 
 #if defined(HAS_LEDS)

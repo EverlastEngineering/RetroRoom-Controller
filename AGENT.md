@@ -130,10 +130,6 @@ The durable lessons. For the current API surface, read the tool.
   silently refuse newer ones.** If a build breaks on a board bump, check
   the library's `#if defined(...)` guards against the board symbol the
   new target actually defines.
-- **FastLED's RP2040/RP2350 backend uses `DATA_PIN` as a template
-  parameter name,** which collides with our own `DATA_PIN` macro. The
-  save/`#undef`/restore dance in `lighting.h` and `ledstring.h` is
-  load-bearing — leave it alone.
 - **`AsyncWebSocket::textAll` has overloads that don't accept a
   `std::string` directly.** Pass `.c_str()` and the size explicitly, or
   the compiler picks the wrong overload and rejects it.
