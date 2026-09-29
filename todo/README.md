@@ -90,6 +90,7 @@ with current ones. Per-file gives:
 - `stackselector-perfboard-pinmap` — confirm GP8/9/10 ARM/CYCLE/ENABLE on the perfboard
 
 ### done/
+- `f93927b` — ring highlight lifecycle: `lightSingle()` is the single choke point and always arms an idle deadline, so the ring can no longer be left lit with nothing to turn it off. `lighting_loop()` owns the fade and returns on completion so the browsed cursor reverts. Split `browsedConsoleIndex` from `currentConsoleIndex` so the knob is browse-only and the click commits. Prerequisite for the GP21 twinkle in `2026-09-25_led-string-light-shows_DRAFT.md` S1.
 - `9c1304b` — second-strip LED driver on GP21 (`src/ledstring.{h,cpp}` + `lib/LedStringPaint`); lights `[ledPosition, ledPosition+ledWidth)` from `selectConsole()`. Companion draft `2026-09-25_led-string-light-shows_DRAFT.md` parks the pulled-out sub-items (animation, shows, wiring diagram, e2e readback).
 - `c6005c7` — USR button advances `currentConsoleIndex`
 - `b603d4b` — pinout doc
