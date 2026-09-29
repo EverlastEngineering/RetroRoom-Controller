@@ -352,6 +352,27 @@ int twinkleSample(int pixel, std::uint32_t tick) {
 	return static_cast<int>((a ^ b) & 0x3ffu);  // 0..1023
 }
 
+int twinkleLevel(int pixel, std::uint32_t tick,
+                 const SelectionEffectConfig& cfg) {
+	// The sample is *thresholded*, not scaled. Scaling it lit every
+	// pixel a bit and read as a shimmer -- a broken strip rather than a
+	// flicker. Cutting it at a fraction gives a few pixels fully on and
+	// the rest genuinely dark, which is what the eye reads as a strike.
+	//
+	// The threshold is over 1024 rather than 1023 so that 0% really is
+	// nothing lit and 100% really is everything: at 100 the cut is
+	// 1023 and sample == 1023 would fall through to the dark branch.
+	int cut = (cfg.twinkleOnPct * 1024) / 100;
+	if (cut <= 0) {
+		return cfg.twinkleMin;
+	}
+	if (cut >= 1024) {
+		return cfg.twinkleMax;
+	}
+	return (twinkleSample(pixel, tick) < cut) ? cfg.twinkleMax
+											  : cfg.twinkleMin;
+}
+
 int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
                        std::uint32_t elapsedMs,
                        const SelectionEffectConfig& cfg) {
@@ -361,13 +382,16 @@ int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
 	}
 
 	// The twinkle is sampled on a fixed tick rather than per millisecond
-	// so it reads as a sparkle instead of a smooth shimmer.
+	// so it reads as a flicker instead of a smooth wash. A zero tick
+	// falls back to an eighth of the twinkle rather than dividing by
+	// zero -- the twinkle's own off switch is twinkleMs == 0, which never
+	// reaches here.
 	const std::uint32_t twinkleTickMs =
-		(cfg.twinkleMs / 8) > 0 ? (cfg.twinkleMs / 8) : 1;
+		(cfg.twinkleTickMs > 0) ? cfg.twinkleTickMs
+								: ((cfg.twinkleMs / 8) > 0 ? (cfg.twinkleMs / 8) : 1);
 
 	if (elapsedMs < cfg.twinkleMs) {
-		const int sample = twinkleSample(pixel, elapsedMs / twinkleTickMs);
-		return lerpPercent(cfg.twinkleMin, cfg.twinkleMax, sample * 1000 / 1023);
+		return twinkleLevel(pixel, elapsedMs / twinkleTickMs, cfg);
 	}
 
 	// Settle. The whole stagger span is subtracted from the ramp so the
@@ -386,20 +410,30 @@ int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
 		(totalLeds > 0) ? static_cast<std::uint32_t>(pixel) * cfg.staggerMs : 0;
 	const std::uint32_t t = elapsedMs - cfg.twinkleMs;
 
+	// What the collapse starts from: the twinkle's last look for this
+	// pixel, sampled at the moment the ramp would have started so the
+	// hand-off is continuous.
+	//
+	// With no twinkle there is no look to hand off from, so the collapse
+	// starts from the bright end and is a plain dim-down with the same
+	// stagger. It matters that it does not start from a *pattern*:
+	// thresholding a fresh sample here would light a random fifth of the
+	// strip for exactly one frame, so twinkleMs = 0 would still twinkle
+	// -- once, at the moment the twinkle was supposed to be off.
+	const int startLevel = (cfg.twinkleMs > 0)
+		? twinkleLevel(pixel, cfg.twinkleMs / twinkleTickMs, cfg)
+		: cfg.twinkleMax;
+
 	if (t <= delay) {
-		// Still holding the twinkle's last look for this pixel. Sample
-		// the twinkle at the moment the ramp would have started so the
-		// hand-off is continuous.
-		const int sample = twinkleSample(pixel, cfg.twinkleMs / twinkleTickMs);
-		return lerpPercent(cfg.twinkleMin, cfg.twinkleMax, sample * 1000 / 1023);
+		// Still holding the start for this pixel.
+		return startLevel;
 	}
 	if (t >= delay + rampMs) {
 		return finalScale;
 	}
 	const std::uint32_t into = t - delay;
-	const int sample = twinkleSample(pixel, cfg.twinkleMs / twinkleTickMs);
-	const int start = lerpPercent(cfg.twinkleMin, cfg.twinkleMax, sample * 1000 / 1023);
-	return lerpPercent(start, finalScale, static_cast<int>(into) * 1000 / static_cast<int>(rampMs));
+	return lerpPercent(startLevel, finalScale,
+					   static_cast<int>(into) * 1000 / static_cast<int>(rampMs));
 }
 
 // ---------------------------------------------------------------------------
@@ -798,11 +832,32 @@ StripPixel computeSelectPixel(int pixel, const StripPixel* finalPixels,
 		levels[i] = (finalPixels != 0) ? finalPixels[i].level : 0;
 	}
 	StripPixel p;
-	p.role = (finalPixels != 0) ? finalPixels[pixel].role : LedRole::OFF;
+	const int finalLevel = (finalPixels != 0) ? finalPixels[pixel].level : 0;
 	p.level = computeSelectScale(pixel, levels, totalLeds, elapsedMs, cfg);
 	if (p.level <= 0) {
 		p.role = LedRole::OFF;
+		return p;
 	}
+	// The role decides the *colour*, and resolvePixel() answers black for
+	// OFF whatever the level says. Taking the role from the resting
+	// picture therefore painted the twinkle black on every pixel the
+	// resting paint leaves dark -- and with the stack no longer lit at
+	// rest that is most of the strip, gaps included. The twinkle was
+	// being computed correctly and then thrown away by the colour, which
+	// is why it disappeared when the resting paint stopped lighting the
+	// stack: it had only ever been visible on top of it.
+	//
+	// So the role belongs to the resting paint, and anything *brighter*
+	// than the resting paint is the strike, which is the selection's own
+	// colour. One rule, no phase boundary in it, so the hand-off into the
+	// collapse cannot be missed: a pixel gives the strike colour back
+	// exactly as it reaches its final level, which is the moment its real
+	// role is the right answer anyway. A gap pixel therefore sparks amber
+	// and fades to nothing.
+	p.role = (p.level > finalLevel)
+				 ? LedRole::SELECTED
+				 : ((finalPixels != 0) ? finalPixels[pixel].role
+									   : LedRole::OFF);
 	return p;
 }
 

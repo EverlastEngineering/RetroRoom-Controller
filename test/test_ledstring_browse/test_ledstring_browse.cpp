@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <LedStringPaint.h>
 #include <unity.h>
+#include "configuration.h"
 
 using retroroom_core::computeBlobWindow;
 using retroroom_core::computeKeepEnd;
@@ -33,7 +34,11 @@ using retroroom_core::DetentGateConfig;
 using retroroom_core::easeInOutPermille;
 using retroroom_core::LedRange;
 using retroroom_core::SelectionEffectConfig;
+using retroroom_core::twinkleLevel;
 using retroroom_core::twinkleSample;
+using retroroom_core::resolvePixel;
+using retroroom_core::LedColor;
+using retroroom_core::StripPixel;
 using retroroom_core::travelEdges;
 using retroroom_core::collectAboveWindows;
 using retroroom_core::computeTravelPath;
@@ -1552,6 +1557,267 @@ static void test_a_console_wider_than_the_peak_still_gets_the_whole_block(void) 
 	TEST_ASSERT_EQUAL(23 * 1000, narrow.rightPermille);
 }
 
+// A select config set up the way the twinkle tests want it: a
+// thresholded twinkle, a fifth of the strip lit, re-rolling every 15ms.
+//
+// Built with the default constructor and named fields rather than the
+// positional one -- that has seven arguments and a reader cannot hold
+// them, and the new twinkle values are exactly the ones most likely to
+// be retuned.
+static SelectionEffectConfig twinkleConfig() {
+	SelectionEffectConfig cfg;
+	cfg.totalMs = 900;
+	cfg.twinkleMs = 150;
+	cfg.twinkleTickMs = 15;
+	cfg.twinkleOnPct = 20;
+	cfg.staggerMs = 6;
+	cfg.twinkleMin = 0;
+	cfg.twinkleMax = 100;
+	cfg.abovePct = 22;
+	cfg.selfPct = 100;
+	return cfg;
+}
+
+static void test_the_twinkle_lights_a_few_pixels_rather_than_all_of_them(void) {
+	// The difference between a twinkle and a shimmer. Scaling a random
+	// brightness lit every pixel *a bit*, which reads as a broken strip;
+	// thresholding it lights a fraction fully and leaves the rest
+	// genuinely dark, which is what the eye reads as a strike.
+	SelectionEffectConfig cfg = twinkleConfig();
+	int lit = 0;
+	for (int p = 0; p < 64; ++p) {
+		const int level = twinkleLevel(p, 0, cfg);
+		if (level == cfg.twinkleMax) {
+			++lit;
+		} else {
+			TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMin, level,
+									 "a dark pixel must be dark, not dim");
+		}
+	}
+	TEST_ASSERT_TRUE_MESSAGE(lit > 0 && lit < 64,
+		"a twinkle must light some of the strip and not all of it");
+	// Roughly the configured fraction, not merely "some".
+	TEST_ASSERT_TRUE_MESSAGE(lit >= 8 && lit <= 20,
+		"about 20% of a 64-LED strip should be lit on a tick");
+}
+
+static void test_the_twinkle_off_fraction_means_off(void) {
+	// 0% and 100% have to be exactly that. The cut is over 1024 rather
+	// than 1023 so neither end can fall through to the other branch --
+	// a "0% on" twinkle that lights a pixel or two reads as a fault.
+	SelectionEffectConfig cfg = twinkleConfig();
+	cfg.twinkleOnPct = 0;
+	for (int p = 0; p < 64; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMin, twinkleLevel(p, 0, cfg),
+								  "0% must light nothing at all");
+	}
+	cfg.twinkleOnPct = 100;
+	for (int p = 0; p < 64; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMax, twinkleLevel(p, 0, cfg),
+								  "100% must light everything");
+	}
+}
+
+static void test_the_twinkle_re_rolls_on_its_own_cadence(void) {
+	// The flicker rate is the effect. Held constant between ticks and
+	// changing between them, at the configured interval -- otherwise the
+	// tick is just a frame counter and the twinkle is a shimmer again.
+	SelectionEffectConfig cfg = twinkleConfig();
+	int changed = 0;
+	for (int p = 0; p < 64; ++p) {
+		const int first = twinkleLevel(p, 0, cfg);
+		// Same tick, same answer: deterministic, or the host tests
+		// could not assert exact frames.
+		TEST_ASSERT_EQUAL(first, twinkleLevel(p, 0, cfg));
+		// A tick's worth of time later, no change yet.
+		TEST_ASSERT_EQUAL_MESSAGE(first, twinkleLevel(p, 0, cfg),
+								  "a pixel must hold its state within a tick");
+		// Several ticks on, something must have moved.
+		for (int tick = 1; tick < 4; ++tick) {
+			if (twinkleLevel(p, tick, cfg) != first) {
+				++changed;
+				break;
+			}
+		}
+	}
+	TEST_ASSERT_TRUE_MESSAGE(changed > 32,
+		"most of the strip must re-roll within a few ticks");
+}
+
+static void test_the_twinkle_is_visible_where_the_strip_rests_dark(void) {
+	// The twinkle was invisible, and the reason is worth stating because
+	// it is not where you would look: the brightness was computed
+	// correctly and then discarded by the *colour*.
+	//
+	// The role decides the colour and OFF is black whatever the level
+	// says, and the twinkle took its role from the resting picture. With
+	// the stack no longer lit at rest, that is most of the strip -- gaps
+	// included. So the twinkle had only ever been visible on top of the
+	// lit stack, and turning the stack off at rest took the twinkle with
+	// it.
+	StripFrame f = configuredFrame(StripEffect::SELECTING);
+	f.abovePct = LEDSTRING_ABOVE_PCT;   // 0: only the selection is lit
+	f.selfPct = LEDSTRING_SELF_PCT;
+	f.from = kSms;                       // the console being committed
+	f.aboveCount = 0;
+	f.select.totalMs = 900;
+	f.select.twinkleMs = 150;
+	f.select.twinkleTickMs = 15;
+	f.select.twinkleOnPct = 20;
+	f.select.twinkleMin = 0;
+	f.select.twinkleMax = 100;
+	f.elapsedMs = 0;
+
+	StripPixel px[64];
+	// configuredFrame() leaves the palette zeroed, which resolves every
+	// role to black -- fine for level assertions, useless for "is this
+	// pixel actually visible". Fill it in here rather than in the shared
+	// fixture, so this test can prove visibility without changing what
+	// every other test is asserting.
+	for (int r = 0; r <= static_cast<int>(retroroom_core::LedRole::SELECTED); ++r) {
+		const int v = 10 * (r + 1);
+		f.palette.colors[r] = LedColor{v, v, v};
+	}
+	computeStripFrame(f, px);
+
+	// Nothing outside SMS's window is lit at rest, so a twinkle pixel out
+	// there is exactly the case that was being painted black.
+	int litOutside = 0;
+	for (int p = 0; p < 64; ++p) {
+		if (p >= kSms.start && p < kSms.start + kSms.width) {
+			continue;
+		}
+		if (px[p].level <= 0) {
+			continue;
+		}
+		++litOutside;
+		TEST_ASSERT_TRUE_MESSAGE(px[p].role != retroroom_core::LedRole::OFF,
+			"a twinkle pixel outside every console must still carry a colour");
+		const LedColor c = resolvePixel(f, px[p]);
+		TEST_ASSERT_TRUE_MESSAGE(c.r + c.g + c.b > 0,
+								  "and must resolve to something other than black");
+	}
+	TEST_ASSERT_TRUE_MESSAGE(litOutside > 8,
+		"the twinkle is supposed to be reaching across the whole strip");
+}
+
+static void test_the_strike_gives_the_colour_back_as_it_settles(void) {
+	// The rule that fixes the twinkle also has to hand the pixels back,
+	// or the effect would not land on the resting paint: a gap pixel
+	// would sit in the strike colour instead of going out.
+	//
+	// So the same pixel has to be the strike part way through and dark at
+	// the end. That pair is the whole rule, and it is the thing worth
+	// pinning -- asserting the *end* alone would pass even if the strike
+	// colour simply never came back, because the end is unaffected.
+	StripFrame f = configuredFrame(StripEffect::SELECTING);
+	f.abovePct = LEDSTRING_ABOVE_PCT;
+	f.selfPct = LEDSTRING_SELF_PCT;
+	f.from = kSms;
+	f.aboveCount = 0;
+	f.select.totalMs = 900;
+	f.select.twinkleMs = 150;
+	f.select.twinkleTickMs = 15;
+	f.select.twinkleOnPct = 20;
+	f.select.twinkleMin = 0;
+	f.select.twinkleMax = 100;
+
+	// Half way through the effect, once the collapse is well under way.
+	StripPixel mid[64];
+	f.elapsedMs = 400;
+	computeStripFrame(f, mid);
+	int striking = 0;
+	for (int p = 0; p < 64; ++p) {
+		if (p >= kSms.start && p < kSms.start + kSms.width) {
+			continue;
+		}
+		if (mid[p].role == retroroom_core::LedRole::SELECTED) {
+			++striking;
+		}
+	}
+	TEST_ASSERT_TRUE_MESSAGE(striking > 0,
+		"the strike should have reached beyond the console being committed");
+
+	// And the end of the effect is the resting paint, with every one of
+	// those pixels back to dark and holding their resting role. Scoped to
+	// the pixels outside the committed console, because that one rests
+	// lit at selfPct and asserting it is dark would be asserting the
+	// resting picture is wrong.
+	StripPixel end[64];
+	f.elapsedMs = f.select.totalMs;
+	computeStripFrame(f, end);
+	for (int p = 0; p < 64; ++p) {
+		if (p >= kSms.start && p < kSms.start + kSms.width) {
+			continue;
+		}
+		TEST_ASSERT_EQUAL_MESSAGE(0, end[p].level,
+								  "the effect must end on the resting paint");
+		TEST_ASSERT_TRUE_MESSAGE(
+			end[p].role != retroroom_core::LedRole::SELECTED,
+			"no gap pixel may still be holding the strike colour");
+	}
+	// And the committed console is left lit, at its resting brightness.
+	TEST_ASSERT_EQUAL_MESSAGE(LEDSTRING_SELF_PCT,
+							  end[kSms.start].level,
+							  "the committed console rests at the selection level");
+}
+
+static void test_a_twinkle_of_zero_is_just_the_collapse(void) {
+	// The off switch, and the reason it needs a test of its own rather
+	// than just a zero: with the twinkle off the effect must be a plain
+	// collapse. It used to threshold a fresh sample as the collapse's
+	// start, which lit a random fifth of the strip for one frame -- so
+	// twinkleMs = 0 still twinked, exactly once, at the moment it was
+	// supposed to be off.
+	SelectionEffectConfig cfg = twinkleConfig();
+	cfg.twinkleMs = 0;
+	const int finalPct[8] = {0, 22, 100, 0, 0, 0, 0, 0};
+
+	// Nothing ever gets brighter. That is the whole difference between a
+	// twinkle and its absence, and the same check on a twinkling config
+	// fails on the first re-roll.
+	for (int p = 0; p < 8; ++p) {
+		int prev = computeSelectScale(p, finalPct, 8, 0, cfg);
+		for (std::uint32_t t = 1; t <= cfg.totalMs; t += 5) {
+			const int now = computeSelectScale(p, finalPct, 8, t, cfg);
+			TEST_ASSERT_TRUE_MESSAGE(now <= prev,
+									  "with no twinkle a pixel must only ever dim");
+			prev = now;
+		}
+	}
+	// It still ends on the resting paint, so turning the twinkle off does
+	// not turn the selection off.
+	for (int p = 0; p < 8; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(finalPct[p],
+								  computeSelectScale(p, finalPct, 8, cfg.totalMs, cfg),
+								  "the collapse must still land on the resting paint");
+	}
+}
+
+static void test_the_travel_is_the_colour_it_hands_over_to(void) {
+	// The travel's last frame is the target window, and the frame after
+	// it is that window pulsing as a proposal. A difference between the
+	// two colours is a visible flash of a different hue at exactly the
+	// moment the movement resolves into an answer.
+	//
+	// The values are compared rather than hard-coded, so retuning the
+	// proposal does not silently reintroduce the flip.
+	TEST_ASSERT_EQUAL_MESSAGE(LEDSTRING_COLOR_PROPOSAL_R,
+							  LEDSTRING_COLOR_TRAVEL_R,
+							  "the travel block must not change hue on handover");
+	TEST_ASSERT_EQUAL(LEDSTRING_COLOR_PROPOSAL_G, LEDSTRING_COLOR_TRAVEL_G);
+	TEST_ASSERT_EQUAL(LEDSTRING_COLOR_PROPOSAL_B, LEDSTRING_COLOR_TRAVEL_B);
+	// And both have to be at the same *brightness* as the pulse peak,
+	// or the handover is a step in luminance even with the hue fixed.
+	StripFrame f = configuredFrame(StripEffect::PREVIEW);
+	f.from = kNes;
+	f.to = kNes;
+	f.travelPct = LEDSTRING_SELF_PCT;
+	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
+	TEST_ASSERT_EQUAL_MESSAGE(f.pulseMaxPct, f.travelPct,
+							  "the block must arrive at the pulse's peak brightness");
+}
+
 static void test_a_step_within_a_shelf_still_measures_the_gap(void) {
 	// The guard on the rule above. Within a shelf the block enters at
 	// the source's trailing edge, which lands exactly *on* the far edge
@@ -1917,6 +2183,13 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_retreat_fades_rather_than_snapping);
 	RUN_TEST(test_a_retreat_longer_than_the_run_empties_it);
 	RUN_TEST(test_the_retreat_applies_at_the_low_end_going_back);
+	RUN_TEST(test_the_twinkle_lights_a_few_pixels_rather_than_all_of_them);
+	RUN_TEST(test_the_twinkle_off_fraction_means_off);
+	RUN_TEST(test_the_twinkle_re_rolls_on_its_own_cadence);
+	RUN_TEST(test_the_twinkle_is_visible_where_the_strip_rests_dark);
+	RUN_TEST(test_the_strike_gives_the_colour_back_as_it_settles);
+	RUN_TEST(test_a_twinkle_of_zero_is_just_the_collapse);
+	RUN_TEST(test_the_travel_is_the_colour_it_hands_over_to);
 	RUN_TEST(test_a_console_wider_than_the_peak_still_gets_the_whole_block);
 	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);
 	RUN_TEST(test_fill_uses_three_distinct_levels);

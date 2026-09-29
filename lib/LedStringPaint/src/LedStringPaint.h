@@ -299,14 +299,36 @@ struct SelectionEffectConfig {
 	// under a second.
 	std::uint32_t totalMs;
 	// Portion of the effect spent twinkling the entire strip before it
-	// starts settling. Clamped to totalMs.
+	// starts settling. Clamped to totalMs. **0 is the twinkle's off
+	// switch** and compiles no twinkle behaviour into the sequence at
+	// all -- the effect goes straight to the settle.
 	std::uint32_t twinkleMs;
+	// How often the twinkle re-rolls *which* pixels are lit, in ms.
+	// Small enough to read as a flicker, large enough that the eye
+	// resolves individual lit pixels rather than a wash. Ignored when
+	// twinkleMs is 0.
+	std::uint32_t twinkleTickMs = 15;
+	// Roughly what fraction of the strip is lit on any one tick, as a
+	// percentage. The twinkle is a threshold on the pseudo-random
+	// sample rather than a brightness scale, so this is a count of lit
+	// pixels and not a dimming.
+	//
+	// This is the difference between a twinkle and a shimmer. Ramping a
+	// random *brightness* across the strip lights every pixel a bit, and
+	// that reads as noise -- it looks like the strip is broken rather
+	// than flickering. Choosing a few pixels to be fully on and leaving
+	// the rest dark reads as a strike.
+	//
+	// 0 is off and 100 is a solid block, which is not a twinkle.
+	int twinkleOnPct = 20;
 	// Per-pixel delay added to the settle ramp, so the collapse ripples
 	// down the strip instead of snapping in one frame. The whole
 	// stagger is subtracted from the ramp length, so raising this too
 	// far shortens the ramp rather than stretching the effect.
 	std::uint32_t staggerMs;
-	// Brightness percentage of the darkest and brightest twinkle samples.
+	// The two levels the twinkle switches between: a lit pixel gets
+	// twinkleMax, a dark one twinkleMin. Defaults read as fully on and
+	// fully off, but a dimmer "on" is a legitimate softer strike.
 	int twinkleMin;
 	int twinkleMax;
 	// Brightness percentages the strip settles to. The split is not
@@ -332,6 +354,16 @@ int computeKeepEnd(int ledPosition, int ledWidth, int totalLeds,
 // counter, not milliseconds -- the caller divides by whatever cadence
 // the twinkle should visibly run at.
 int twinkleSample(int pixel, std::uint32_t tick);
+
+// One twinkle sample resolved to a brightness: the pixel's pseudo-random
+// sample is thresholded against `twinkleOnPct`, so a lit pixel gets
+// `twinkleMax` and a dark one `twinkleMin`.
+//
+// Thresholded rather than scaled, and that is the whole character of
+// the effect -- see twinkleOnPct. Deterministic, so the host tests can
+// assert exact frames.
+int twinkleLevel(int pixel, std::uint32_t tick,
+                 const SelectionEffectConfig& cfg);
 
 // Brightness percentage (0..100) for one pixel at `elapsedMs` into the
 // selection effect. `pixel` must be < totalLeds.

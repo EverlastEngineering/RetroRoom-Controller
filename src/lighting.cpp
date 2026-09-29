@@ -22,6 +22,29 @@ static bool ringProximityHold = false;
 // without also disabling the explicit paths.
 static bool ringFadeRequested = false;
 static uint32_t ringHoldUntilMs = 0;
+// When the select strike stops holding the ring lit, and 0 when there is
+// no strike under way. Checked before every other ring state, because a
+// strike is a flash *over* whatever the ring was doing.
+static uint32_t ringFlashUntilMs = 0;
+
+// Hold the whole ring lit for the select strike. The caller owns the
+// timing; this only asserts the pixels, so it doubles as the "still
+// striking" step that lighting_loop() re-asserts every tick.
+//
+// Declared above lighting_loop() because the loop needs it and a
+// forward declaration would be a second thing to keep in step with the
+// definition.
+static void ringStrikeStep() {
+	fill_solid(leds, NUM_RING_LEDS, CRGB::White);
+	FastLED.show();
+	ringLit = true;
+	// A strike outranks a fade that was already under way, and it does
+	// not arm the idle timeout: the ring is going dark on purpose, and
+	// arming it would mean the strike could be interrupted by a timeout
+	// it ought to be immune to.
+	ringFading = false;
+	ringFadeRequested = false;
+}
 
 // One fadeToBlackBy step. The caller must keep calling until
 // ringFading clears itself. Returns true on the tick it completes.
@@ -41,6 +64,22 @@ static bool fadeStep() {
 // operator is still engaged, so the ring stays on and the deadline is
 // pushed out rather than allowed to fire.
 bool lighting_loop() {
+	// The select strike, ahead of every other ring state. It is a flash
+	// over whatever was happening -- including a fade already under way,
+	// which is the normal case, because the rotary click paints the ring
+	// on its way in and a commit immediately afterwards would
+	// otherwise be turning it off as it arrives.
+	if (ringFlashUntilMs != 0) {
+		if ((int32_t)(millis() - ringFlashUntilMs) < 0) {
+			ringStrikeStep();
+			return false;
+		}
+		// Strike over. The interaction is genuinely over now, so this
+		// is the force-off the strike was standing in front of.
+		ringFlashUntilMs = 0;
+		lightRingForceOff();
+		return fadeStep();
+	}
 	if (ringFading) {
 		return fadeStep();
 	}
@@ -85,6 +124,16 @@ void lightRingSetProximityHold(bool held) {
 		// they have already taken their hand away.
 		ringFadeRequested = true;
 	}
+}
+
+void lightRingSelectStrike() {
+	if (RING_SELECT_FLASH_MS <= 0) {
+		ringFlashUntilMs = 0;
+		lightRingForceOff();
+		return;
+	}
+	ringFlashUntilMs = millis() + (uint32_t)RING_SELECT_FLASH_MS;
+	ringStrikeStep();
 }
 
 void lightRingForceOff() {

@@ -296,17 +296,20 @@ void selectConsole(const Console& c) {
 	pendingSaveIndex = currentConsoleIndex;
 	pendingSaveDueMs = millis() + kSaveQuietMs;
 
-	// A commit ends the interaction, so the ring goes dark rather than
-	// holding for the rest of the idle timeout. The rotary-click path
-	// additionally painted the ring on its way in (ringLEDNext /
-	// ringLEDPrevious); this is the matching off-switch, and it is why
-	// spinning the knob and then clicking settles dark.
+	// A commit ends the interaction, so the ring strikes once and then
+	// goes dark rather than holding for the rest of the idle timeout.
+	// The rotary-click path additionally painted the ring on its way in
+	// (ringLEDNext / ringLEDPrevious); this is the matching off-switch,
+	// and it is why spinning the knob and then clicking settles dark.
+	// The strike is the one moment the operator is definitely looking at
+	// the knob, so it is where the confirmation belongs. Set
+	// RING_SELECT_FLASH_MS to 0 to compile it out.
 	//
 	// Placed last so that everything above -- including the LED string
 	// selection effect, which is a different strip and is NOT affected
 	// -- has run.
 #if defined(HAS_LEDS)
-	lightRingForceOff();
+	lightRingSelectStrike();
 #endif
 }
 

@@ -68,6 +68,8 @@ retroroom_core::SelectionEffectConfig effectConfig() {
 	c.twinkleMs = (LEDSTRING_SELECT_TWINKLE_MS < LEDSTRING_SELECT_EFFECT_MS)
 					 ? LEDSTRING_SELECT_TWINKLE_MS
 					 : LEDSTRING_SELECT_EFFECT_MS;
+	c.twinkleTickMs = LEDSTRING_SELECT_TWINKLE_TICK_MS;
+	c.twinkleOnPct = LEDSTRING_SELECT_TWINKLE_ON_PCT;
 	c.staggerMs = LEDSTRING_SELECT_STAGGER_MS;
 	c.twinkleMin = LEDSTRING_SELECT_TWINKLE_MIN_PCT;
 	c.twinkleMax = LEDSTRING_SELECT_TWINKLE_MAX_PCT;
@@ -580,7 +582,22 @@ void ledstring_loop() {
 			// already exactly the target window, so the handover is
 			// invisible.
 			mode = StripMode::PREVIEW;
-			animStartMs = now;
+			// Start the pulse at its *peak*, not its trough. The travel
+			// arrives at full brightness on that same window, so a pulse
+			// beginning at pulseMinPct steps the console down by most of
+			// its range at exactly the moment the movement resolves into
+			// an answer. That is a step in luminance, which no amount of
+			// colour matching fixes -- it took matching the hue to see it
+			// was left.
+			//
+			// The pulse is a parabola peaking mid-period, so the origin
+			// moves half a period back rather than the pulse being
+			// inverted. That also leaves the phase continuous from here
+			// on, so the candidate's pulse carries on through the
+			// following fill instead of restarting. The subtraction is
+			// deliberately allowed to wrap: elapsedMs is computed the
+			// same way, so the two agree either side of millis()' rollover.
+			animStartMs = now - (uint32_t)(LEDSTRING_PREVIEW_PULSE_MS / 2);
 		}
 		break;
 	}

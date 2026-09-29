@@ -37,6 +37,12 @@ extern void lightRingSetProximityHold(bool held);
 // Starts the fade now, regardless of the idle timeout. Used on select,
 // where the interaction is over and the ring should not linger.
 extern void lightRingForceOff();
+// A commit: one strike of the whole ring, then the force-off above. This
+// is the call every selection path should make -- selectConsole() is the
+// single commit point, so putting the strike here covers the rotary
+// press, NEXT/PREV, /next, /prev and the post-boot restore at once.
+// RING_SELECT_FLASH_MS = 0 makes it the plain force-off.
+extern void lightRingSelectStrike();
 extern void lightSingle(int led);
 extern void ringLEDNext();
 extern void ringLEDPrevious();

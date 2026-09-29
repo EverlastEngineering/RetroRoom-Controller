@@ -17,6 +17,28 @@
 #define RING_HIGHLIGHT_IDLE_MS 5000
 #endif
 
+// One strike of the whole ring when a console is committed, before it
+// starts going dark, in ms. **0 is the off switch** and is meant to be
+// compiled with: the ring then goes straight to the plain force-off
+// that is its behaviour today.
+//
+// A select is the one moment the operator is guaranteed to be looking
+// at the knob, and it is the one moment the ring is on its way out. A
+// flash reads as confirmation from across the room; without it the
+// selection is acknowledged only by the strip, which is behind and
+// below the hand.
+//
+// The whole ring rather than the current pixel: a select is not a
+// position, it is an event, and lighting one of eight pixels looks like
+// the spinner landing somewhere.
+//
+// Kept short on purpose. It sits in front of the ring's idle fade, so
+// anything much over ~150ms reads as the ring being slow rather than
+// striking.
+#ifndef RING_SELECT_FLASH_MS
+#define RING_SELECT_FLASH_MS 120
+#endif
+
 // ---------------------------------------------------------------------------
 // LED string (GP21) browse + selection feel
 // ---------------------------------------------------------------------------
@@ -222,8 +244,35 @@
 
 // Portion of the selection effect spent twinkling the whole strip
 // before it starts collapsing. Clamped to LEDSTRING_SELECT_EFFECT_MS.
+//
+// **0 is the twinkle's off switch** and is meant to be compiled with:
+// the effect then goes straight from the commit to the collapse, and
+// the twinkle costs nothing in flash, RAM or code.
 #ifndef LEDSTRING_SELECT_TWINKLE_MS
-#define LEDSTRING_SELECT_TWINKLE_MS 350
+#define LEDSTRING_SELECT_TWINKLE_MS 150
+#endif
+
+// How often the twinkle re-rolls which pixels are lit, in ms.
+//
+// This is the cadence of the flicker, not its length. At 15ms a lit
+// pixel is on for about a frame at 60Hz and off for one, which is the
+// fastest the eye resolves as *flashing* rather than as a single
+// brightness. Much longer and the twinkle reads as a shimmer; much
+// shorter and it aliases into noise. Ignored when the twinkle is off.
+#ifndef LEDSTRING_SELECT_TWINKLE_TICK_MS
+#define LEDSTRING_SELECT_TWINKLE_TICK_MS 15
+#endif
+
+// What fraction of the strip is lit on any one twinkle tick, as a
+// percentage. 0 is off, 100 is a solid block.
+//
+// A fraction, not a brightness: see the note on twinkleOnPct in
+// lib/LedStringPaint. Roughly a fifth lit is enough to read as a strike
+// across a dark strip without turning the whole thing into a strobe,
+// and the gap between lit pixels is what makes it look like sparks
+// rather than a lit bar.
+#ifndef LEDSTRING_SELECT_TWINKLE_ON_PCT
+#define LEDSTRING_SELECT_TWINKLE_ON_PCT 20
 #endif
 
 // Per-pixel delay on the collapse ramp, so the strip settles as a
@@ -233,11 +282,17 @@
 #define LEDSTRING_SELECT_STAGGER_MS 6
 #endif
 
-// Dimmest and brightest samples of the twinkle, as a percentage of
-// LEDSTRING_COLOR_*. The twinkle deliberately dips near zero so the
-// sparkle has contrast.
+// The two brightness levels the twinkle switches between: a lit pixel
+// gets MAX, a dark one gets MIN. So these are the *on* and *off*
+// levels, not the ends of a brightness ramp.
+//
+// MIN wants to be genuinely 0. It used to be 10 to give the sparkle
+// "contrast", which was written when the twinkle scaled a random
+// brightness; with a thresholded twinkle a non-zero floor means the
+// 80% that are meant to be dark are actually faintly lit, and the
+// strike turns into a wash again.
 #ifndef LEDSTRING_SELECT_TWINKLE_MIN_PCT
-#define LEDSTRING_SELECT_TWINKLE_MIN_PCT 10
+#define LEDSTRING_SELECT_TWINKLE_MIN_PCT 0
 #endif
 #ifndef LEDSTRING_SELECT_TWINKLE_MAX_PCT
 #define LEDSTRING_SELECT_TWINKLE_MAX_PCT 100
@@ -321,17 +376,31 @@
 #define LEDSTRING_COLOR_PROPOSAL_B 8
 #endif
 
-// The block of light moving between consoles. The brightest thing on
-// the strip while it moves, because it is the only thing that is
-// moving and the eye goes to motion first.
+// The block of light moving between consoles.
+//
+// The brightest thing on the strip while it moves, because it is the
+// only thing that is moving and the eye goes to motion first.
+//
+// KEEP THESE EQUAL TO LEDSTRING_COLOR_PROPOSAL_*. The travel's last
+// frame *is* the target window, and the frame after it is that window
+// pulsing as a proposal -- so the block hands over to the pulse. Any
+// difference between the two is a visible flash of a different colour
+// at exactly the moment the movement resolves into an answer, which
+// undoes the arrival. It was 80/60/24, a desaturated warm that read as
+// bright white at full brightness and then snapped to amber on
+// handover.
+//
+// If you want a travelling block that reads differently from the
+// proposal it is heading for, that needs the pulse to change hue at the
+// same moment -- one change, not two that have to agree.
 #ifndef LEDSTRING_COLOR_TRAVEL_R
-#define LEDSTRING_COLOR_TRAVEL_R 80
+#define LEDSTRING_COLOR_TRAVEL_R 64
 #endif
 #ifndef LEDSTRING_COLOR_TRAVEL_G
-#define LEDSTRING_COLOR_TRAVEL_G 60
+#define LEDSTRING_COLOR_TRAVEL_G 40
 #endif
 #ifndef LEDSTRING_COLOR_TRAVEL_B
-#define LEDSTRING_COLOR_TRAVEL_B 24
+#define LEDSTRING_COLOR_TRAVEL_B 8
 #endif
 
 // The knob-turn progression indicator. Cool, so it never reads as a
