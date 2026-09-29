@@ -100,12 +100,19 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs) {
 
 	// Fast mode is decided per detent from the gap since the previous
 	// one, so a spin that accelerates picks it up on the very next
-	// detent. The signed subtraction is the millis()-wraparound-safe
-	// form.
-	if (cfg_.fastSpinWindowMs > 0 && hasLastDetent_ &&
-		(std::uint32_t)(nowMs - lastDetentMs_) < cfg_.fastSpinWindowMs) {
-		fastMode_ = true;
-	}
+	// detent -- and, just as importantly, *un-picks* it the moment the
+	// operator slows back down.
+	//
+	// This used to latch: once a detent tripped the window, fastMode_
+	// stayed true for the rest of the browse and was only cleared by
+	// reset(). That made the slow path effectively unreachable, because
+	// a single early fast detent -- or a window simply set below the
+	// operator's deliberate cadence -- locked in the fast threshold for
+	// everything that followed.
+	//
+	// The signed subtraction is the millis()-wraparound-safe form.
+	fastMode_ = cfg_.fastSpinWindowMs > 0 && hasLastDetent_ &&
+				(std::uint32_t)(nowMs - lastDetentMs_) < cfg_.fastSpinWindowMs;
 	lastDetentMs_ = nowMs;
 	hasLastDetent_ = true;
 

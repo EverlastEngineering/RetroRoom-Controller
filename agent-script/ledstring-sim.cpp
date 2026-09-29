@@ -402,6 +402,55 @@ void scenarioFrames() {
 	}
 }
 
+// The three candidate readings of "reduce down to only the ones above
+// the selected console", side by side for one console. The gaps
+// between segments are the point: example2.json puts NES at [1,2),
+// SMS at [7,12), XBOX at [17,22), MAME at [27,42), so [2,7), [12,17)
+// and [22,27) are *not* any console's window. Whether those gaps stay
+// dark is the whole difference between the three, and it is an
+// aesthetic call that is much easier to settle by looking than by
+// arguing.
+void scenarioAbove() {
+	rule("\"ABOVE THE SELECTION\" -- three readings, SMS selected");
+	printf("SMS owns leds 7..11. NES owns led 1. The gaps 2..6, 12..16 and\n"
+		   "22..26 belong to no console.\n\n");
+
+	// (a) contiguous prefix -- what is on the strip today.
+	{
+		StripFrame f = baseFrame();
+		f.effect = StripEffect::RESTING;
+		f.from = windowFor(1);
+		f.keepEnd = keepEndFor(1);
+		f.consoleStart = consoleStartFor(1);
+		render(f, "(a) prefix 0..11, gaps filled  [current]");
+	}
+
+	// (b) the windows above, each in its own place, gaps dark. Needs the
+	// list of other windows, which StripFrame does not carry yet.
+	printf("%-36s |", "(b) windows above only, gaps dark");
+	for (int p = 0; p < kTotalLeds; ++p) {
+		int pct = 0;
+		if (p == 1) {
+			pct = LEDSTRING_ABOVE_PCT;   // NES's window
+		} else if (p >= 7 && p < 12) {
+			pct = LEDSTRING_SELF_PCT;    // SMS, the selection
+		}
+		int bucket = (pct == 0) ? 0 : ((pct - 1) * 9) / 100 + 1;
+		putchar(kRamp[bucket]);
+	}
+	printf("|\n");
+
+	// (c) the selection alone.
+	{
+		StripFrame f = baseFrame();
+		f.effect = StripEffect::RESTING;
+		f.from = windowFor(1);
+		f.keepEnd = 0;  // nothing kept above
+		f.consoleStart = consoleStartFor(1);
+		render(f, "(c) selection window only");
+	}
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -421,10 +470,15 @@ int main(int argc, char** argv) {
 	if (which == "frames" || which == "all") {
 		scenarioFrames();
 	}
+	if (which == "above" || which == "all") {
+		scenarioAbove();
+	}
 	if (which != "browse" && which != "fastspin" && which != "reverse" &&
-		which != "select" && which != "frames" && which != "all") {
+		which != "select" && which != "frames" && which != "above" &&
+		which != "all") {
 		fprintf(stderr, "unknown scenario '%s'\n", which.c_str());
-		fprintf(stderr, "try: browse, fastspin, reverse, select, frames, all\n");
+		fprintf(stderr,
+				"try: browse, fastspin, reverse, select, frames, above, all\n");
 		return 1;
 	}
 	printf("\n");

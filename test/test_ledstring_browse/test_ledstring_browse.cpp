@@ -121,25 +121,57 @@ static void test_fast_spin_completes_a_step_in_two_detents(void) {
 	TEST_ASSERT_TRUE_MESSAGE(ev.advanced, "fast spin must not need 5 detents");
 }
 
-static void test_slow_spin_after_a_fast_one_stays_deliberate(void) {
-	// Fast mode is sticky: once the operator has shown they are in a
-	// hurry, a slightly longer gap does not put the slow cadence back.
-	// It is cleared by reset(), which is what the abandoned-browse and
-	// commit paths do.
+static void test_slowing_back_down_returns_to_the_deliberate_cadence(void) {
+	// Fast mode used to latch: one fast detent put the whole browse
+	// into the fast threshold until something called reset(). On the
+	// bench that made the slow path effectively unreachable, because the
+	// first detent after any pause is never "fast" and the second
+	// almost always was. The escalation now reflects the gap before
+	// *this* detent, so slowing down buys the slow cadence back
+	// immediately.
 	DetentGate gate;
 	gate.configure(DetentGateConfig(5, 2, 1000));
+
 	uint32_t t = 0;
 	t += 20;
 	gate.onDetent(1, t);
-	t += 500;
+	t += 20;
 	retroroom_core::DetentEvent ev = gate.onDetent(1, t);
-	TEST_ASSERT_TRUE(ev.fastMode);
+	TEST_ASSERT_TRUE_MESSAGE(ev.fastMode, "a tight gap must read as fast");
 
-	gate.reset();
-	t += 5000;
+	// Now turn deliberately.
+	t += 2000;
 	ev = gate.onDetent(1, t);
-	TEST_ASSERT_FALSE(ev.fastMode);
+	TEST_ASSERT_FALSE_MESSAGE(ev.fastMode,
+		"slowing back down must return to the deliberate threshold");
 	TEST_ASSERT_EQUAL(5, ev.detentsPerStep);
+}
+
+static void test_zero_window_never_escalates(void) {
+	// LEDSTRING_FAST_SPIN_WINDOW_MS = 0 is the documented "off" switch
+	// and is the current setting. Whatever the cadence, the gate must
+	// stay on the deliberate threshold -- that is the whole point of
+	// being able to test the slow path.
+	DetentGate gate;
+	gate.configure(DetentGateConfig(5, 2, 0));
+	uint32_t t = 0;
+	for (int i = 0; i < 20; ++i) {
+		t += 5;  // absurdly fast
+		const retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+		TEST_ASSERT_FALSE(ev.fastMode);
+		TEST_ASSERT_EQUAL(5, ev.detentsPerStep);
+	}
+	// And the fast threshold must actually be unreachable: four detents
+	// must not have completed a step.
+	DetentGate slow;
+	slow.configure(DetentGateConfig(5, 2, 0));
+	t = 0;
+	for (int i = 0; i < 4; ++i) {
+		t += 5;
+		TEST_ASSERT_FALSE(slow.onDetent(1, t).advanced);
+	}
+	t += 5;
+	TEST_ASSERT_TRUE(slow.onDetent(1, t).advanced);
 }
 
 static void test_reversing_walks_the_position_back(void) {
@@ -756,7 +788,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_gate_snaps_back_to_the_anchor_after_advancing);
 	RUN_TEST(test_gate_escalates_to_two_detents_when_spinning);
 	RUN_TEST(test_fast_spin_completes_a_step_in_two_detents);
-	RUN_TEST(test_slow_spin_after_a_fast_one_stays_deliberate);
+	RUN_TEST(test_slowing_back_down_returns_to_the_deliberate_cadence);
+	RUN_TEST(test_zero_window_never_escalates);
 	RUN_TEST(test_reversing_walks_the_position_back);
 	RUN_TEST(test_crossing_the_anchor_flips_the_target_side);
 	RUN_TEST(test_backward_step_completes_and_reports_direction);

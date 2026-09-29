@@ -55,12 +55,27 @@
 #endif
 
 // A detent arriving within this many ms of the previous one marks the
-// spin as fast. 0 disables the escalation. Note this measures the gap
-// between detents, not the length of the whole browse, so it has to be
-// comfortably longer than the gap between detents of a *deliberate*
-// turn or nothing would ever register as deliberate.
+// spin as fast. **0 disables the escalation entirely**, which is the
+// current setting.
+//
+// DISABLED, and the reason is worth keeping: this was 1000 ms, which
+// sounds generous but is *shorter than a deliberate human detent*. On
+// the bench the first detent registered as deliberate, the second
+// tripped the window, and from there on the browse was permanently in
+// fast mode -- so 1/5 then 2/5 then straight to the fast cadence, and
+// the slow path could only be reached by turning the knob unnaturally
+// slowly. The window has to be comfortably LONGER than the operator's
+// slowest deliberate rhythm or it will never be slower than fast.
+//
+// We do not have a number for that slowest deliberate rhythm yet, which
+// is the reason it is off rather than merely retuned. Re-enable it only
+// once someone has timed their own deliberate turn; a starting guess
+// would be 2000-3000 ms. The latching that compounded this (one fast
+// detent locking the whole browse into fast) is fixed independently --
+// the escalation now reflects the gap before *this* detent, so it
+// drops back to the slow cadence the moment they slow down.
 #ifndef LEDSTRING_FAST_SPIN_WINDOW_MS
-#define LEDSTRING_FAST_SPIN_WINDOW_MS 1000
+#define LEDSTRING_FAST_SPIN_WINDOW_MS 0
 #endif
 
 // Width in pixels of the travelling blob. Wider reads as more mass
