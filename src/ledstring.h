@@ -90,6 +90,17 @@ extern void ledstring_browseSnap(int fromIdx, int toIdx);
 
 // The browse was abandoned (the ring gave up, or a commit happened):
 // drop back to the resting paint for the selected console.
+//
+// CANCELS WHATEVER THE STRIP IS ANIMATING. It is the escape hatch, not
+// a polite request: it forces the mode to RESTING and paints. So a
+// caller that has just started an effect must not call this afterwards,
+// or it will be cancelled on the next statement with nothing left to
+// show but the first frame. selectConsole() used to start the selection
+// effect and then reset the browse, which is exactly that, and the
+// twinkle painted one frame and stopped -- at any duration.
+//
+// The order that is right for a commit is: end the browse, *then* start
+// the effect.
 extern void ledstring_browseClear();
 
 // Is the strip still giving an abandoned run back, one fading LED at a

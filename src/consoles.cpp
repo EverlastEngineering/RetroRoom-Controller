@@ -250,6 +250,25 @@ void selectConsole(const Console& c) {
 	// no-ops when HAS_LCD is undefined (see display.h).
 	display_show_console(c.name.c_str(), c.tagline.c_str());
 	display_wake();
+	// The commit also ends the browse: forget any half-accumulated
+	// detents and drop the blob, so the operator's next turn starts a
+	// fresh step from the console that is now live. Deliberately
+	// outside the HAS_LEDS guard: the detent gate lives in
+	// controls.cpp regardless of whether the second strip is wired, and
+	// a commit that forgot to clear it would leave the next turn
+	// starting a step from the wrong place.
+	//
+	// ORDER MATTERS, and getting it backwards is why the selection
+	// effect never appeared to run at all. ledstring_browseClear()
+	// cancels whatever the strip is animating, so calling this *after*
+	// starting the effect put the strip straight back to RESTING on the
+	// next statement: the effect painted its first frame and nothing
+	// ever advanced it. The twinkle was not weak, or the wrong colour,
+	// or too short -- it was one frame, and no value of
+	// LEDSTRING_SELECT_TWINKLE_MS could have shown it. The symptom was
+	// a flicker or two at the moment of the commit, which is exactly
+	// what the two competing paint calls leave behind.
+	controls_browseReset();
 #if defined(HAS_LEDS)
 	// Play the selection effect on the second strip (GP21): the whole
 	// string twinkles, then collapses to the pixels above the selected
@@ -262,17 +281,10 @@ void selectConsole(const Console& c) {
 	// The effect is non-blocking: it hands the strip to a state machine
 	// that ledstring_loop() advances from loop(), so this commit does
 	// not sit waiting ~LEDSTRING_SELECT_EFFECT_MS before returning.
+	//
+	// After the browse reset, never before it -- see the note there.
 	ledstring_selectEffect(currentConsoleIndex);
 #endif
-	// The commit also ends the browse: forget any half-accumulated
-	// detents and drop the blob, so the operator's next turn starts a
-	// fresh step from the console that is now live. Pairs with the
-	// effect above -- the strip keeps animating, but the browse that was
-	// feeding it is over. Deliberately outside the HAS_LEDS guard: the
-	// detent gate lives in controls.cpp regardless of whether the second
-	// strip is wired, and a commit that forgot to clear it would leave
-	// the next turn starting a step from the wrong place.
-	controls_browseReset();
 
 	// Remember the selection so it survives a power cycle.
 	// selectConsole() is the single commit point for every selection

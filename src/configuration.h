@@ -249,7 +249,7 @@
 // the effect then goes straight from the commit to the collapse, and
 // the twinkle costs nothing in flash, RAM or code.
 #ifndef LEDSTRING_SELECT_TWINKLE_MS
-#define LEDSTRING_SELECT_TWINKLE_MS 150
+#define LEDSTRING_SELECT_TWINKLE_MS 850
 #endif
 
 // How often the twinkle re-rolls which pixels are lit, in ms.
