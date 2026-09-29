@@ -388,11 +388,13 @@ void rotaryEncoderTick() {
 		// The step completed: the animation lands and the cursor
 		// follows. Reaching here means the step was legal -- the gate
 		// freezes at either end of the list, so it cannot have wrapped.
+#if defined(HAS_LEDS)
+		// The travel needs both ends: the console the block leaves and
+		// the one it lands on.
+		ledstring_browseSnap(browseAnchorIndex, targetIndex);
+#endif
 		browseAnchorIndex = targetIndex;
 		browsedConsoleIndex = targetIndex;
-#if defined(HAS_LEDS)
-		ledstring_browseSnap(targetIndex);
-#endif
 		Serial.print("Browse snapped -> ");
 		Serial.println(consoles[targetIndex].name.c_str());
 	}

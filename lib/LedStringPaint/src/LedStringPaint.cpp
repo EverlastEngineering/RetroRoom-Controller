@@ -372,6 +372,267 @@ int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
 }
 
 // ---------------------------------------------------------------------------
+// Browse: the knob-turn fill and the scripted travel
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Ease-out cubic, permille in, permille out. The leading edge: fast off
+// the mark, decelerating into the target so the arrival reads as an
+// arrival rather than a stop.
+int easeOutPermille(int t) {
+	if (t <= 0) {
+		return 0;
+	}
+	if (t >= 1000) {
+		return 1000;
+	}
+	const long x = t;
+	// 1000 * (1 - (1-t)^3) = 1000 - 1000*(1-t)^3
+	const long inv = 1000 - x;
+	return static_cast<int>(1000 - (inv * inv * inv) / 1000000);
+}
+
+// Smoothstep, permille in, permille out. The trailing edge: eases out
+// of the start so the block does not snap away from the console, then
+// settles so it does not snap onto the target.
+int easeInOutPermillePermille(int t) {
+	if (t <= 0) {
+		return 0;
+	}
+	if (t >= 1000) {
+		return 1000;
+	}
+	const long x = t;
+	return static_cast<int>((3 * x * x) / 1000 - (2 * x * x * x) / 1000000);
+}
+
+int lerpPermille(int from, int to, int eased) {
+	return from + ((to - from) * eased) / 1000;
+}
+
+}  // namespace
+
+TravelEdges travelEdges(int fromLeftPermille, int fromRightPermille,
+                        int toLeftPermille, int toRightPermille,
+                        int progressPermille, int peakWidthPermille) {
+	TravelEdges e;
+	if (progressPermille < 0) {
+		progressPermille = 0;
+	}
+	if (progressPermille > 1000) {
+		progressPermille = 1000;
+	}
+	// The *leading* edge -- the one moving into new territory -- runs
+	// ease-out, so the block decelerates into its target and the arrival
+	// reads as an arrival. The trailing edge runs smoothstep, easing out
+	// of the start and settling so it never snaps. The two differ, so the
+	// gap between them opens and then closes: that opening is the
+	// stretch.
+	//
+	// Which of the two is leading depends on the direction of travel. A
+	// shelf crossing runs backwards -- the operator's knob goes one way
+	// and the light goes the other -- and using the right-hand edge's
+	// easing unconditionally inverted the block for exactly those moves.
+	const bool forward = toLeftPermille >= fromLeftPermille;
+	int right = forward
+					? lerpPermille(fromRightPermille, toRightPermille,
+								   easeOutPermille(progressPermille))
+					: lerpPermille(fromRightPermille, toRightPermille,
+								   easeInOutPermillePermille(progressPermille));
+	int left = forward
+				   ? lerpPermille(fromLeftPermille, toLeftPermille,
+								  easeInOutPermillePermille(progressPermille))
+				   : lerpPermille(fromLeftPermille, toLeftPermille,
+								  easeOutPermille(progressPermille));
+
+	// Bound the stretch. Without this the two edges can cross on a long
+	// travel and the block inverts, which reads as a glitch. The peak is
+	// taken as a minimum width rather than as a cap on the position, so
+	// the block still ends exactly on the target window.
+	if (peakWidthPermille > 0 && (right - left) > peakWidthPermille) {
+		left = right - peakWidthPermille;
+	}
+	if (left > right) {
+		left = right;
+	}
+	e.leftPermille = left;
+	e.rightPermille = right;
+	e.widthPermille = right - left;
+	return e;
+}
+
+void computeTravelPath(const LedRange& leave, int entryPixel,
+                       const LedRange& target, int sparkLeds, StripFrame& frame) {
+	frame.travelFrom = leave;
+	// The block starts as a `sparkLeds`-wide spark sitting on the pixel
+	// it enters at, so it reads as peeling off rather than appearing
+	// from nowhere. Two is enough to read as an object; one reads as a
+	// stray pixel.
+	const int spark = (sparkLeds < 1) ? 1 : sparkLeds;
+	const int fromLeft = entryPixel - spark / 2;
+	frame.travelFromLeftPermille = fromLeft * 1000;
+	frame.travelFromRightPermille = (fromLeft + spark) * 1000;
+	// End: exactly the target window, so the last frame of the travel IS
+	// the preview and the block never has to "correct" on arrival.
+	frame.travelToLeftPermille = target.start * 1000;
+	frame.travelToRightPermille = (target.start + target.width) * 1000;
+	// The fill covers the path the block will sweep, and never the
+	// target's own window -- that is where the block lands, and lighting
+	// it dim in the meantime would make the arrival mean nothing.
+	//
+	// Which end of the target the run stops short of depends on which
+	// way the operator is turning, and getting that wrong is what left
+	// a backwards browse with a zero-length run.
+	const int leaveEnd = leave.start + leave.width;
+	int fillToPixel;
+	if (entryPixel > leaveEnd) {
+		// Shelf crossing: the block comes in from beyond the target, so
+		// the fill spans the whole path it will sweep.
+		fillToPixel = entryPixel;
+	} else if (target.start >= leaveEnd) {
+		fillToPixel = target.start;                    // forwards
+	} else {
+		fillToPixel = target.start + target.width;     // backwards
+	}
+	frame.fillFrom = leave;
+	frame.fillTo = {fillToPixel, 0};
+}
+
+int coveragePercent(int leftPermille, int rightPermille, int pixel) {
+	// Exact overlap of [left, right) with the LED's one-unit pitch
+	// [pixel, pixel+1), as a percentage. All in permille, so the working
+	// is in permille of a LED and the result scales to 0..100 at the
+	// end.
+	const long long l = leftPermille;
+	const long long r = rightPermille;
+	const long long p0 = static_cast<long long>(pixel) * 1000;
+	const long long p1 = p0 + 1000;
+	const long long lo = l > p0 ? l : p0;
+	const long long hi = r < p1 ? r : p1;
+	if (hi <= lo) {
+		return 0;
+	}
+	// (overlap in permille) / 1000 gives the fraction of a pitch, so the
+	// percentage is overlap * 100 / 1000 = overlap / 10.
+	return static_cast<int>((hi - lo) / 10);
+}
+
+int computeFillEnd(const LedRange& from, const LedRange& to, int minLengthLeds,
+                   int totalLeds) {
+	if (totalLeds <= 0) {
+		return 0;
+	}
+	const int start = from.start + from.width;
+	if (to.start >= start) {
+		// Forwards: the run starts at the console being left and stops
+		// at the console being reached.
+		int end = to.start;
+		if (end - start < minLengthLeds) {
+			end = start + minLengthLeds;
+		}
+		if (end > totalLeds) {
+			end = totalLeds;
+		}
+		if (end < start) {
+			end = start;
+		}
+		return end;
+	}
+	// Backwards: the operator is turning the other way, so the run runs
+	// from the target back toward the console being left and the floor
+	// extends it *past* the target, not along the gap.
+	//
+	// This case matters: the browse goes both ways, and treating every
+	// step as forwards left a backwards step with a zero-length run, so
+	// the progression indicator simply did not appear.
+	int end = to.start;
+	if (start - end < minLengthLeds) {
+		end = start - minLengthLeds;
+	}
+	if (end < 0) {
+		end = 0;
+	}
+	return end;
+}
+
+int computeFillScale(int pixel, const StripFrame& frame) {
+	const int start = frame.fillFrom.start + frame.fillFrom.width;
+	const int end = computeFillEnd(frame.fillFrom, frame.fillTo,
+								  frame.minFillLeds, frame.totalLeds);
+	// The run is [lo, hi) whichever way it runs, so the two cases below
+	// only differ in which end is the *leading* one.
+	const bool forward = (end >= start);
+	const int lo = forward ? start : end;
+	const int hi = forward ? end : start;
+	// The console being left stays lit, dim, throughout.
+	if (pixel < lo) {
+		return frame.dimPct;
+	}
+	if (pixel >= hi) {
+		return 0;
+	}
+	// Antialias the leading edge only -- it is the edge the operator is
+	// watching move. The trailing edge is a fixed boundary the fill grew
+	// out of, and softening it would make the whole run shimmer.
+	const long long lead = (forward ? hi : lo) * 1000;
+	const long long here = static_cast<long long>(pixel) * 1000;
+	if (forward) {
+		if (here + 1000 <= lead) {
+			return frame.fillPct;
+		}
+		if (here >= lead) {
+			return 0;
+		}
+		return (frame.fillPct * static_cast<int>(lead - here)) / 1000;
+	}
+	if (here >= lead) {
+		return frame.fillPct;
+	}
+	if (here + 1000 <= lead) {
+		return 0;
+	}
+	return (frame.fillPct * static_cast<int>(1000 - (lead - here))) / 1000;
+}
+
+int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
+                       int rightPermille) {
+	// The block first, over everything. It is the thing the operator is
+	// watching, and it is meant to look like it is leaving the console
+	// behind it -- so it must be able to overlap the console it started
+	// on without being painted out by it.
+	const int covered = coveragePercent(leftPermille, rightPermille, pixel);
+	if (covered > 0) {
+		return (frame.travelPct * covered) / 100;
+	}
+	// Then the console left behind, dim for the duration of the travel.
+	if (pixel >= frame.travelFrom.start &&
+		pixel < frame.travelFrom.start + frame.travelFrom.width) {
+		return frame.dimPct;
+	}
+	// Then the knob-turn fill, which the block consumes as it passes.
+	// A pixel the block has already swept over goes dark; one it has not
+	// reached yet stays lit.
+	//
+	// Which side is "not yet" depends on the direction of travel, and a
+	// shelf crossing runs *backwards* -- the knob goes one way and the
+	// light goes the other. Testing the block's leading edge alone
+	// therefore lights the fill on the wrong side for half the cases.
+	const int fillStart = frame.travelFrom.start + frame.travelFrom.width;
+	const int fillTo = computeFillEnd(frame.travelFrom, frame.fillTo,
+									  frame.minFillLeds, frame.totalLeds);
+	if (pixel >= fillStart && pixel < fillTo) {
+		const bool forward =
+			frame.travelToLeftPermille >= frame.travelFromLeftPermille;
+		const long long here = static_cast<long long>(pixel) * 1000;
+		const bool consumed = forward ? (here < rightPermille)
+									  : (here >= leftPermille);
+		return consumed ? 0 : frame.fillPct;
+	}
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Whole-strip frames
 // ---------------------------------------------------------------------------
 
@@ -456,28 +717,30 @@ void computeStripFrame(const StripFrame& frame, int* out) {
 	case StripEffect::RESTING:
 		paintRestingInto(frame, out);
 		break;
-	case StripEffect::TRANSIT: {
-		// The magnitude, not the signed value. The gate's position is
-		// signed to say *which side* of the anchor the operator is on --
-		// that is already resolved by the caller choosing `to`. What
-		// travels the blob is the distance, so clamping the sign away
-		// here is correct. Getting this wrong is subtle and was caught
-		// by the simulator's reverse scenario: with the sign kept, every
-		// negative position eased to 0 and the blob sat frozen on the
-		// anchor for the whole backward half of a step.
-		int f = frame.fractionPermille;
-		if (f < 0) {
-			f = -f;
+	case StripEffect::FILLING: {
+		for (int i = 0; i < total; ++i) {
+			out[i] = computeFillScale(i, frame);
 		}
-		if (f > 1000) {
-			f = 1000;
+		break;
+	}
+	case StripEffect::TRAVEL: {
+		int progress = 1000;
+		if (frame.travelMs > 0) {
+			progress = static_cast<int>((static_cast<long long>(frame.elapsedMs) *
+										 1000) /
+										frame.travelMs);
+			if (progress > 1000) {
+				progress = 1000;
+			}
 		}
-		fillWindow(out, frame.from, frame.fromPct);
-		fillWindow(out, frame.to, frame.toPct);
-		const LedRange blob = computeBlobWindow(
-			frame.from.start, frame.from.width, frame.to.start,
-			frame.to.width, f, frame.blobWidth, total);
-		fillWindow(out, blob, frame.blobPct);
+		const TravelEdges edges = travelEdges(
+			frame.travelFromLeftPermille, frame.travelFromRightPermille,
+			frame.travelToLeftPermille, frame.travelToRightPermille, progress,
+			frame.travelPeakWidth * 1000);
+		for (int i = 0; i < total; ++i) {
+			out[i] = computeTravelScale(i, frame, edges.leftPermille,
+										edges.rightPermille);
+		}
 		break;
 	}
 	case StripEffect::PREVIEW: {

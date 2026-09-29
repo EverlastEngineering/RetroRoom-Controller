@@ -42,6 +42,54 @@
 //   3. SELECT. On commit the whole strip twinkles and collapses in
 //      under a second to just the consoles above the selected one.
 
+// Duration of the scripted travel that plays when a browse step
+// completes -- the block of light moving off the current console and
+// onto the one the operator picked.
+#ifndef LEDSTRING_TRAVEL_MS
+#define LEDSTRING_TRAVEL_MS 420
+#endif
+
+// How wide the travelling block is at the widest point of the travel,
+// in LEDs. The block starts as a small spark on the console being left
+// and ends exactly the width of the console it lands on; this is the
+// peak in between, and it is the whole reason the travel reads as a
+// block of light rather than a dot sliding along.
+//
+// It should be comfortably larger than the widest console window or the
+// block spends the entire travel pinned at its cap and stops looking
+// like it is moving.
+#ifndef LEDSTRING_TRAVEL_PEAK_WIDTH
+#define LEDSTRING_TRAVEL_PEAK_WIDTH 6
+#endif
+
+// How wide the spark is where the block leaves the console behind it.
+// Two reads as an object; one reads as a stray pixel.
+#ifndef LEDSTRING_TRAVEL_SPARK_LEDS
+#define LEDSTRING_TRAVEL_SPARK_LEDS 2
+#endif
+
+// Floor on the knob-turn progression indicator's run, in LEDs.
+//
+// The fill is normalised to the gap between two consoles, which is
+// normally the right thing -- the operator's four detents walk across
+// whatever space is actually there. But a step *between shelves* is a
+// couple of pixels in index space and a long way round physically, and
+// filling the literal gap would leave the indicator barely moving on
+// exactly the steps where it is hardest to see what is happening. The
+// floor keeps the knob feeling the same on every step in the cabinet.
+#ifndef LEDSTRING_FILL_MIN_LEDS
+#define LEDSTRING_FILL_MIN_LEDS 3
+#endif
+
+// Brightness of the knob-turn progression indicator. Deliberately a
+// third level, between the consoles already in the stack and the
+// selection itself: sharing a level with the stack would make "where
+// the stack ends" and "how far I have got" the same fact, leaving
+// nothing to read progress from.
+#ifndef LEDSTRING_FILL_PCT
+#define LEDSTRING_FILL_PCT 45
+#endif
+
 // Detents of the rotary knob required to move the browse cursor one
 // console when the operator is turning deliberately.
 #ifndef LEDSTRING_DETENTS_PER_STEP

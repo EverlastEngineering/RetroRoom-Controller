@@ -1,0 +1,28 @@
+{
+    "irCodes": {
+        "SVideo": "0x030",
+        "Front": "0x830",
+        "Video": "0x430",
+        "YUV":   "0xE30"
+    },
+    "consoleNames": {
+        "NES":  "Nintendo Entertainment System",
+        "SMS":  "Sega Master System",
+        "XBOX": "Microsoft Xbox",
+        "MAME": "MAME Arcade Cabinet"
+    },
+    "consoles": [
+        {"id": "NES",  "tvInput": "Video",  "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1, "shelf": 0},
+        {"id": "SMS",  "tvInput": "YUV",    "selectorPosition": 2, "ledPosition": 5,  "ledWidth": 3, "shelf": 0},
+        {"id": "XBOX", "tvInput": "YUV",    "selectorPosition": 3, "ledPosition": 12, "ledWidth": 3, "shelf": 0},
+        {"id": "MAME", "tvInput": "SVideo", "selectorPosition": 4, "ledPosition": 19, "ledWidth": 6, "shelf": 0},
+
+        {"id": "GEN",  "tvInput": "YUV",    "selectorPosition": 5, "ledPosition": 26, "ledWidth": 3, "shelf": 1},
+        {"id": "PS1",  "tvInput": "YUV",    "selectorPosition": 6, "ledPosition": 34, "ledWidth": 3, "shelf": 1},
+        {"id": "PS2",  "tvInput": "YUV",    "selectorPosition": 7, "ledPosition": 41, "ledWidth": 3, "shelf": 1},
+        {"id": "DC",   "tvInput": "YUV",    "selectorPosition": 8, "ledPosition": 49, "ledWidth": 5, "shelf": 1}
+    ],
+    "lcd": {
+        "backlightOffAfterMs": 30000
+    }
+}

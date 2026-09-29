@@ -86,10 +86,17 @@ struct SimConsole {
 	const char* name;
 	int ledPosition;
 	int ledWidth;
+	int shelf;
 };
 
+// Mirrors example-configurations/example3-two-rows.json: two shelves
+// with the TV between them, strung as one continuous chain, so the
+// shelf boundary is a two-pixel gap in index space and a long way round
+// in the cabinet. That gap is why the console schema carries a `shelf`
+// field -- pixel order cannot tell you where one shelf ends.
 const SimConsole kConsoles[] = {
-	{"NES", 1, 1},    {"SMS", 7, 5},   {"XBOX", 17, 5}, {"MAME", 27, 15},
+	{"NES", 1, 1, 0},  {"SMS", 5, 3, 0},   {"XBOX", 12, 3, 0}, {"MAME", 19, 6, 0},
+	{"GEN", 26, 3, 1}, {"PS1", 34, 3, 1}, {"PS2", 41, 3, 1},  {"DC", 49, 5, 1},
 };
 const int kConsoleCount = static_cast<int>(sizeof(kConsoles) / sizeof(kConsoles[0]));
 
@@ -132,6 +139,34 @@ int collectAboveFor(int idx, LedRange* out, int capacity) {
 // Fill a frame's resting fields from the console list. Shared by every
 // scenario that shows a resting or selection frame, so the sim cannot
 // drift from the shell's own assembly.
+// Mirrors travelEntryFor() in src/ledstring.cpp: the trailing edge of
+// the console being left within a shelf, or the far end of the
+// destination shelf when the step crosses between them.
+int travelEntryFor(int from, int to) {
+	const LedRange leave = windowFor(from);
+	const int leaveEnd = leave.start + leave.width;
+	if (kConsoles[from].shelf == kConsoles[to].shelf) {
+		return leaveEnd;
+	}
+	int far = windowFor(to).start + windowFor(to).width;
+	for (int i = 0; i < kConsoleCount; ++i) {
+		if (kConsoles[i].shelf != kConsoles[to].shelf) {
+			continue;
+		}
+		const LedRange w = windowFor(i);
+		if (w.start + w.width > far) {
+			far = w.start + w.width;
+		}
+	}
+	return far;
+}
+
+// Mirrors applyBrowsePath() in src/ledstring.cpp.
+void applyBrowsePath(StripFrame& f, int from, int to) {
+	computeTravelPath(windowFor(from), travelEntryFor(from, to), windowFor(to),
+					  LEDSTRING_TRAVEL_SPARK_LEDS, f);
+}
+
 void applyResting(StripFrame& f, int idx) {
 	f.from = windowFor(idx);
 	f.aboveCount = collectAboveFor(idx, aboveBuffer, kMaxAboveWindows);
@@ -159,6 +194,12 @@ StripFrame baseFrame() {
 	f.toPct = LEDSTRING_BROWSE_TO_PCT;
 	f.blobPct = LEDSTRING_BLOB_PCT;
 	f.blobWidth = LEDSTRING_BLOB_WIDTH;
+	f.fillPct = LEDSTRING_FILL_PCT;
+	f.dimPct = LEDSTRING_ABOVE_PCT;
+	f.travelPct = LEDSTRING_SELF_PCT;
+	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
+	f.travelMs = LEDSTRING_TRAVEL_MS;
+	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
 	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
@@ -179,7 +220,15 @@ StripFrame baseFrame() {
 // the difference between "dim" and "very dim" is visible in a
 // terminal, which is the whole point -- these percentages are far too
 // close together to read numerically.
-const char kRamp[] = " .:-=+*#%@";
+// Ten glyphs for eleven buckets (0 = dark, then 1..100 in ten steps).
+// Dark is '.' rather than ' ' so the whole strip is visible on one
+// line -- a space in the middle of a run of them is invisible, which
+// hid a correctly-rendering fill until this was noticed.
+//
+// Exactly ten characters: the bucket index goes to 9, and a nine-
+// character ramp silently read past its own end, rendering full
+// brightness as garbage.
+const char kRamp[] = ".:-=+o*#%@";
 
 void render(const StripFrame& frame, const char* caption) {
 	int pct[kTotalLeds];
@@ -227,146 +276,68 @@ void banner() {
 // Scenarios
 // ---------------------------------------------------------------------------
 
-// One deliberate turn of the knob, detent by detent, from NES toward
-// SMS. Shows the blob creeping out and the snap onto the preview.
+// One deliberate turn of the knob, detent by detent: the knob-turn
+// progression fill walking across the gap, then the scripted travel.
+// MAME is index 3, SMS is index 1, so this is a step *backwards* within
+// the top shelf.
 void scenarioBrowse() {
-	rule("BROWSE -- deliberate turn, NES -> SMS");
+	rule("BROWSE -- four detents of fill, then the scripted travel");
 	banner();
 
 	StripFrame rest = baseFrame();
 	rest.effect = StripEffect::RESTING;
-	applyResting(rest, 0);
-	render(rest, "resting (NES selected)");
+	applyResting(rest, 1);
+	render(rest, "resting (SMS selected)");
 
 	DetentGate gate;
 	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
 									LEDSTRING_FAST_DETENTS_PER_STEP,
 									LEDSTRING_FAST_SPIN_WINDOW_MS));
-	const int anchor = 0;
-	uint32_t t = 0;
-	// Deliberate detents: 2 s apart, well outside the fast-spin window.
-	const uint32_t gap = 2000;
-
-	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP; ++i) {
-		t += gap;
-		const retroroom_core::DetentEvent ev = gate.onDetent(1, t);
-		const int target = wrapNext(anchor, ev.targetDirection);
-		if (ev.advanced) {
-			StripFrame f = baseFrame();
-			f.effect = StripEffect::PREVIEW;
-			f.to = windowFor(target);
-			f.elapsedMs = 0;
-			render(f, "SNAP -> pulse on SMS");
-			// Two more points on the pulse so the breath is visible.
-			for (int k = 1; k <= 2; ++k) {
-				f.elapsedMs = (LEDSTRING_PREVIEW_PULSE_MS * k) / 3;
-				render(f, "  preview pulse");
-			}
-		} else {
-			StripFrame f = baseFrame();
-			f.effect = StripEffect::TRANSIT;
-			f.from = windowFor(anchor);
-			f.to = windowFor(target);
-			f.fractionPermille = ev.fractionPermille;
-			char caption[64];
-			snprintf(caption, sizeof(caption), "detent %d/%d -> SMS",
-					 ev.detents, ev.detentsPerStep);
-			render(f, caption);
-		}
-	}
-}
-
-// A long run at speed. Shows the escalation to the fast detent
-// requirement and the catch-up when a step speeds up mid-transit.
-void scenarioFastSpin() {
-	rule("FAST SPIN -- running through the list at speed");
-	banner();
-
-	DetentGate gate;
-	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
-									LEDSTRING_FAST_DETENTS_PER_STEP,
-									LEDSTRING_FAST_SPIN_WINDOW_MS));
-	int anchor = 0;
+	const int anchor = 1;
+	const int target = 0;
 	uint32_t t = 0;
 
-	// Prime fast mode with two deliberate detents, then spin.
-	for (int i = 0; i < 2; ++i) {
+	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP - 1; ++i) {
 		t += 2000;
-		const retroroom_core::DetentEvent ev = gate.onDetent(1, t);
+		const retroroom_core::DetentEvent ev = gate.onDetent(-1, t,
+															kConsoleCount, anchor);
 		StripFrame f = baseFrame();
-		f.effect = StripEffect::TRANSIT;
+		f.effect = StripEffect::FILLING;
 		f.from = windowFor(anchor);
-		f.to = windowFor(wrapNext(anchor, ev.targetDirection));
-		f.fractionPermille = ev.fractionPermille;
+		applyBrowsePath(f, anchor, target);
+		const int start = f.fillFrom.start + f.fillFrom.width;
+		const int full = computeFillEnd(f.fillFrom, f.fillTo, f.minFillLeds,
+										kTotalLeds);
+		int reach = start + ((full - start) * ev.fractionPermille) / 1000;
+		if (reach < start) {
+			reach = start;
+		}
+		f.fillTo = {reach, 0};
+		f.minFillLeds = 0;
 		char caption[64];
-		snprintf(caption, sizeof(caption), "deliberate %d/%d",
+		snprintf(caption, sizeof(caption), "detent %d/%d fill",
 				 ev.detents, ev.detentsPerStep);
 		render(f, caption);
 	}
 
-	for (int step = 0; step < 3; ++step) {
-		// Spin at 20 ms per detent.
-		for (int i = 0; i < 8; ++i) {
-			t += 20;
-			const retroroom_core::DetentEvent ev = gate.onDetent(1, t);
-			const int target = wrapNext(anchor, ev.targetDirection);
-			if (ev.advanced) {
-				StripFrame f = baseFrame();
-				f.effect = StripEffect::PREVIEW;
-				f.to = windowFor(target);
-				f.elapsedMs = 0;
-				char caption[64];
-				snprintf(caption, sizeof(caption), "SNAP -> %s",
-						 kConsoles[target].name);
-				render(f, caption);
-				anchor = target;
-			} else {
-				StripFrame f = baseFrame();
-				f.effect = StripEffect::TRANSIT;
-				f.from = windowFor(anchor);
-				f.to = windowFor(target);
-				f.fractionPermille = ev.fractionPermille;
-				char caption[64];
-				snprintf(caption, sizeof(caption), "fast %d/%d -> %s",
-						 ev.detents, ev.detentsPerStep, kConsoles[target].name);
-				render(f, caption);
-			}
-		}
-	}
-}
-
-// Turn out past the anchor, then back. Shows that the blob retreats
-// along the path it came rather than jumping to the far side.
-void scenarioReverse() {
-	rule("REVERSE -- out toward SMS, then back through the anchor");
-	banner();
-
-	DetentGate gate;
-	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
-									LEDSTRING_FAST_DETENTS_PER_STEP,
-									LEDSTRING_FAST_SPIN_WINDOW_MS));
-	const int anchor = 0;
-	uint32_t t = 0;
-	const uint32_t gap = 2000;
-
-	//   +1 x2,  -1 x4
-	// =  400, 200,   0, -200, -400 permille
-	const int dirs[] = {1, 1, -1, -1, -1, -1};
-	for (int i = 0; i < 6; ++i) {
-		t += gap;
-		const retroroom_core::DetentEvent ev = gate.onDetent(dirs[i], t);
-		const int target = wrapNext(anchor, ev.targetDirection);
+	printf("\n  -- travel --\n");
+	for (int step = 0; step <= 8; ++step) {
 		StripFrame f = baseFrame();
-		f.effect = StripEffect::TRANSIT;
-		f.from = windowFor(anchor);
-		f.to = windowFor(target);
-		f.fractionPermille = ev.fractionPermille;
-		char caption[80];
-		snprintf(caption, sizeof(caption), "detent %+d -> %-5s %4d/1000",
-				 ev.direction, kConsoles[target].name, ev.fractionPermille);
+		f.effect = StripEffect::TRAVEL;
+		applyBrowsePath(f, anchor, target);
+		f.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 8);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "travel t=%3ums",
+				 f.elapsedMs);
 		render(f, caption);
 	}
+	StripFrame pv = baseFrame();
+	pv.effect = StripEffect::PREVIEW;
+	pv.to = windowFor(target);
+	render(pv, "preview pulses on NES");
 }
+
+
 
 // The commit: whole strip twinkles, then settles on the pixels above
 // the selection. Sampled densely enough to see both phases.
@@ -466,34 +437,67 @@ void scenarioAbove() {
 	}
 }
 
+
+// The shelf crossing. MAME is the last console on shelf 0 and GEN the
+// first on shelf 1; the two are two pixels apart in index space and a
+// long way round in the cabinet. The block enters at the far end of the
+// destination shelf and sweeps back to GEN, so the light travels the
+// width of the cabinet even though the knob went forward one console.
+void scenarioShelf() {
+	rule("SHELF CROSSING -- MAME (shelf 0) -> GEN (shelf 1)");
+	printf("Knob goes RIGHT one console. The light goes LEFT, across the\n"
+		   "whole destination shelf, and lands on GEN.\n\n");
+
+	const int from = 3;  // MAME
+	const int to = 4;    // GEN
+
+	StripFrame rest = baseFrame();
+	rest.effect = StripEffect::RESTING;
+	applyResting(rest, from);
+	render(rest, "resting (MAME selected)");
+
+	StripFrame f = baseFrame();
+	f.effect = StripEffect::FILLING;
+	f.from = windowFor(from);
+	applyBrowsePath(f, from, to);
+	f.minFillLeds = 0;
+	render(f, "fill spans the destination shelf");
+
+	for (int step = 0; step <= 10; ++step) {
+		StripFrame t = baseFrame();
+		t.effect = StripEffect::TRAVEL;
+		applyBrowsePath(t, from, to);
+		t.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 10);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "travel t=%3ums", t.elapsedMs);
+		render(t, caption);
+	}
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
 	const std::string which = (argc > 1) ? argv[1] : "all";
-	if (which == "browse" || which == "all") {
+	const bool all = (which == "all");
+	if (all || which == "browse") {
 		scenarioBrowse();
 	}
-	if (which == "fastspin" || which == "all") {
-		scenarioFastSpin();
+	if (all || which == "shelf") {
+		scenarioShelf();
 	}
-	if (which == "reverse" || which == "all") {
-		scenarioReverse();
+	if (all || which == "select") {
+		scenarioSelect(4);
 	}
-	if (which == "select" || which == "all") {
-		scenarioSelect(3);
-	}
-	if (which == "frames" || which == "all") {
+	if (all || which == "frames") {
 		scenarioFrames();
 	}
-	if (which == "above" || which == "all") {
+	if (all || which == "above") {
 		scenarioAbove();
 	}
-	if (which != "browse" && which != "fastspin" && which != "reverse" &&
-		which != "select" && which != "frames" && which != "above" &&
-		which != "all") {
+	if (!all && which != "browse" && which != "shelf" && which != "select" &&
+		which != "frames" && which != "above") {
 		fprintf(stderr, "unknown scenario '%s'\n", which.c_str());
-		fprintf(stderr,
-				"try: browse, fastspin, reverse, select, frames, above, all\n");
+		fprintf(stderr, "try: browse, shelf, select, frames, above, all\n");
 		return 1;
 	}
 	printf("\n");

@@ -303,8 +303,9 @@ int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
 // animates between.
 enum class StripEffect {
 	RESTING,    // the stack, lit down to the selection
-	TRANSIT,    // a browse in progress: a blob between two windows
-	PREVIEW,    // a browse snapped: the target console pulsing
+	FILLING,    // a browse in progress: the knob-turn progression
+	TRAVEL,     // a browse snapped: the scripted move onto the target
+	PREVIEW,    // the travel finished: the target console pulsing
 	SELECTING,  // a commit in progress: twinkle, then settle
 };
 
@@ -351,11 +352,62 @@ struct StripFrame {
 	// TRANSIT only.
 	int fractionPermille = 0;
 
+	// ---- FILLING: the knob-turn progression indicator -----------------
+	//
+	// The gap the fill runs across, and how far along it is. The
+	// operator's four detents walk the fill from the start of the gap
+	// to its end, and the fifth triggers the travel.
+	//
+	// `fillGap` is deliberately not the literal gap between the two
+	// console windows. A step that crosses shelves is a couple of
+	// pixels in index space and physically a long way round, so filling
+	// the literal gap would mean the progression indicator barely moves
+	// on exactly the steps where the operator most needs to see it.
+	// `fillFrom` / `fillTo` are the ends of the run, which the caller
+	// may widen, and `fillPermille` is progress along that run.
+	LedRange fillFrom;
+	LedRange fillTo;
+	int fillPermille = 0;
+
+	// ---- TRAVEL: the scripted move onto the target --------------------
+	//
+	// The travel is defined by two *edges* rather than a centre and a
+	// width, because the two edges move differently: the leading edge
+	// decelerates into the target while the trailing edge accelerates
+	// away and then settles, which is what makes the block stretch
+	// across the gap and then narrow onto the target window. A blob with
+	// a fixed width cannot do that.
+	//
+	// Both are in whole LEDs, so antialiasing is exact: the caller
+	// supplies the edges already scaled by 1000 and this interpolates
+	// them in permille. See travelEdges() for the easing.
+	int travelFromLeftPermille = 0;
+	int travelFromRightPermille = 0;
+	int travelToLeftPermille = 0;
+	int travelToRightPermille = 0;
+	// The console the block departs from. Drawn at dimPct for the whole
+	// travel and used as the origin of both the fill run and the block's
+	// start edges.
+	LedRange travelFrom;
+
+	// Total duration of the travel, so the caller can turn elapsedMs
+	// into a progress value without duplicating the arithmetic.
+	std::uint32_t travelMs = 0;
+	// How wide the block is at the moment it is furthest from both
+	// ends. The stretch is the whole point, and without a peak it is
+	// just a slide.
+	int travelPeakWidth = 6;
+
 	// Brightness percentages, all 0..100. abovePct applies to
 	// `aboveWindows`; setting it to 0 lights only the console itself,
 	// which is the third reading of the same phrase.
-	int abovePct = 0;   // RESTING + SELECTING: the consoles above
-	int selfPct = 100;  // RESTING + SELECTING: the console itself
+	int abovePct = 0;    // RESTING + SELECTING: the consoles above
+	int selfPct = 100;   // RESTING + SELECTING: the console itself
+	int fillPct = 45;    // FILLING + TRAVEL: the knob-turn progression
+	int dimPct = 22;     // FILLING + TRAVEL: the console left behind
+	int travelPct = 100; // TRAVEL: the travelling block
+	// Floor on the knob-turn fill's run, in LEDs. See computeFillEnd().
+	int minFillLeds = 3;
 	int fromPct = 0;    // TRANSIT: the console being left
 	int toPct = 0;      // TRANSIT: the console being approached
 	int blobPct = 100;  // TRANSIT: the travelling blob
@@ -408,5 +460,100 @@ int collectAboveWindows(const LedRange* windows, int count,
 // path, so the last frame of the selection effect is the resting paint
 // by construction rather than by two pieces of code happening to agree.
 void computeStripFrame(const StripFrame& frame, int* out);
+
+// ---------------------------------------------------------------------------
+// Browse: the knob-turn fill and the scripted travel
+// ---------------------------------------------------------------------------
+
+// The two edges of the travelling block at `progressPermille` (0..1000).
+//
+// Modeled as two independent edges because they move differently. The
+// leading edge decelerates into the target (ease-out) while the trailing
+// edge accelerates away and then settles (ease-in-out), so the block
+// stretches across the path and then narrows onto the target window.
+// Interpolating a centre with a width cannot produce that shape, and a
+// shape the maths cannot produce is a shape you cannot tune.
+//
+// Edges are in permille of a LED, so the caller scales the whole-pixel
+// window ends by 1000 and this interpolates in the same units. The
+// antialiasing downstream is then exact rather than sampled.
+//
+// `peakWidthPermille` is how far the two edges are apart at the widest
+// point of the travel, again in permille. The caller derives it from the
+// two windows so the stretch is bounded by geometry instead of being a
+// magic number in here.
+struct TravelEdges {
+	int leftPermille;
+	int rightPermille;
+	int widthPermille;
+};
+TravelEdges travelEdges(int fromLeftPermille, int fromRightPermille,
+                        int toLeftPermille, int toRightPermille,
+                        int progressPermille, int peakWidthPermille);
+
+// The block's start and end edges for a travel, in permille.
+//
+// `leave` is the console the block departs from; the block starts as a
+// `sparkLeds`-wide spark at that console's trailing edge, so it reads as
+// peeling off the console rather than appearing in the gap.
+//
+// `entryPixel` is where the block's spark sits at the start of the
+// travel. For an ordinary step within a shelf that is the trailing edge
+// of the console being left. For a step *between* shelves it is the far
+// end of the destination shelf, which is what makes the block sweep the
+// whole shelf and land on the console -- the knob goes one way and the
+// light goes the other -- rather than crossing a two-pixel gap.
+//
+// `target` is always the console being reached, and the block's last
+// frame lands exactly on it.
+//
+// Exposed as a helper rather than left to the caller because the
+// permille scaling is easy to get subtly wrong and the shell, the
+// simulator and the tests all need to agree on it.
+void computeTravelPath(const LedRange& leave, int entryPixel,
+                       const LedRange& target, int sparkLeds, StripFrame& frame);
+
+// How much of pixel `i` the block [left, right) covers, as a percentage
+// in 0..100.
+//
+// This is the antialiasing, and for a one-dimensional block it is exact
+// rather than approximated: the overlap between the block's span and
+// the LED's one-unit pitch, as a fraction of that pitch. Sampling the
+// profile at N points per LED would converge on the same number at N
+// times the cost, so there is nothing to approximate -- the shape would
+// have to stop being piecewise linear before sampling earned its keep.
+int coveragePercent(int leftPermille, int rightPermille, int pixel);
+
+// The pixel index the knob-turn fill run ends at, widened to at least
+// `minLengthLeds`.
+//
+// A step between shelves is a couple of pixels in index space and a
+// long way round physically. Filling the literal gap would leave the
+// progression indicator barely moving on exactly the steps where the
+// operator most needs to see it move, so the run has a floor. The floor
+// is what makes the knob feel the same on every step in the cabinet,
+// rather than only on the steps where the shelves happen to be densely
+// packed.
+int computeFillEnd(const LedRange& from, const LedRange& to, int minLengthLeds,
+                   int totalLeds);
+
+// Brightness percentage for one pixel during the knob-turn fill.
+//
+// Three distinct levels, deliberately: the consoles already in the
+// stack, the fill running ahead of the operator's turn, and the console
+// itself. Collapsing the first two into one brightness would make
+// "where the stack ends" and "how far I have got" the same fact, and
+// the operator would have nothing to read progress from.
+int computeFillScale(int pixel, const StripFrame& frame);
+
+// Brightness percentage for one pixel during the travel.
+//
+// The block erases the fill behind it as it passes: a pixel that was
+// part of the knob-turn fill goes dark once the block's leading edge
+// has moved past it. That is what makes the block look like it is
+// consuming the path it just travelled rather than sliding over a
+// backdrop.
+int computeTravelScale(int pixel, const StripFrame& frame,
+                       int leftPermille, int rightPermille);
 
 }  // namespace retroroom_core

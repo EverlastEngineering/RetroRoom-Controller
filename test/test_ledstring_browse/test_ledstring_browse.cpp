@@ -20,6 +20,7 @@
 //                  the same settled picture regardless of when the
 //                  last frame was sampled.
 
+#include <cstdlib>
 #include <LedStringPaint.h>
 #include <unity.h>
 
@@ -34,6 +35,11 @@ using retroroom_core::LedRange;
 using retroroom_core::SelectionEffectConfig;
 using retroroom_core::twinkleSample;
 using retroroom_core::collectAboveWindows;
+using retroroom_core::computeTravelPath;
+using retroroom_core::computeFillEnd;
+using retroroom_core::coveragePercent;
+using retroroom_core::travelEdges;
+using retroroom_core::TravelEdges;
 using retroroom_core::computeConsoleWindow;
 using retroroom_core::computeStripFrame;
 using retroroom_core::StripEffect;
@@ -609,79 +615,8 @@ static void test_resting_frame_splits_prefix_from_selection(void) {
 	TEST_ASSERT_EQUAL(0, out[63]);
 }
 
-static void test_transit_frame_draws_both_windows_and_the_blob(void) {
-	int out[64];
-	StripFrame f = configuredFrame(StripEffect::TRANSIT);
-	f.from = computeConsoleWindow(1, 1, 64);   // NES at [1,2)
-	f.to = computeConsoleWindow(7, 5, 64);     // SMS at [7,12)
-	f.fractionPermille = 1000;                 // blob arrived
-	computeStripFrame(f, out);
 
-	TEST_ASSERT_EQUAL(100, out[9]);  // blob centre of [7,12) is 9
-	TEST_ASSERT_EQUAL(100, out[8]);
-	TEST_ASSERT_EQUAL(100, out[10]);
-	TEST_ASSERT_EQUAL(0, out[20]);
-	// Both windows are drawn dim; the NES window is not under the blob
-	// at full progress, so it is still readable as a dim mark.
-	TEST_ASSERT_EQUAL(25, out[1]);
-}
 
-static void test_transit_frame_travels_backwards_too(void) {
-	// Regression. The gate's position is signed to say which side of
-	// the anchor the operator is on, and the frame is handed the target
-	// window that side. The travel itself is the *magnitude*. Clamping
-	// the sign instead of taking the magnitude eased every negative
-	// position to 0, which froze the blob on the anchor for the whole
-	// backward half of a step -- it only showed up in the simulator's
-	// reverse scenario, not in any of the blob unit tests, because those
-	// all pass a non-negative fraction.
-	int forward[64];
-	int backward[64];
-
-	StripFrame fwd = configuredFrame(StripEffect::TRANSIT);
-	fwd.from = computeConsoleWindow(1, 1, 64);
-	fwd.to = computeConsoleWindow(7, 5, 64);
-	fwd.fractionPermille = 400;
-	computeStripFrame(fwd, forward);
-
-	// Same step seen from the other side of the anchor: the caller has
-	// already chosen the other neighbour as `to`.
-	StripFrame bwd = configuredFrame(StripEffect::TRANSIT);
-	bwd.from = computeConsoleWindow(1, 1, 64);
-	bwd.to = computeConsoleWindow(27, 15, 64);
-	bwd.fractionPermille = -400;
-	computeStripFrame(bwd, backward);
-
-	int blobStart = -1;
-	for (int p = 0; p < 64; ++p) {
-		if (backward[p] == 100) {
-			blobStart = p;
-			break;
-		}
-	}
-	TEST_ASSERT_TRUE_MESSAGE(blobStart >= 0, "a blob must be drawn");
-	TEST_ASSERT_TRUE_MESSAGE(blobStart > 3,
-		"a backward position must move the blob away from the anchor");
-	// The two frames share a departure window but different targets, so
-	// the blob cannot be in the same place in both.
-	TEST_ASSERT_NOT_EQUAL(blobStart, forward[1] == 100 ? 1 : -2);
-}
-
-static void test_blob_wins_over_the_windows_it_crosses(void) {
-	// The layering is departure, then destination, then blob. If the
-	// blob were drawn first it would be painted over by a wide
-	// destination window and the travelling object would disappear
-	// part-way across.
-	int out[64];
-	StripFrame f = configuredFrame(StripEffect::TRANSIT);
-	f.from = computeConsoleWindow(1, 1, 64);
-	f.to = computeConsoleWindow(7, 5, 64);
-	f.fractionPermille = 0;  // blob still sitting on the departure
-	computeStripFrame(f, out);
-	for (int p = 0; p < 3; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(100, out[p], "blob must be on top at progress 0");
-	}
-}
 
 static void test_preview_frame_pulses_only_the_target(void) {
 	int out[64];
@@ -943,6 +878,301 @@ static void test_gate_on_an_empty_list_always_freezes(void) {
 	TEST_ASSERT_FALSE(ev.advanced);
 }
 
+// A travel frame from two windows and a path, matching what the shell
+// assembles. `spark` is the block's width where it leaves the console.
+static StripFrame travelFrame(const LedRange& leave, int entryPixel,
+                              const LedRange& target, std::uint32_t elapsedMs,
+                              int spark = 2) {
+	StripFrame f = configuredFrame(StripEffect::TRAVEL);
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.travelPct = 100;
+	f.minFillLeds = 3;
+	f.travelMs = 1000;
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
+	computeTravelPath(leave, entryPixel, target, spark, f);
+	f.elapsedMs = elapsedMs;
+	return f;
+}
+
+// The ordinary case: the block enters at the console being left's
+// trailing edge and lands on the target.
+static StripFrame stepTravel(const LedRange& leave, const LedRange& target,
+                             std::uint32_t elapsedMs) {
+	return travelFrame(leave, leave.start + leave.width, target, elapsedMs);
+}
+
+// example2.json's first two windows: NES [1,2) and SMS [7,12).
+static const LedRange kNes = {1, 1};
+static const LedRange kSms = {7, 5};
+
+static void test_travel_ends_exactly_on_the_target_window(void) {
+	// The last frame of the travel IS the preview. If it does not land
+	// exactly on the target the block has to "correct" on arrival, which
+	// reads as a mistake.
+	int out[64];
+	computeStripFrame(stepTravel(kNes, kSms, 1000), out);
+	for (int p = 7; p < 12; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(100, out[p], "target window must be fully lit");
+	}
+	TEST_ASSERT_EQUAL(0, out[6]);
+	TEST_ASSERT_EQUAL(0, out[12]);
+}
+
+static void test_travel_starts_on_the_console_being_leaving(void) {
+	// The spark sits on NES's trailing edge and the block is drawn *over*
+	// the console it is leaving, not under it -- otherwise the block
+	// appears to start in the gap rather than peel off the console.
+	int out[64];
+	computeStripFrame(stepTravel(kNes, kSms, 0), out);
+	TEST_ASSERT_EQUAL(100, out[1]);
+	TEST_ASSERT_EQUAL(100, out[2]);
+	TEST_ASSERT_EQUAL(0, out[0]);
+	// The fill is lit ahead of the block from the first frame.
+	TEST_ASSERT_EQUAL(45, out[3]);
+		TEST_ASSERT_EQUAL(45, out[6]);
+		// The run stops short of SMS -- that is where the block lands.
+		TEST_ASSERT_EQUAL(0, out[7]);
+}
+
+static void test_travel_consumes_the_fill_behind_it(void) {
+	// The knob-turn fill goes dark as the block passes it. That is what
+	// makes the block look like it is eating the path rather than
+	// sliding over a backdrop.
+	int early[64];
+	int late[64];
+	computeStripFrame(stepTravel(kNes, kSms, 0), early);
+	computeStripFrame(stepTravel(kNes, kSms, 900), late);
+	// Pixels 3..6 are fill at the start and dark by the end, having
+	// been swept over on the way.
+	for (int p = 3; p <= 5; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(45, early[p], "fill must be lit at the start");
+		TEST_ASSERT_EQUAL_MESSAGE(0, late[p],
+			"a pixel the block has passed must be dark");
+	}
+}
+
+static void test_travel_keeps_the_fill_ahead_of_it(void) {
+	// The other half of the same rule: the fill the block has not
+	// reached yet stays lit, or the block is sliding over a backdrop
+	// rather than consuming a path.
+	int out[64];
+	// Early in the travel the block has barely left, so the run ahead of
+	// it is still substantial.
+    computeStripFrame(stepTravel(kNes, kSms, 0), out);
+	int ahead = 0;
+    for (int p = 3; p < 7; ++p) {
+		if (out[p] == 45) ahead++;
+	}
+	TEST_ASSERT_TRUE_MESSAGE(ahead >= 2,
+		"the fill ahead of the block must still be lit");
+}
+
+static void test_travel_stretches_then_settles(void) {
+	// The two edges move at different rates, so the block is widest
+	// part-way and narrows onto the target. A fixed-width slide cannot
+	// do this, and it is the shape the whole effect is for.
+	int widest = 0;
+	for (int prog = 0; prog <= 1000; prog += 25) {
+		const TravelEdges e = travelEdges(1000, 3000, 7000, 12000, prog, 6000);
+		if (e.widthPermille > widest) widest = e.widthPermille;
+		TEST_ASSERT_TRUE_MESSAGE(e.widthPermille <= 6000,
+			"the block must never exceed its peak width");
+		TEST_ASSERT_TRUE(e.leftPermille <= e.rightPermille);
+	}
+	TEST_ASSERT_TRUE_MESSAGE(widest > kSms.width * 1000,
+		"the block must be wider than the target at some point");
+	// Ends exactly on the target, so the last frame is the preview.
+	const TravelEdges last = travelEdges(1000, 3000, 7000, 12000, 1000, 6000);
+	TEST_ASSERT_EQUAL(7000, last.leftPermille);
+	TEST_ASSERT_EQUAL(12000, last.rightPermille);
+}
+
+static void test_travel_sweeps_a_shelf_for_a_shelf_crossing(void) {
+	// A step between shelves enters at the far end of the destination
+	// shelf and sweeps back to the target: the knob goes right, the
+	// light goes left. Compared with the ordinary step it covers far
+	// more of the strip, which is the entire point of doing it.
+	//
+	// SMS is left at [7,12); the block enters at pixel 52 (the far end
+	// of that shelf) and lands on NES at [1,2).
+	// Measured as how far the block's leading edge travels, which is the
+	// contract: the point of entering at the far end is that the block
+	// crosses the whole shelf rather than a two-pixel gap.
+	StripFrame ordinary;
+	computeTravelPath(kSms, kSms.start + kSms.width, kNes, 2, ordinary);
+	StripFrame crossing;
+	computeTravelPath(kSms, 52, kNes, 2, crossing);
+
+	const int ordinarySpan = std::abs(ordinary.travelToLeftPermille -
+									  ordinary.travelFromLeftPermille);
+	const int crossingSpan = std::abs(crossing.travelToLeftPermille -
+									  crossing.travelFromLeftPermille);
+	// SMS ends at 12 and NES starts at 1, so the gap is 10 LEDs.
+	TEST_ASSERT_EQUAL_MESSAGE(10000, ordinarySpan,
+		"an ordinary step crosses exactly the gap between the two windows");
+	TEST_ASSERT_TRUE_MESSAGE(crossingSpan > ordinarySpan * 3,
+		"a shelf crossing must sweep the width of the shelf, not a gap");
+	// It starts out on the far side and arrives at the target.
+	TEST_ASSERT_EQUAL(51000, crossing.travelFromLeftPermille);
+	TEST_ASSERT_EQUAL(1000, crossing.travelToLeftPermille);
+	// And the block must actually be visible doing it -- a travel that
+	// spends its middle inverted looks like nothing happened.
+	int visible = 0;
+	for (std::uint32_t t = 0; t <= 1000; t += 50) {
+		int b[64];
+		computeStripFrame(travelFrame(kSms, 52, kNes, t), b);
+		for (int p = 0; p < 64; ++p) {
+			if (b[p] == 100) {
+				visible++;
+				break;
+			}
+		}
+	}
+	TEST_ASSERT_TRUE_MESSAGE(visible >= 20,
+		"the block must be visible on essentially every frame of the sweep");
+}
+
+static void test_travel_backwards_does_not_invert_the_block(void) {
+	// Regression. The block's *leading* edge is whichever one is moving
+	// into new territory, and on a backwards travel that is the LEFT
+	// one. Easing the right edge as leading unconditionally made the two
+	// cross and the block vanished for the whole middle of every shelf
+	// crossing.
+	for (int prog = 0; prog <= 1000; prog += 20) {
+		const TravelEdges e = travelEdges(51000, 53000, 1000, 2000, prog, 6000);
+		TEST_ASSERT_TRUE_MESSAGE(e.leftPermille <= e.rightPermille,
+			"a backwards travel must not invert the block");
+		TEST_ASSERT_TRUE_MESSAGE(e.widthPermille > 0,
+			"the block must be visible throughout a backwards travel");
+	}
+	// And it really does move leftwards.
+	TEST_ASSERT_TRUE(travelEdges(51000, 53000, 1000, 2000, 0, 6000).leftPermille >
+					 travelEdges(51000, 53000, 1000, 2000, 1000, 6000).leftPermille);
+}
+
+static void test_coverage_is_exact_at_the_edges(void) {
+	// The antialiasing: a block covering half a pixel lights it half as
+	// brightly, and the arithmetic is exact rather than sampled.
+	TEST_ASSERT_EQUAL(100, coveragePercent(0, 1000, 0));     // pixel 0 fully covered
+	TEST_ASSERT_EQUAL(50, coveragePercent(0, 500, 0));       // its left half
+	TEST_ASSERT_EQUAL(50, coveragePercent(500, 1000, 0));    // its right half
+	TEST_ASSERT_EQUAL(0, coveragePercent(0, 1000, 1));       // beyond the block
+	TEST_ASSERT_EQUAL(100, coveragePercent(1000, 2000, 1));
+	TEST_ASSERT_EQUAL(0, coveragePercent(2000, 3000, 0));    // entirely past
+	// A sub-pixel block lights exactly one pixel, partially.
+	TEST_ASSERT_TRUE(coveragePercent(1400, 1500, 1) > 0);
+	TEST_ASSERT_TRUE(coveragePercent(1400, 1500, 1) < 100);
+}
+
+static void test_fill_end_has_a_floor(void) {
+	// A step between shelves is a couple of pixels in index space. The
+	// floor is what keeps the knob-turn indicator moving on exactly the
+	// steps where the operator most needs to see it move.
+	const LedRange tiny = {3, 1};
+	// Run starts at NES's trailing edge (2); a 1-pixel gap would give a
+	// 1-LED run, so the floor of 3 wins.
+	TEST_ASSERT_EQUAL(5, computeFillEnd(kNes, tiny, 3, 64));
+	// A wider gap is not truncated.
+	TEST_ASSERT_EQUAL(7, computeFillEnd(kNes, kSms, 3, 64));
+	TEST_ASSERT_EQUAL(30, computeFillEnd(kNes, {30, 4}, 3, 64));
+	// And the run never leaves the strip -- forwards, the floor is
+	// capped by the end of the strip.
+	TEST_ASSERT_EQUAL(64, computeFillEnd({50, 4}, {60, 1}, 10, 64));
+	// Backwards, the floor extends the run *backwards* from the console
+	// being left, which is what keeps a backwards step from having a
+	// zero-length run.
+	TEST_ASSERT_EQUAL(54, computeFillEnd({60, 4}, {63, 1}, 10, 64));
+	TEST_ASSERT_EQUAL(0, computeFillEnd(kNes, kSms, 3, 0));
+}
+
+static void test_fill_uses_three_distinct_levels(void) {
+	// Stack, fill and selection must not collapse into each other, or
+	// "where the stack ends" and "how far I have got" become the same
+	// fact and there is nothing to read progress from.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.minFillLeds = 3;
+	f.fillFrom = kNes;
+	f.fillTo = kSms;
+	f.from = kNes;
+	int out[64];
+	computeStripFrame(f, out);
+	TEST_ASSERT_EQUAL(22, out[1]);
+	TEST_ASSERT_EQUAL_MESSAGE(45, out[5], "the fill is its own level");
+	TEST_ASSERT_TRUE(22 != 45);
+	TEST_ASSERT_TRUE(45 != 100);
+}
+
+static void test_fill_runs_backwards_when_browsing_back(void) {
+	// The browse goes both ways. The fill has to run towards whichever
+	// console is being approached, and it treated every step as
+	// forwards -- so a backwards browse got a zero-length run and the
+	// progression indicator simply did not appear at all.
+	int early[64];
+	int late[64];
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.minFillLeds = 0;
+	// SMS [7,12) is being left for NES [1,2): the run sits between them
+	// and grows leftward as the operator turns back.
+	computeTravelPath(kSms, kSms.start + kSms.width, kNes, 2, f);
+	f.effect = StripEffect::FILLING;
+	// At the start of the step the run is just past SMS's trailing edge.
+	f.fillTo = {kSms.start + kSms.width - 1, 0};
+	computeStripFrame(f, early);
+	// At the end it reaches NES's trailing edge.
+	f.fillTo = {kNes.start + kNes.width, 0};
+	computeStripFrame(f, late);
+	TEST_ASSERT_EQUAL_MESSAGE(22, early[7], "SMS itself is dim, not fill");
+	TEST_ASSERT_EQUAL(45, early[11]);  // still part of the run at the start
+	TEST_ASSERT_TRUE_MESSAGE(late[2] == 45,
+		"a backwards run must reach NES's trailing edge");
+	// The consoles already in the stack stay dim throughout -- the fill
+	// covers the gap between the windows, not the windows themselves.
+	TEST_ASSERT_EQUAL_MESSAGE(22, late[1], "NES must not be lit as fill");
+   // Past SMS's trailing edge, and so outside the run entirely.
+   TEST_ASSERT_EQUAL(0, late[12]);
+}
+
+static void test_fill_never_lights_the_target_window(void) {
+	// The block lands on the target; lighting its window dim in the
+	// meantime would make the arrival mean nothing.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.minFillLeds = 0;
+	computeTravelPath(kNes, kNes.start + kNes.width, kSms, 2, f);
+	f.effect = StripEffect::FILLING;
+	// computeTravelPath already stopped the run short of the target's
+	// window; this is the assertion that it did.
+	TEST_ASSERT_EQUAL(kSms.start, f.fillTo.start);
+	int out[64];
+	computeStripFrame(f, out);
+	for (int p = 7; p < 12; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(0, out[p],
+			"the target's own window must stay dark until the block lands");
+	}
+}
+
+static void test_shelf_crossing_sweeps_the_whole_destination_shelf(void) {
+	// A step between shelves enters at the far end of the destination
+	// shelf and sweeps back to the target, so the light travels the
+	// width of the cabinet even though the knob went forward one
+	// console. The fill covers that whole path for the block to consume.
+	StripFrame ordinary;
+	computeTravelPath(kSms, kSms.start + kSms.width, kNes, 2, ordinary);
+	StripFrame crossing;
+	computeTravelPath(kSms, 52, kNes, 2, crossing);
+	// Within a shelf the fill spans the gap between the two windows.
+	TEST_ASSERT_EQUAL(2, ordinary.fillTo.start);
+	// Across a shelf it spans out to the far end it comes in from.
+	TEST_ASSERT_EQUAL(52, crossing.fillTo.start);
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -998,6 +1228,19 @@ int main(int argc, char** argv) {
 
 	// Whole-strip frames.
 	RUN_TEST(test_frame_clears_every_pixel_first);
+	RUN_TEST(test_travel_ends_exactly_on_the_target_window);
+	RUN_TEST(test_travel_starts_on_the_console_being_leaving);
+	RUN_TEST(test_travel_keeps_the_fill_ahead_of_it);
+	RUN_TEST(test_travel_backwards_does_not_invert_the_block);
+	RUN_TEST(test_travel_consumes_the_fill_behind_it);
+	RUN_TEST(test_travel_stretches_then_settles);
+	RUN_TEST(test_travel_sweeps_a_shelf_for_a_shelf_crossing);
+	RUN_TEST(test_coverage_is_exact_at_the_edges);
+	RUN_TEST(test_fill_end_has_a_floor);
+	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
+	RUN_TEST(test_fill_never_lights_the_target_window);
+	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);
+	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_resting_frame_lights_each_window_above);
 	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);
 	RUN_TEST(test_resting_frame_tolerates_a_null_above_list);
@@ -1013,9 +1256,6 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_collect_above_preserves_the_windows_it_keeps);
 	RUN_TEST(test_collect_above_skips_a_straddling_window);
 	RUN_TEST(test_collect_above_is_defensive_about_bad_arguments);
-	RUN_TEST(test_transit_frame_draws_both_windows_and_the_blob);
-	RUN_TEST(test_blob_wins_over_the_windows_it_crosses);
-	RUN_TEST(test_transit_frame_travels_backwards_too);
 	RUN_TEST(test_preview_frame_pulses_only_the_target);
 	RUN_TEST(test_selecting_frame_ends_on_the_resting_paint);
 	RUN_TEST(test_frame_rejects_a_bad_strip_size);

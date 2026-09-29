@@ -27,6 +27,22 @@ struct Console {
 	int selector_position;
 	int led_position;
 	int led_width;
+	// Which physical shelf this console sits on. Optional in the JSON
+	// and defaulted to 0 by the parser, so a config that predates the
+	// field loads as a single shelf.
+	//
+	// Not derivable from the LED layout: the shelves are strung as one
+	// continuous chain, so pixel order says nothing about where one
+	// shelf ends. The browse animation needs it to know that stepping
+	// between shelves is a different kind of move -- a step within a
+	// shelf crosses a gap, a step between shelves travels the width of a
+	// shelf.
+	//
+	// No initialiser, like the fields above it: under C++11 a default
+	// member initialiser would stop Console being an aggregate and break
+	// every brace-initialised Console in the tests. The parser always
+	// sets it, which is the only place a Console is built from JSON.
+	int shelf;
 	// Per-console tagline (e.g. "Now you're playing with power!"). Optional
 	// in the JSON; default empty string. Consumed by the LCD driver to
 	// render line 2 on the 16x2 character display.

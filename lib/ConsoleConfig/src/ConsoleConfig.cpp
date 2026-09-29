@@ -101,6 +101,16 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 		con.selector_position = c["selectorPosition"] | 0;
 		con.led_position = c["ledPosition"] | 0;
 		con.led_width = c["ledWidth"] | 0;
+		// Optional shelf number, default 0. A console's shelf is not
+		// derivable from the LED layout -- two shelves are strung as one
+		// continuous chain around the cabinet, so pixel order alone
+		// cannot tell you where one shelf ends and the next begins. The
+		// LED animations need it to know that a step crossing between
+		// shelves is a different kind of move.
+		//
+		// Optional so every config written before this field existed
+		// loads as a single shelf and behaves exactly as it did.
+		con.shelf = c["shelf"] | 0;
 		// Optional tagline. as<std::string>() on a null variant returns
 		// "null" (ArduinoJson quirk) so we have to check isNull() first
 		// and default to empty.

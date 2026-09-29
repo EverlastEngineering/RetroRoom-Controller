@@ -51,9 +51,10 @@ namespace {
 // What is on the strip right now.
 enum class StripMode {
 	RESTING,
-	TRANSIT,
-	PREVIEW,
-	SELECTING,
+	FILLING,  // a browse is under way: the knob-turn fill
+	TRAVEL,   // the step completed: the scripted move onto the target
+	PREVIEW,  // the travel finished: the target pulsing
+	SELECTING,  // a commit: twinkle, then settle
 };
 
 // Assemble the "feel" knobs from configuration.h exactly once. See
@@ -98,9 +99,12 @@ CRGB scaled(int percent) {
 
 StripMode mode = StripMode::RESTING;
 
-// TRANSIT / PREVIEW targets. Indices are into src/consoles.cpp::consoles.
+// Browse state. Indices are into src/consoles.cpp::consoles.
 int fromIdx = 0;
 int toIdx = 0;
+// How far the operator is through the current step, in permille of one
+// step. Drives the fill; see the DetentGate comment for why it is a
+// continuous position rather than a detent count.
 int fractionPermille = 0;
 int previewIdx = 0;
 // The console being committed. Its target picture is resolved when the
@@ -228,6 +232,12 @@ retroroom_core::StripFrame baseFrame() {
 	f.toPct = LEDSTRING_BROWSE_TO_PCT;
 	f.blobPct = LEDSTRING_BLOB_PCT;
 	f.blobWidth = LEDSTRING_BLOB_WIDTH;
+	f.fillPct = LEDSTRING_FILL_PCT;
+	f.dimPct = LEDSTRING_ABOVE_PCT;
+	f.travelPct = LEDSTRING_SELF_PCT;
+	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
+	f.travelMs = LEDSTRING_TRAVEL_MS;
+	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
 	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
@@ -250,12 +260,90 @@ void paintResting(int idx) {
 	pushFrame(f);
 }
 
-void paintTransit() {
+// The knob-turn progression indicator. The fill runs from the console
+// being left to the console being reached, normalised to whatever space
+// is actually between them (floored -- see computeFillEnd), and the
+// console being left is dim throughout.
+// The pixel the travelling block enters at.
+//
+// For a step within a shelf that is the trailing edge of the console
+// being left -- the block peels off it and crosses the gap. For a step
+// *between* shelves it is the far end of the destination shelf, so the
+// block sweeps the whole shelf and lands on the console. The knob goes
+// one way and the light goes the other, which is odd and deliberate.
+//
+// The shelves are strung as one continuous chain, so pixel order alone
+// cannot tell you where one ends -- this is why the console's `shelf`
+// field exists.
+int travelEntryFor(int from, int to) {
+	const retroroom_core::LedRange leave = windowFor(from);
+	const int leaveEnd = leave.start + leave.width;
+	if (from < 0 || from >= HowManyConsoles() || to < 0 ||
+		to >= HowManyConsoles()) {
+		return leaveEnd;
+	}
+	if (consoles[from].shelf == consoles[to].shelf) {
+		return leaveEnd;
+	}
+	// Crossed a shelf: enter at the far end of the shelf we are landing
+	// on, so the block sweeps all of it.
+	const int targetShelf = consoles[to].shelf;
+	int far = windowFor(to).start + windowFor(to).width;
+	for (int i = 0; i < HowManyConsoles(); ++i) {
+		if (consoles[i].shelf != targetShelf) {
+			continue;
+		}
+		const retroroom_core::LedRange w = windowFor(i);
+		if (w.start + w.width > far) {
+			far = w.start + w.width;
+		}
+	}
+	return far;
+}
+
+// Resolve a frame's browse path: which way the block comes from, and how
+// far the knob-turn fill runs. Shared by the fill and the travel so the
+// two cannot disagree about where the step is going.
+void applyBrowsePath(retroroom_core::StripFrame& f, int from, int to) {
+	const retroroom_core::LedRange target = windowFor(to);
+	retroroom_core::computeTravelPath(windowFor(from), travelEntryFor(from, to),
+									 target, LEDSTRING_TRAVEL_SPARK_LEDS, f);
+}
+
+// The knob-turn progression indicator.
+//
+// The fill's *length* is the gate's progress, so the indicator walks
+// across the gap as the operator turns rather than appearing at its end.
+// The floor is applied first, by computeTravelPath, and the progress then
+// scales that floored run -- so a step across a shelf still has a run
+// worth watching, and four detents still walk all of it.
+void paintFilling() {
 	retroroom_core::StripFrame f = baseFrame();
-	f.effect = retroroom_core::StripEffect::TRANSIT;
+	f.effect = retroroom_core::StripEffect::FILLING;
 	f.from = windowFor(fromIdx);
-	f.to = windowFor(toIdx);
-	f.fractionPermille = fractionPermille;
+	applyBrowsePath(f, fromIdx, toIdx);
+
+	const int start = f.fillFrom.start + f.fillFrom.width;
+	const int full = retroroom_core::computeFillEnd(
+		f.fillFrom, f.fillTo, f.minFillLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
+	int reach = start + ((full - start) * fractionPermille) / 1000;
+	if (reach < start) {
+		reach = start;
+	}
+	f.fillTo = {reach, 0};
+	f.minFillLeds = 0;  // already floored; do not floor it again
+	pushFrame(f);
+}
+
+// The scripted travel: the block of light leaving the console behind and
+// landing exactly on the one the operator picked. Time-driven, so it is
+// smooth regardless of how the knob got to the end of the step -- which
+// is the whole reason it replaced the knob-driven blob.
+void paintTravel(uint32_t elapsedMs) {
+	retroroom_core::StripFrame f = baseFrame();
+	f.effect = retroroom_core::StripEffect::TRAVEL;
+	applyBrowsePath(f, fromIdx, toIdx);
+	f.elapsedMs = elapsedMs;
 	pushFrame(f);
 }
 
@@ -354,11 +442,25 @@ void ledstring_loop() {
 	lastFrameMs = now;
 
 	switch (mode) {
-	case StripMode::TRANSIT:
-		// Deliberately a no-op. The blob's position belongs to the
-		// detent gate and only changes when a detent arrives, which
+	case StripMode::FILLING:
+		// Deliberately a no-op. The fill's length is the detent gate's
+		// position and only changes when a detent arrives, which
 		// repaints immediately -- there is nothing to advance here.
 		break;
+	case StripMode::TRAVEL: {
+		// The one effect that runs on a clock rather than on the knob.
+		// This is what makes it an animation instead of a readout.
+		const uint32_t elapsed = (uint32_t)(now - animStartMs);
+		paintTravel(elapsed);
+		if (elapsed >= LEDSTRING_TRAVEL_MS) {
+			// Hand over to the pulsing preview. The last travel frame is
+			// already exactly the target window, so the handover is
+			// invisible.
+			mode = StripMode::PREVIEW;
+			animStartMs = now;
+		}
+		break;
+	}
 	case StripMode::PREVIEW:
 		paintPreview((uint32_t)(now - animStartMs));
 		break;
@@ -382,23 +484,29 @@ void ledstring_loop() {
 }
 
 void ledstring_browseProgress(int from, int to, int fraction) {
-	// A detent in flight outranks a selection effect still playing out:
-	// the operator has already moved on.
-	mode = StripMode::TRANSIT;
+	// A detent in flight outranks anything still playing: the operator
+	// has already moved on.
+	mode = StripMode::FILLING;
 	fromIdx = from;
 	toIdx = to;
 	fractionPermille = fraction;
-	paintTransit();
+	paintFilling();
 }
 
-void ledstring_browseSnap(int idx) {
-	mode = StripMode::PREVIEW;
-	previewIdx = idx;
+void ledstring_browseSnap(int from, int to) {
+	// The step completed. Start the scripted travel rather than jumping
+	// straight to the preview -- the movement is the confirmation that a
+	// detent was accepted, and where the light went tells the operator
+	// which way they were turning as well as that they landed.
+	mode = StripMode::TRAVEL;
+	fromIdx = from;
+	toIdx = to;
+	previewIdx = to;
 	animStartMs = millis();
 	// Paint straight away rather than waiting for the next
-	// ledstring_loop() tick. The snap is the operator's confirmation
-	// that a detent was accepted, so it has to land on the detent.
-	paintPreview(0);
+	// ledstring_loop() tick, so the travel starts on the detent that
+	// caused it.
+	paintTravel(0);
 }
 
 void ledstring_browseClear() {
