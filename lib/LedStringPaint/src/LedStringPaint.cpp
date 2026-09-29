@@ -493,6 +493,22 @@ TravelEdges travelEdges(int fromLeftPermille, int fromRightPermille,
 	return e;
 }
 
+int travelEntryFor(const LedRange& leave, const LedRange& target) {
+	// Whichever edge of the console being left the block travels away
+	// from. Going forward that is the trailing edge; coming back it is
+	// the leading one.
+	//
+	// The block's spark is centred on this pixel, so it straddles the
+	// edge either way: one LED of the console being left and one LED of
+	// the gap it is heading into. That is what makes it read as peeling
+	// off rather than appearing from nowhere -- and only if the edge is
+	// the one the block is actually leaving by.
+	if (target.start < leave.start) {
+		return leave.start;
+	}
+	return leave.start + leave.width;
+}
+
 void computeTravelPath(const LedRange& leave, int entryPixel,
                        const LedRange& target, int sparkLeds, StripFrame& frame) {
 	frame.travelFrom = leave;

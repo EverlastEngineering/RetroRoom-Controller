@@ -631,6 +631,25 @@ TravelEdges travelEdges(int fromLeftPermille, int fromRightPermille,
 void computeTravelPath(const LedRange& leave, int entryPixel,
                        const LedRange& target, int sparkLeds, StripFrame& frame);
 
+// Which edge of the console being left the block departs from, for a
+// step that does not cross a shelf: the trailing edge going forward, the
+// leading edge coming back. Whichever it is, that is also where the
+// fill's anchor goes, so the block and the run it is about to consume
+// start on the same LED.
+//
+// This used to be the trailing edge in both directions, which is right
+// going forward and wrong coming back -- the block appeared on the
+// *right* of the console it was leaving and then ran left, so it read
+// as having started a LED too far along. The fill had already been
+// fixed to anchor on the correct edge, so the two disagreed: the run
+// began at the console's leading edge while the block began three LEDs
+// to the right of the end of its own run.
+//
+// The shell is the only caller that also needs the shelf logic, and it
+// calls this for the same-shelf case, so the direction rule lives here
+// where the host tests can see it rather than in a file they cannot.
+int travelEntryFor(const LedRange& leave, const LedRange& target);
+
 // How much of pixel `i` the block [left, right) covers, as a percentage
 // in 0..100.
 //

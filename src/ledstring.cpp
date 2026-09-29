@@ -285,12 +285,16 @@ void paintResting(int idx) {
 // console being left is dim throughout.
 // The pixel the travelling block enters at.
 //
-// For a step within a shelf that is the trailing edge of the console
-// being left -- the block peels off it and crosses the gap. For a step
-// *between* shelves it is the far end of the destination shelf: the one
-// end of it the string does not arrive at, so the block sweeps the
-// whole shelf and lands on the console. The knob goes one way and the
-// light goes the other, which is odd and deliberate.
+// For a step within a shelf that is the edge of the console being left
+// that the block travels away from -- trailing going forward, leading
+// coming back. The core owns that rule, because getting it wrong is
+// invisible going forward and reads as a mis-start coming back, and a
+// rule like that belongs where the tests can see it.
+//
+// For a step *between* shelves it is the far end of the destination
+// shelf: the one end of it the string does not arrive at, so the block
+// sweeps the whole shelf and lands on the console. The knob goes one
+// way and the light goes the other, which is odd and deliberate.
 //
 // The shelves are strung as one continuous chain, so pixel order alone
 // cannot tell you where one ends -- this is why the console's `shelf`
@@ -303,7 +307,7 @@ int travelEntryFor(int from, int to) {
 		return leaveEnd;
 	}
 	if (consoles[from].shelf == consoles[to].shelf) {
-		return leaveEnd;
+		return retroroom_core::travelEntryFor(leave, windowFor(to));
 	}
 	// Crossed the bridge between shelves. The block enters the shelf it
 	// is landing on at the end the string does *not* arrive at, and

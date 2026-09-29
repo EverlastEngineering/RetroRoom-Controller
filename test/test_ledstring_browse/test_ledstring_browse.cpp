@@ -38,6 +38,7 @@ using retroroom_core::collectAboveWindows;
 using retroroom_core::computeTravelPath;
 using retroroom_core::computeFillGeometry;
 using retroroom_core::scaleFillLead;
+using retroroom_core::travelEntryFor;
 using retroroom_core::coveragePercent;
 using retroroom_core::travelEdges;
 using retroroom_core::TravelEdges;
@@ -1313,6 +1314,91 @@ static void test_a_return_across_the_bridge_sweeps_the_shelf_too(void) {
 		"the console being left stays dim, not fill");
 }
 
+static void test_the_block_enters_on_the_edge_it_departs_by(void) {
+	// The direction rule, which is what the shell used to get wrong.
+	//
+	// The block's spark is centred on the entry pixel, so the edge has
+	// to be the one the block is *leaving by*. The trailing edge is
+	// right going forward and wrong coming back: coming back, the block
+	// appeared on the right of the console it was leaving and then ran
+	// left, which read as a mis-start a LED too far along. It showed up
+	// as a bare LED to the right of the console flashing on the first
+	// frame of the animation, on every console, only in that direction.
+	TEST_ASSERT_EQUAL_MESSAGE(kNes.start + kNes.width,
+							  travelEntryFor(kNes, kSms),
+							  "a forward step leaves by the trailing edge");
+	TEST_ASSERT_EQUAL_MESSAGE(kSms.start, travelEntryFor(kSms, kNes),
+							  "a backward step leaves by the leading edge");
+}
+
+static void test_the_block_starts_where_its_own_fill_starts(void) {
+	// The two halves have to agree, in both directions. The fill anchors
+	// on the edge the block departs by, so entering anywhere else leaves
+	// the block starting outside its own run -- which is what it did: the
+	// run began at the console's leading edge and the block three LEDs to
+	// the right of the end of it.
+	//
+	// This is the invariant that would have caught it, and it is
+	// direction-symmetric on purpose. The bug was invisible going
+	// forward, so a forward-only test of it always passes.
+	StripFrame forward = travelFrame(kNes, travelEntryFor(kNes, kSms), kSms, 0);
+	TEST_ASSERT_EQUAL_MESSAGE(forward.fillAnchor,
+							  forward.travelFromLeftPermille / 1000 + 1,
+							  "going forward the block enters on the fill's anchor");
+	StripFrame back = travelFrame(kSms, travelEntryFor(kSms, kNes), kNes, 0);
+	TEST_ASSERT_EQUAL_MESSAGE(back.fillAnchor,
+							  back.travelFromLeftPermille / 1000 + 1,
+							  "coming back the block enters on the fill's anchor");
+	// And the run is continuous with the block on the very first frame:
+	// the spark's outer LED is inside the run, so nothing is skipped.
+	const int runLo = (back.fillLead < back.fillAnchor) ? back.fillLead
+														: back.fillAnchor;
+	const int runHi = (back.fillLead < back.fillAnchor) ? back.fillAnchor
+														: back.fillLead;
+	TEST_ASSERT_TRUE_MESSAGE(
+		back.travelFromLeftPermille / 1000 >= runLo &&
+			back.travelFromLeftPermille / 1000 < runHi,
+		"the spark must reach into the run it is about to consume");
+}
+
+static void test_the_backward_block_no_longer_starts_right_of_the_console(void) {
+	// The exact symptom, as pixels. The fixture's SMS is 7..11; rotating
+	// left to NES used to start the block on 11..12 -- the console's last
+	// LED plus the bare one to its right -- and then run left, so that
+	// bare LED flashed for a frame on the wrong side of the console. It
+	// starts on 6..7 now: the gap it is heading into, and the console's
+	// first LED.
+	StripFrame f = travelFrame(kSms, travelEntryFor(kSms, kNes), kNes, 0);
+	TEST_ASSERT_EQUAL_MESSAGE(6, f.travelFromLeftPermille / 1000,
+							  "the spark's leading edge is in the gap being entered");
+	TEST_ASSERT_EQUAL_MESSAGE(7, f.travelFromRightPermille / 1000 - 1,
+							  "its other LED is on the console being left");
+	int out[64];
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[12],
+		"the bare LED right of the console must stay dark");
+	// The run it is about to consume is still there, and the block is
+	// sitting on the end of it.
+	TEST_ASSERT_EQUAL(45, out[5]);
+	TEST_ASSERT_EQUAL_MESSAGE(22, out[8],
+							  "the rest of the console being left stays dim");
+}
+
+static void test_a_spark_centred_on_the_first_led_is_safe(void) {
+	// A crossing into a shelf whose first console sits at LED 0 enters
+	// at 0, and the spark is centred on the entry -- so half of it hangs
+	// off the front of the strip. Coverage is clamped, so this reads as
+	// LED 0 lit and nothing else; it cannot index off the front. Worth
+	// pinning, because a negative entry is the obvious next thing to
+	// "fix", and it is the fixed path that would break.
+	StripFrame f = travelFrame({0, 2}, /*entryPixel=*/0, {6, 2}, 0);
+	TEST_ASSERT_EQUAL(-1000, f.travelFromLeftPermille);
+	int out[64];
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[0],
+							  "the half-spark still lights the first LED");
+}
+
 static void test_a_step_within_a_shelf_still_measures_the_gap(void) {
 	// The guard on the rule above. Within a shelf the block enters at
 	// the source's trailing edge, which lands exactly *on* the far edge
@@ -1625,6 +1711,10 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_fill_never_lights_the_target_window);
 	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);
 	RUN_TEST(test_a_return_across_the_bridge_sweeps_the_shelf_too);
+	RUN_TEST(test_the_block_enters_on_the_edge_it_departs_by);
+	RUN_TEST(test_the_block_starts_where_its_own_fill_starts);
+	RUN_TEST(test_the_backward_block_no_longer_starts_right_of_the_console);
+	RUN_TEST(test_a_spark_centred_on_the_first_led_is_safe);
 	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);
 	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_resting_frame_lights_each_window_above);

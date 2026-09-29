@@ -151,18 +151,16 @@ int collectAboveFor(int idx, LedRange* out, int capacity) {
 // Fill a frame's resting fields from the console list. Shared by every
 // scenario that shows a resting or selection frame, so the sim cannot
 // drift from the shell's own assembly.
-// Mirrors travelEntryFor() in src/ledstring.cpp: the trailing edge of
-// the console being left within a shelf, or the end of the destination
-// shelf the string does not arrive at when the step crosses between
-// them. That is the shelf's high end stepping up and its low end
-// stepping back down -- always taking the high end collapsed the
-// return crossing, because the console being returned to sits at the
-// bridge end of its own shelf.
+// Mirrors travelEntryFor() in src/ledstring.cpp. The within-shelf rule
+// is the core's, so the sim calls the same function rather than keeping
+// a copy -- a copy of that rule is how the backwards case went wrong
+// unnoticed. Only the shelf-crossing half is the shell's, because only
+// the shell knows which console is on which shelf.
 int travelEntryFor(int from, int to) {
 	const LedRange leave = windowFor(from);
 	const int leaveEnd = leave.start + leave.width;
 	if (kConsoles[from].shelf == kConsoles[to].shelf) {
-		return leaveEnd;
+		return retroroom_core::travelEntryFor(leave, windowFor(to));
 	}
 	int lo = -1;
 	int hi = -1;

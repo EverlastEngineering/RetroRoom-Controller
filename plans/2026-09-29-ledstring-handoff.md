@@ -155,9 +155,32 @@ always enters **inside** the stretch of pixels the two consoles occupy
 that stretch), while a crossing enters outside it. That test has to be
 strict for the same reason.
 
+- **The block enters on the edge it departs by, and that is also where
+  the fill anchors.** The spark is centred on the entry pixel, so the
+  entry has to be the edge of the console being left that the block is
+  actually running away from: trailing going forward, leading coming
+  back. It was the trailing edge in both directions, which is invisible
+  going forward and reads as a mis-start coming back — the block
+  appeared on the *right* of the console it was leaving and then ran
+  left, so a bare LED to the right of every console flashed for one
+  frame. Only in that direction, on every console.
+
+  The fill had already been fixed to anchor on the correct edge, so the
+  two halves disagreed: the run began at the console's leading edge and
+  the block began three LEDs to the right of the end of its own run. The
+  simulator's `browse` scenario showed it the whole time — the block at
+  `7..8` with the run at `2..4`.
+
+  The rule now lives in the core as `travelEntryFor(leave, target)`, so
+  the host tests can see it. It was in the shell, mirrored by hand in
+  the simulator, and **neither copy is covered by a test** — a private
+  copy of a direction rule is how a bug like this survives a session in
+  which the tests are green and the simulator is run daily.
+
 **Forward-only unit tests will not find any of these.** Use the
 simulator's two-row geometry — `ledstring-sim.sh shelfback` is the
-crossing that goes right to left.
+crossing that goes right to left, and `browse` is a within-shelf step
+going left.
 
 ### The last *drawn* detent is 100%, not the last detent
 
