@@ -524,6 +524,24 @@ struct StripFrame {
     int fillAnchor = 0;
     int fillLead = 0;
     bool fillForward = true;
+
+	// How far the leading edge has been *withdrawn* from `fillLead`,
+	// in permille of a LED. Applied towards `fillAnchor`, so the run
+	// shrinks at its leading edge and the anchor end never moves.
+	//
+	// This is the overshoot retreat: the operator turned past a console
+	// and then stopped, and this gives the run back one LED at a time
+	// rather than leaving it pointing at a console nobody asked for.
+	//
+	// In permille rather than LEDs because the removal has to *fade*.
+	// Withdraw a whole LED per step and the boundary LED snaps off,
+	// which is the thing that makes a retreat look like a switch rather
+	// than a hand letting go. `fillLead` stays an integer because the
+	// knob's own position is a whole number of LEDs and rounding it here
+	// would quantise the progression the operator is watching.
+	//
+	// Zero means no retreat, so every existing caller is unaffected.
+	int fillRetreatPermille = 0;
 	int fromPct = 0;    // TRANSIT: the console being left
 	int toPct = 0;      // TRANSIT: the console being approached
 	int blobPct = 100;  // TRANSIT: the travelling blob

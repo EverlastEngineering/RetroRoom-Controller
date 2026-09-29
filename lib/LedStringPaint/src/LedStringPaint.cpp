@@ -678,13 +678,39 @@ int computeFillScale(int pixel, const StripFrame& frame) {
 													  : frame.fillAnchor;
 	const int hi = (frame.fillLead < frame.fillAnchor) ? frame.fillAnchor
 													  : frame.fillLead;
+	// The leading edge, in permille of a LED, after the overshoot
+	// retreat. Moving it towards the anchor shortens the run from the
+	// front and leaves the anchor end where it is, so a run being given
+	// back retracts rather than sliding.
+	//
+	// Clamped at the anchor: a retreat longer than the run empties it
+	// rather than inverting it, and a frame with a negative-length run
+	// would light the wrong span entirely.
+	long long lead = static_cast<long long>(frame.fillLead) * 1000;
+	lead += (frame.fillForward ? -frame.fillRetreatPermille
+							   : frame.fillRetreatPermille);
+	const long long anchorPermille =
+		static_cast<long long>(frame.fillAnchor) * 1000;
+	if ((frame.fillForward && lead < anchorPermille) ||
+		(!frame.fillForward && lead > anchorPermille)) {
+		lead = anchorPermille;
+	}
+	if (lead < lo * 1000) {
+		lead = static_cast<long long>(lo) * 1000;
+	}
+	if (lead > hi * 1000) {
+		lead = static_cast<long long>(hi) * 1000;
+	}
 	if (pixel < lo || pixel >= hi) {
 		return 0;
 	}
 	// Antialias the leading edge only -- it is the edge the operator is
 	// watching move. The anchor end is fixed, and softening it would
 	// make the whole run shimmer.
-	const long long lead = static_cast<long long>(frame.fillLead) * 1000;
+	//
+	// This is what makes the retreat a fade: withdrawing part of a LED
+	// leaves the boundary pixel partly covered, so it dims towards
+	// nothing instead of being switched off.
 	const long long here = static_cast<long long>(pixel) * 1000;
 	if (frame.fillForward) {
 		if (here + 1000 <= lead) {

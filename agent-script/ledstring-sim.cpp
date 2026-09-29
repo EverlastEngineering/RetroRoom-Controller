@@ -614,6 +614,87 @@ void scenarioShelfBack() {
 }
 
 
+// The overshoot retreat. The operator turned past a console, stopped,
+// and after a while the run is given back one LED at a time from its
+// leading edge -- which is what rolling the knob back would have looked
+// like -- until only the pulsing candidate is left.
+//
+// The interesting part is the boundary: the LED being given back dims
+// as it is withdrawn rather than being switched off, so the run reels
+// in instead of strobing. That only works because the retreat is
+// sub-LED, so this renders the frames right through one LED's fade.
+void scenarioRetreat() {
+	rule("RETREAT -- the overshoot run giving itself back");
+	printf("Knob stopped three detents into a five-detent step. After the\n"
+		   "quiet delay the leading edge is withdrawn one LED per step,\n"
+		   "and each LED dims across its own step rather than blinking out.\n\n");
+
+	const int from = 1;  // SMS
+	const int to = 2;    // XBOX
+	scenarioActive = from;
+
+	// The run as the operator left it: three detents of five, which is
+	// what an overshoot by two actually looks like.
+	StripFrame base = baseFrame();
+	base.effect = StripEffect::FILLING;
+	base.from = windowFor(from);
+	applyBrowsePath(base, from, to);
+	base.candidateWindow = windowFor(from);
+	// The whole gap, before the knob's position is applied -- reading it
+	// back off the scaled lead would report the two as the same thing.
+	const int wholeLeds = (base.fillLead > base.fillAnchor)
+							  ? base.fillLead - base.fillAnchor
+							  : base.fillAnchor - base.fillLead;
+	const int heldPermille =
+		(3 * 1000) / (LEDSTRING_DETENTS_PER_STEP > 0
+						  ? LEDSTRING_DETENTS_PER_STEP
+						  : 1);
+	base.fillLead = scaleFillLead(base.fillAnchor, base.fillLead,
+								  base.fillForward, heldPermille);
+
+	const int runLeds = (base.fillLead > base.fillAnchor)
+							? base.fillLead - base.fillAnchor
+							: base.fillAnchor - base.fillLead;
+	printf("  run holds %d LEDs of a %d-LED gap (detents 3 of %d)\n\n", runLeds,
+		   wholeLeds, LEDSTRING_DETENTS_PER_STEP);
+
+	// Quiet, then the retreat. Phase the clock so the first LED is
+	// caught half withdrawn rather than fully lit or fully gone.
+	for (int ms = 0; ms <= (runLeds + 1) * LEDSTRING_FILL_RETREAT_STEP_MS;
+		 ms += LEDSTRING_FILL_RETREAT_STEP_MS / 2) {
+		StripFrame f = base;
+		const uint32_t quiet = LEDSTRING_FILL_RETREAT_DELAY_MS +
+							   static_cast<uint32_t>(ms);
+		if (quiet > LEDSTRING_FILL_RETREAT_DELAY_MS) {
+			f.fillRetreatPermille = static_cast<int>(
+				(static_cast<long long>(ms) * 1000) /
+				LEDSTRING_FILL_RETREAT_STEP_MS);
+		}
+		// Pulse phase, so the candidate is at the same brightness on
+		// every row and the fill is the only thing moving.
+		f.elapsedMs = 550;
+		char caption[80];
+		if (quiet <= LEDSTRING_FILL_RETREAT_DELAY_MS) {
+			snprintf(caption, sizeof(caption), "quiet %4dms  (holding)", ms);
+		} else {
+			const int left = runLeds - (f.fillRetreatPermille / 1000);
+			snprintf(caption, sizeof(caption), "quiet %4dms  run %2d LEDs",
+					 quiet, (left < 0) ? 0 : left);
+		}
+		render(f, caption);
+	}
+	printf("\n  Roles, for the same frames at the point of retreat:\n");
+	for (int ms = 0; ms <= 1000; ms += 250) {
+		StripFrame f = base;
+		f.elapsedMs = 550;
+		f.fillRetreatPermille = (ms * 1000) / LEDSTRING_FILL_RETREAT_STEP_MS;
+		char caption[64];
+		snprintf(caption, sizeof(caption), "withdrawn %4dms", ms);
+		renderRoles(f, caption);
+	}
+}
+
+
 // The multi-step browse: SMS is active, the operator has already browsed
 // onto NES (so NES is pulsing as a candidate), and is now filling onward
 // toward SMS. NES must keep pulsing -- a press right now would still
@@ -687,6 +768,9 @@ int main(int argc, char** argv) {
 	if (all || which == "carry") {
 		scenarioCarry();
 	}
+	if (all || which == "retreat") {
+		scenarioRetreat();
+	}
 	if (all || which == "shelf") {
 		scenarioShelf();
 	}
@@ -703,10 +787,11 @@ int main(int argc, char** argv) {
 		scenarioAbove();
 	}
 	if (!all && which != "browse" && which != "shelf" &&
-		which != "shelfback" && which != "carry" && which != "select" &&
-		which != "frames" && which != "above") {
+		which != "shelfback" && which != "carry" && which != "retreat" &&
+		which != "select" && which != "frames" && which != "above") {
 		fprintf(stderr, "unknown scenario '%s'\n", which.c_str());
-		fprintf(stderr, "try: browse, carry, shelf, shelfback, select, frames, above, all\n");
+		fprintf(stderr, "try: browse, carry, shelf, shelfback, retreat, "
+						"select, frames, above, all\n");
 		return 1;
 	}
 	printf("\n");

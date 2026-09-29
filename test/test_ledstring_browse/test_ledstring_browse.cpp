@@ -50,6 +50,11 @@ using retroroom_core::StripFrame;
 void setUp(void) {}
 void tearDown(void) {}
 
+// Role per pixel, for the tests that care what a pixel is *for* rather
+// than how bright. Defined further down with the colour tests, so
+// declared here for the tests that need a role and a level together.
+static void frameRoles(const StripFrame& f, retroroom_core::LedRole* out);
+
 // Brightness per pixel. The core resolves a frame into a role and a
 // level per pixel (see computeStripFrame); most of these tests only
 // care about how bright, so this drops the role. Tests that care about
@@ -1399,6 +1404,115 @@ static void test_a_spark_centred_on_the_first_led_is_safe(void) {
 							  "the half-spark still lights the first LED");
 }
 
+static void test_the_retreat_shortens_the_run_from_the_front(void) {
+	// The overshoot retreat. The operator turned past a console and
+	// stopped; the run is still pointing at a console they did not ask
+	// for. It gets given back from its leading edge, and the anchor end
+	// stays exactly where it was, so the run retracts rather than
+	// sliding.
+	//
+	// Forward run, anchor at 2, lead at 7 (pixels 2..6).
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 0;
+	f.fillPct = 100;
+	f.from = kNes;
+	f.activeWindow = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	f.fillLead = 7;
+	f.fillRetreatPermille = 2000;   // two LEDs
+	int out[64];
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[2], "the anchor end never moves");
+	TEST_ASSERT_EQUAL(100, out[3]);
+	TEST_ASSERT_EQUAL(100, out[4]);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[5], "the leading end is given back");
+	TEST_ASSERT_EQUAL(0, out[6]);
+	TEST_ASSERT_EQUAL(0, out[7]);
+}
+
+static void test_the_retreat_fades_rather_than_snapping(void) {
+	// The reason the retreat is in permille. Withdrawing a whole LED at
+	// a time would switch the boundary LED off, and a run that blinks
+	// itself out reads as a fault rather than a release. Withdrawing
+	// part of a LED leaves it partly covered, so it dims.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 0;
+	f.fillPct = 100;
+	f.from = kNes;
+	f.activeWindow = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	f.fillLead = 7;
+	int out[64];
+	// Nothing withdrawn: the boundary LED is fully lit, because a whole
+	// LED lead leaves no partial anywhere.
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[6], "no retreat, no partial LED");
+	// Half a LED withdrawn: the same LED is half covered.
+	f.fillRetreatPermille = 500;
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(50, out[6], "a half-withdrawn LED is half lit");
+	// And it is still a fill, not switched off -- the role is what the
+	// simulator's view and the colour depend on.
+	retroroom_core::LedRole r[64];
+	frameRoles(f, r);
+	TEST_ASSERT_TRUE(r[6] == retroroom_core::LedRole::FILL);
+	// The LEDs behind it are untouched, and the one past the lead is
+	// still dark: only the boundary pixel is partial.
+	TEST_ASSERT_TRUE(r[5] == retroroom_core::LedRole::FILL);
+	TEST_ASSERT_TRUE(r[2] == retroroom_core::LedRole::FILL);
+	TEST_ASSERT_TRUE_MESSAGE(r[7] == retroroom_core::LedRole::OFF,
+							  "and nothing past the lead is claimed");
+}
+
+static void test_a_retreat_longer_than_the_run_empties_it(void) {
+	// Overshooting badly must not invert the run or light the wrong
+	// span. It empties, which is what leaves the pulsing selection on
+	// its own.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 0;
+	f.fillPct = 100;
+	f.from = kNes;
+	f.activeWindow = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	f.fillLead = 7;
+	f.fillRetreatPermille = 9999;
+	int out[64];
+	frameLevels(f, out);
+	for (int p = 0; p < 64; ++p) {
+		TEST_ASSERT_EQUAL_MESSAGE(0, out[p], "an over-long retreat empties the run");
+	}
+}
+
+static void test_the_retreat_applies_at_the_low_end_going_back(void) {
+	// Direction. A backwards run is bounded the other way round, so
+	// "towards the anchor" is the other direction too. Getting this
+	// wrong would make a backwards retreat *lengthen* the run.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 0;
+	f.fillPct = 100;
+	f.from = kSms;
+	f.activeWindow = kSms;
+	computeTravelPath(kSms, kSms.start, kNes, 2, f);
+	TEST_ASSERT_FALSE(f.fillForward);
+	// Anchor 7, lead 2, so the run is pixels 2..6 -- five LEDs. Two are
+	// given back, which leaves three, and it is the *low* two that go:
+	// the lead is the near end of a backwards run, and the anchor end
+	// never moves.
+	f.fillRetreatPermille = 2000;
+	int out[64];
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[2], "the leading end is given back");
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[3], "both of the leading LEDs");
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[4], "the rest of the run stays lit");
+	TEST_ASSERT_EQUAL(100, out[5]);
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[6], "the anchor end never moves");
+	// And a retreat the other way would have *lengthened* the run, which
+	// is the mistake this direction check exists to catch.
+	f.fillRetreatPermille = 0;
+	frameLevels(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(100, out[2], "unretracted, the run is whole");
+}
+
 static void test_a_step_within_a_shelf_still_measures_the_gap(void) {
 	// The guard on the rule above. Within a shelf the block enters at
 	// the source's trailing edge, which lands exactly *on* the far edge
@@ -1760,6 +1874,10 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_block_starts_where_its_own_fill_starts);
 	RUN_TEST(test_the_backward_block_no_longer_starts_right_of_the_console);
 	RUN_TEST(test_a_spark_centred_on_the_first_led_is_safe);
+	RUN_TEST(test_the_retreat_shortens_the_run_from_the_front);
+	RUN_TEST(test_the_retreat_fades_rather_than_snapping);
+	RUN_TEST(test_a_retreat_longer_than_the_run_empties_it);
+	RUN_TEST(test_the_retreat_applies_at_the_low_end_going_back);
 	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);
 	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_resting_frame_lights_each_window_above);

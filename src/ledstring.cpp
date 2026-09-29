@@ -128,6 +128,13 @@ int selectIdx = 0;
 uint32_t animStartMs = 0;
 uint32_t lastFrameMs = 0;
 
+// When the last rotary detent arrived, which is what the overshoot
+// retreat counts its silence from. Written only by
+// ledstring_browseProgress(), because that is the only place a detent
+// becomes a frame -- paintFilling() runs every frame and must not be
+// able to reset it.
+uint32_t lastDetentMs = 0;
+
 // A console's clamped LED window. Defensive about the index: the
 // console accessors index without checking, and this runs from an
 // animation tick where a stale index would read past the end of the
@@ -368,10 +375,41 @@ void paintFilling() {
 	f.from = windowFor(fromIdx);
 	applyBrowsePath(f, fromIdx, toIdx);
 	// The leading edge walks across the gap as the operator turns. The
-	// floor was applied by computeFillGeometry() and is not re-applied
+	// floor was applied by computeTravelGeometry() and is not re-applied
 	// here, so the run is the real gap at every angle of the knob.
 	f.fillLead = retroroom_core::scaleFillLead(f.fillAnchor, f.fillLead,
 											   f.fillForward, stepPermille);
+	// The overshoot retreat. The operator turned past a console and
+	// stopped, and the run is still pointing at a console they did not
+	// ask for, so give it back -- one LED at a time from the leading
+	// edge, which is what rolling the knob back would have looked like.
+	//
+	// Measured from the last detent rather than from the start of the
+	// fill, so a step still in progress is never withdrawn underneath
+	// the operator. Turning again resets it: a detent is an intent to go
+	// somewhere, and the retreat must never argue with that.
+	//
+	// Computed in permille so the LED being given back *dims* rather
+	// than being switched off -- see StripFrame::fillRetreatPermille.
+	if (LEDSTRING_FILL_RETREAT_DELAY_MS > 0 &&
+		LEDSTRING_FILL_RETREAT_STEP_MS > 0) {
+		const uint32_t quietMs = (uint32_t)(millis() - lastDetentMs);
+		if (quietMs > (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS) {
+			const uint32_t into = quietMs - (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS;
+			const int runLeds = (f.fillLead > f.fillAnchor)
+									? f.fillLead - f.fillAnchor
+									: f.fillAnchor - f.fillLead;
+			int retreat = static_cast<int>((static_cast<long long>(into) * 1000) /
+										  (uint32_t)LEDSTRING_FILL_RETREAT_STEP_MS);
+			// Never withdraw more than the run holds. The core clamps as
+			// well, but clamping here keeps the frame honest for anything
+			// else that reads the retreat.
+			if (retreat > runLeds * 1000) {
+				retreat = runLeds * 1000;
+			}
+			f.fillRetreatPermille = retreat;
+		}
+	}
 	// The candidate keeps pulsing while the operator fills onward. It
 	// is still the console a press would select, and it is what the fill
 	// is running away from; making it part of the fill meant it stopped
@@ -560,6 +598,10 @@ void ledstring_browseProgress(int from, int to, int fraction, int progress) {
 	toIdx = to;
 	fractionPermille = fraction;
 	stepPermille = progress;
+	// A detent is a new intent, so it restarts the quiet clock the
+	// overshoot retreat is waiting on. Nothing else may write this:
+	// paintFilling() is called every frame now, and it reads it.
+	lastDetentMs = millis();
 	paintFilling();
 }
 

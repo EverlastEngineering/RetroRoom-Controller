@@ -90,6 +90,36 @@
 #define LEDSTRING_FILL_PCT 45
 #endif
 
+// How long the knob must be quiet before the progression run starts
+// giving itself back, in ms. 0 disables the retreat entirely.
+//
+// The run is left pointing at whatever the operator was turning toward
+// when they stopped. If that was a console past the one they meant --
+// an overshoot, or a spin abandoned half way -- the strip keeps
+// pointing at it indefinitely, which reads as the browse still being in
+// progress long after the operator has finished.
+//
+// So after this long with no detent, the run is withdrawn one LED at a
+// time from its leading edge, which is what rolling the knob back by
+// the overshoot would have looked like, and it finishes on the pulsing
+// selection on its own. Turning the knob again cancels it immediately
+// and starts a new fill; the retreat never fights the operator.
+#ifndef LEDSTRING_FILL_RETREAT_DELAY_MS
+#define LEDSTRING_FILL_RETREAT_DELAY_MS 3000
+#endif
+
+// How long one LED takes to be given back, in ms. This is also the
+// fade: a LED dims across this window rather than being switched off,
+// and the next starts as the previous finishes, so the run reels in
+// instead of strobing.
+//
+// It is a duration rather than a LED count on purpose. Retreating a
+// whole LED at a time cannot fade, and the snap is what makes a
+// countdown look like a fault rather than a release.
+#ifndef LEDSTRING_FILL_RETREAT_STEP_MS
+#define LEDSTRING_FILL_RETREAT_STEP_MS 500
+#endif
+
 // Detents of the rotary knob required to move the browse cursor one
 // console when the operator is turning deliberately.
 #ifndef LEDSTRING_DETENTS_PER_STEP
