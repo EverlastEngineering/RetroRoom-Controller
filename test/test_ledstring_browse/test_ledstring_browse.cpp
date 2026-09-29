@@ -36,7 +36,8 @@ using retroroom_core::SelectionEffectConfig;
 using retroroom_core::twinkleSample;
 using retroroom_core::collectAboveWindows;
 using retroroom_core::computeTravelPath;
-using retroroom_core::computeFillEnd;
+using retroroom_core::computeFillGeometry;
+using retroroom_core::scaleFillLead;
 using retroroom_core::coveragePercent;
 using retroroom_core::travelEdges;
 using retroroom_core::TravelEdges;
@@ -1066,76 +1067,133 @@ static void test_coverage_is_exact_at_the_edges(void) {
 	TEST_ASSERT_TRUE(coveragePercent(1400, 1500, 1) < 100);
 }
 
-static void test_fill_end_has_a_floor(void) {
-	// A step between shelves is a couple of pixels in index space. The
-	// floor is what keeps the knob-turn indicator moving on exactly the
-	// steps where the operator most needs to see it move.
-	const LedRange tiny = {3, 1};
-	// Run starts at NES's trailing edge (2); a 1-pixel gap would give a
-	// 1-LED run, so the floor of 3 wins.
-	TEST_ASSERT_EQUAL(5, computeFillEnd(kNes, tiny, 3, 64));
-	// A wider gap is not truncated.
-	TEST_ASSERT_EQUAL(7, computeFillEnd(kNes, kSms, 3, 64));
-	TEST_ASSERT_EQUAL(30, computeFillEnd(kNes, {30, 4}, 3, 64));
-	// And the run never leaves the strip -- forwards, the floor is
-	// capped by the end of the strip.
-	TEST_ASSERT_EQUAL(64, computeFillEnd({50, 4}, {60, 1}, 10, 64));
-	// Backwards, the floor extends the run *backwards* from the console
-	// being left, which is what keeps a backwards step from having a
-	// zero-length run.
-	TEST_ASSERT_EQUAL(54, computeFillEnd({60, 4}, {63, 1}, 10, 64));
-	TEST_ASSERT_EQUAL(0, computeFillEnd(kNes, kSms, 3, 0));
+static void test_fill_run_is_the_gap_between_the_windows(void) {
+	// The run is the gap, with its anchor on the side of the console
+	// being left. It used to be measured from the source's trailing edge
+	// in both directions, so a backwards step's run lay *inside* the
+	// console being left and the indicator crept the wrong way.
+	StripFrame fwd;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, fwd);
+	TEST_ASSERT_EQUAL(2, fwd.fillAnchor);   // just past NES [1,2)
+	TEST_ASSERT_EQUAL(7, fwd.fillLead);     // just short of SMS [7,12)
+	TEST_ASSERT_TRUE(fwd.fillForward);
+
+	StripFrame back;
+	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, back);
+	TEST_ASSERT_EQUAL_MESSAGE(7, back.fillAnchor, "just short of SMS [7,12)");
+	TEST_ASSERT_EQUAL_MESSAGE(2, back.fillLead, "just past NES [1,2)");
+	TEST_ASSERT_FALSE(back.fillForward);
 }
 
-static void test_fill_uses_three_distinct_levels(void) {
-	// Stack, fill and selection must not collapse into each other, or
-	// "where the stack ends" and "how far I have got" become the same
-	// fact and there is nothing to read progress from.
+static void test_fill_run_has_a_floor(void) {
+	// A step between shelves is a couple of pixels in index space. The
+	// floor keeps the progression indicator moving on exactly the steps
+	// where it is hardest to see what is happening.
+	// NES [1,2) to SMS [7,12) has a five-LED gap. A floor of 3 is
+	// already shorter than that, so the natural gap is what runs.
+	StripFrame f;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 3, 64, f);
+	TEST_ASSERT_EQUAL(7, f.fillLead);
+	// A floor longer than the gap is what extends it.
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 8, 64, f);
+	TEST_ASSERT_EQUAL(10, f.fillLead);
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	TEST_ASSERT_EQUAL(7, f.fillLead);
+
+	// And the run never leaves the strip, whichever way it runs.
+	computeFillGeometry({50, 4}, 54, {60, 1}, 10, 64, f);
+	TEST_ASSERT_EQUAL_MESSAGE(64, f.fillLead, "floor must clamp to the strip");
+	// A console hard against the end of the strip, stepping back off
+	// it: the floor runs backwards from the console's own near edge.
+	computeFillGeometry({60, 4}, 64, {63, 1}, 10, 64, f);
+	// Measured, not derived: a console at the very end of the strip
+	// stepping back off it anchors at its own near edge and the floor
+	// runs back from there, clamped to the strip.
+	TEST_ASSERT_EQUAL_MESSAGE(60, f.fillAnchor, "anchored on the console being left");
+	TEST_ASSERT_EQUAL_MESSAGE(64, f.fillLead, "clamped to the end of the strip");
+}
+
+static void test_fill_lead_moves_towards_the_target(void) {
+	// The whole point of the indicator: the edge the operator watches
+	// walks across the gap as they turn, and stops at the target.
+	StripFrame f;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	int previous = kNes.start + kNes.width;
+	for (int p = 250; p <= 1000; p += 250) {
+		const int lead =
+			scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, p);
+		TEST_ASSERT_TRUE_MESSAGE(lead > previous, "lead must advance");
+		previous = lead;
+	}
+	// ...and the first click must show something. Truncating rather than
+	// rounding left the first detent of a short gap with no visible
+	// response at all.
+	const int firstClick =
+		scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 250);
+	TEST_ASSERT_TRUE_MESSAGE(firstClick > f.fillAnchor,
+		"the first detent must already light part of the gap");
+
+	// Backwards, the same walk runs the other way.
+	StripFrame b;
+	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, b);
+	int prevBack = kSms.start;
+	for (int p = 250; p <= 1000; p += 250) {
+		const int lead =
+			scaleFillLead(b.fillAnchor, b.fillLead, b.fillForward, p);
+		TEST_ASSERT_TRUE_MESSAGE(lead < prevBack, "a backwards lead must retreat");
+		prevBack = lead;
+	}
+	TEST_ASSERT_EQUAL(2, scaleFillLead(b.fillAnchor, b.fillLead, b.fillForward, 1000));
+}
+
+static void test_fill_does_not_light_pixels_below_the_console(void) {
+	// Regression. Dimming "everything below the run" lit up bare gap
+	// pixels at the start of the strip, so the indicator appeared to
+	// begin at LED 0 rather than at the console being turned away from.
 	StripFrame f = configuredFrame(StripEffect::FILLING);
 	f.dimPct = 22;
 	f.fillPct = 45;
-	f.minFillLeds = 3;
-	f.fillFrom = kNes;
-	f.fillTo = kSms;
+	f.minFillLeds = 0;
 	f.from = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward, 1000);
 	int out[64];
 	computeStripFrame(f, out);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[0], "LED 0 belongs to no console");
 	TEST_ASSERT_EQUAL(22, out[1]);
-	TEST_ASSERT_EQUAL_MESSAGE(45, out[5], "the fill is its own level");
-	TEST_ASSERT_TRUE(22 != 45);
-	TEST_ASSERT_TRUE(45 != 100);
+	TEST_ASSERT_EQUAL(45, out[2]);
+	TEST_ASSERT_EQUAL(45, out[6]);
+	TEST_ASSERT_EQUAL_MESSAGE(0, out[7], "the target's window stays dark");
 }
 
 static void test_fill_runs_backwards_when_browsing_back(void) {
-	// The browse goes both ways. The fill has to run towards whichever
-	// console is being approached, and it treated every step as
-	// forwards -- so a backwards browse got a zero-length run and the
-	// progression indicator simply did not appear at all.
+	// The browse goes both ways. A backwards step used to get a
+	// zero-length run, so the progression indicator simply did not
+	// appear when browsing back.
 	int early[64];
 	int late[64];
 	StripFrame f = configuredFrame(StripEffect::FILLING);
 	f.dimPct = 22;
 	f.fillPct = 45;
 	f.minFillLeds = 0;
-	// SMS [7,12) is being left for NES [1,2): the run sits between them
-	// and grows leftward as the operator turns back.
-	computeTravelPath(kSms, kSms.start + kSms.width, kNes, 2, f);
-	f.effect = StripEffect::FILLING;
-	// At the start of the step the run is just past SMS's trailing edge.
-	f.fillTo = {kSms.start + kSms.width - 1, 0};
+	f.from = kSms;
+	computeFillGeometry(kSms, kSms.start + kSms.width, kNes, 0, 64, f);
+	// At the start of the step the run is just short of SMS. Both leads
+	// are scaled from the *unprogressed* one -- scaling an already
+	// scaled lead compounds the rounding and the run never arrives.
+	const int anchor = f.fillAnchor;
+	const int lead = f.fillLead;
+	f.fillLead = scaleFillLead(anchor, lead, f.fillForward, 250);
 	computeStripFrame(f, early);
 	// At the end it reaches NES's trailing edge.
-	f.fillTo = {kNes.start + kNes.width, 0};
+	f.fillLead = scaleFillLead(anchor, lead, f.fillForward, 1000);
 	computeStripFrame(f, late);
 	TEST_ASSERT_EQUAL_MESSAGE(22, early[7], "SMS itself is dim, not fill");
-	TEST_ASSERT_EQUAL(45, early[11]);  // still part of the run at the start
+	TEST_ASSERT_EQUAL_MESSAGE(0, early[12], "past SMS, outside the run");
 	TEST_ASSERT_TRUE_MESSAGE(late[2] == 45,
 		"a backwards run must reach NES's trailing edge");
-	// The consoles already in the stack stay dim throughout -- the fill
-	// covers the gap between the windows, not the windows themselves.
-	TEST_ASSERT_EQUAL_MESSAGE(22, late[1], "NES must not be lit as fill");
-   // Past SMS's trailing edge, and so outside the run entirely.
-   TEST_ASSERT_EQUAL(0, late[12]);
+	// The consoles already in the stack stay dim throughout.
+	TEST_ASSERT_EQUAL(0, late[1]);
 }
 
 static void test_fill_never_lights_the_target_window(void) {
@@ -1147,11 +1205,9 @@ static void test_fill_never_lights_the_target_window(void) {
 	f.minFillLeds = 0;
 	computeTravelPath(kNes, kNes.start + kNes.width, kSms, 2, f);
 	f.effect = StripEffect::FILLING;
-	// computeTravelPath already stopped the run short of the target's
-	// window; this is the assertion that it did.
-	TEST_ASSERT_EQUAL(kSms.start, f.fillTo.start);
 	int out[64];
 	computeStripFrame(f, out);
+	TEST_ASSERT_EQUAL(kSms.start, f.fillLead);
 	for (int p = 7; p < 12; ++p) {
 		TEST_ASSERT_EQUAL_MESSAGE(0, out[p],
 			"the target's own window must stay dark until the block lands");
@@ -1162,15 +1218,37 @@ static void test_shelf_crossing_sweeps_the_whole_destination_shelf(void) {
 	// A step between shelves enters at the far end of the destination
 	// shelf and sweeps back to the target, so the light travels the
 	// width of the cabinet even though the knob went forward one
-	// console. The fill covers that whole path for the block to consume.
+	// console -- and the fill spans that whole sweep for the block to
+	// consume.
 	StripFrame ordinary;
 	computeTravelPath(kSms, kSms.start + kSms.width, kNes, 2, ordinary);
 	StripFrame crossing;
 	computeTravelPath(kSms, 52, kNes, 2, crossing);
-	// Within a shelf the fill spans the gap between the two windows.
-	TEST_ASSERT_EQUAL(2, ordinary.fillTo.start);
-	// Across a shelf it spans out to the far end it comes in from.
-	TEST_ASSERT_EQUAL(52, crossing.fillTo.start);
+	TEST_ASSERT_EQUAL(2, ordinary.fillLead);
+	// The block *starts* at the far end and lands on the target, so the
+	// far end is the anchor and the target is the leading edge.
+	TEST_ASSERT_EQUAL_MESSAGE(52, crossing.fillAnchor,
+		"a shelf crossing sweeps in from the far end of the shelf");
+	TEST_ASSERT_EQUAL(1, crossing.fillLead);
+	TEST_ASSERT_FALSE(crossing.fillForward);
+}
+
+static void test_fill_uses_three_distinct_levels(void) {
+	// Stack, fill and selection must not collapse into each other, or
+	// "where the stack ends" and "how far I have got" become the same
+	// fact and there is nothing to read progress from.
+	StripFrame f = configuredFrame(StripEffect::FILLING);
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.minFillLeds = 0;
+	f.from = kNes;
+	computeFillGeometry(kNes, kNes.start + kNes.width, kSms, 0, 64, f);
+	int out[64];
+	computeStripFrame(f, out);
+	TEST_ASSERT_EQUAL(22, out[1]);
+	TEST_ASSERT_EQUAL_MESSAGE(45, out[5], "the fill is its own level");
+	TEST_ASSERT_TRUE(22 != 45);
+	TEST_ASSERT_TRUE(45 != 100);
 }
 
 int main(int argc, char** argv) {
@@ -1236,7 +1314,11 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_travel_stretches_then_settles);
 	RUN_TEST(test_travel_sweeps_a_shelf_for_a_shelf_crossing);
 	RUN_TEST(test_coverage_is_exact_at_the_edges);
-	RUN_TEST(test_fill_end_has_a_floor);
+	RUN_TEST(test_fill_run_is_the_gap_between_the_windows);
+	RUN_TEST(test_fill_run_has_a_floor);
+	RUN_TEST(test_fill_lead_moves_towards_the_target);
+	RUN_TEST(test_fill_does_not_light_pixels_below_the_console);
+	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_fill_runs_backwards_when_browsing_back);
 	RUN_TEST(test_fill_never_lights_the_target_window);
 	RUN_TEST(test_shelf_crossing_sweeps_the_whole_destination_shelf);

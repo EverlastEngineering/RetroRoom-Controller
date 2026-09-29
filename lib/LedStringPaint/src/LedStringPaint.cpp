@@ -96,6 +96,7 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
 		// Not a detent. Report the unchanged state so the caller can
 		// still repaint the current frame without the gate pretending
 		// the operator moved.
+		ev.stepPermille = stepProgressPermille(ev.detentsPerStep);
 		ev.detents = detentProgressPermille(ev.detentsPerStep);
 		return ev;
 	}
@@ -138,6 +139,7 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
 	const int target = anchorIndex + aimed;
 	if (listSize <= 0 || target < 0 || target >= listSize) {
 		ev.frozen = true;
+		ev.stepPermille = stepProgressPermille(ev.detentsPerStep);
 		ev.detents = detentProgressPermille(ev.detentsPerStep);
 		return ev;
 	}
@@ -177,8 +179,27 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
 	}
 
 	ev.fractionPermille = fraction_;
+	ev.stepPermille = stepProgressPermille(ev.detentsPerStep);
 	ev.detents = detentProgressPermille(ev.detentsPerStep);
 	return ev;
+}
+
+int DetentGate::stepProgressPermille(int detentsPerStep) const {
+	// The step completes on its last detent, and the indicator that
+	// leads up to it is only drawn on the ones before. So the last
+	// drawn detent is 100% of the step, not (N-1)/N of it.
+	if (detentsPerStep <= 1) {
+		return 1000;
+	}
+	int f = fraction_;
+	if (f < 0) {
+		f = -f;
+	}
+	// fractionPermille is already in permille of a *whole* step, so the
+	// rescale is a plain ratio: N / (N-1). At five detents per step that
+	// turns 800 (the last drawn detent) into 1000 and 200 into 250.
+	int p = (f * detentsPerStep) / (detentsPerStep - 1);
+	return (p > 1000) ? 1000 : p;
 }
 
 int DetentGate::detentProgressPermille(int detentsPerStep) const {
@@ -495,8 +516,12 @@ void computeTravelPath(const LedRange& leave, int entryPixel,
 	} else {
 		fillToPixel = target.start + target.width;     // backwards
 	}
-	frame.fillFrom = leave;
-	frame.fillTo = {fillToPixel, 0};
+	// The strip size and the floor come from the frame the caller
+	// already assembled, so the fill and the block are resolved
+	// against the same numbers. Passing zeroes here clamped every
+	// run to nothing.
+	computeFillGeometry(leave, entryPixel, target, frame.minFillLeds,
+	                   frame.totalLeds, frame);
 }
 
 int coveragePercent(int leftPermille, int rightPermille, int pixel) {
@@ -518,66 +543,109 @@ int coveragePercent(int leftPermille, int rightPermille, int pixel) {
 	return static_cast<int>((hi - lo) / 10);
 }
 
-int computeFillEnd(const LedRange& from, const LedRange& to, int minLengthLeds,
-                   int totalLeds) {
-	if (totalLeds <= 0) {
-		return 0;
-	}
-	const int start = from.start + from.width;
-	if (to.start >= start) {
-		// Forwards: the run starts at the console being left and stops
-		// at the console being reached.
-		int end = to.start;
-		if (end - start < minLengthLeds) {
-			end = start + minLengthLeds;
-		}
-		if (end > totalLeds) {
-			end = totalLeds;
-		}
-		if (end < start) {
-			end = start;
-		}
-		return end;
-	}
-	// Backwards: the operator is turning the other way, so the run runs
-	// from the target back toward the console being left and the floor
-	// extends it *past* the target, not along the gap.
+void computeFillGeometry(const LedRange& leave, int entryPixel,
+                         const LedRange& target, int minLengthLeds,
+                         int totalLeds, StripFrame& frame) {
+	// The run is the GAP between the two console windows, with its
+	// anchor on the side of the console being left and its leading edge
+	// starting at the far side of the gap.
 	//
-	// This case matters: the browse goes both ways, and treating every
-	// step as forwards left a backwards step with a zero-length run, so
-	// the progression indicator simply did not appear.
-	int end = to.start;
-	if (start - end < minLengthLeds) {
-		end = start - minLengthLeds;
+	// Both of those details were wrong before, and in the same way: the
+	// run was measured from the source's *trailing* edge in both
+	// directions, so a backwards step's run lay inside the console
+	// being left instead of in the gap. The fill then appeared on the
+	// wrong side of the console and grew the wrong way -- the operator
+	// turned left and the indicator crept right, towards the console
+	// they were turning away from.
+	// The run is the path the *block* sweeps, minus the target's own
+	// window, and the anchor is the end the block starts from. Tying it
+	// to the block rather than to the gap between the two consoles is
+	// what makes a shelf crossing fill its whole sweep: there the block
+	// starts at the far end of the destination shelf, so the run does
+	// too, and a run sized to the two-pixel gap would have left the
+	// block sliding over a backdrop.
+	const bool fromBeyond = (entryPixel > leave.start + leave.width);
+	int anchor;
+	int lead;
+	if (fromBeyond) {
+		anchor = entryPixel;                  // the far end of the shelf
+		lead = target.start;                  // where it lands
+	} else if (target.start >= leave.start + leave.width) {
+		anchor = leave.start + leave.width;   // just past the source
+		lead = target.start;                  // just short of the target
+	} else {
+		anchor = leave.start;                 // just short of the source
+		lead = target.start + target.width;   // just past the target
 	}
-	if (end < 0) {
-		end = 0;
+	const bool forward = (lead >= anchor);
+	// The floor, extending the run *away* from the anchor. Without it a
+	// step between shelves -- a couple of pixels in index space and a
+	// long way round the cabinet -- leaves the progression indicator
+	// with nothing to show.
+	if (forward) {
+		if (lead - anchor < minLengthLeds) {
+			lead = anchor + minLengthLeds;
+		}
+		if (lead > totalLeds) {
+			lead = totalLeds;
+		}
+		if (lead < anchor) {
+			lead = anchor;
+		}
+	} else {
+		if (anchor - lead < minLengthLeds) {
+			lead = anchor - minLengthLeds;
+		}
+		if (lead < 0) {
+			lead = 0;
+		}
+		if (lead > anchor) {
+			lead = anchor;
+		}
 	}
-	return end;
+	frame.fillAnchor = anchor;
+	frame.fillLead = lead;
+	frame.fillForward = forward;
+	frame.fillFrom = leave;
+	frame.fillTo = target;
+}
+
+int scaleFillLead(int anchor, int lead, bool forward, int progressPermille) {
+	// The shell calls this to walk the leading edge across the gap as
+	// the operator turns. Kept in the core so the shell, the simulator
+	// and the tests all do it the same way.
+	// Rounded, not truncated. A three-LED gap over four detents is most
+	// of a LED on the first click, and truncating that to nothing left
+	// the operator turning a detent with no visible response at all.
+	if (forward) {
+		return anchor + ((lead - anchor) * progressPermille + 500) / 1000;
+	}
+	return anchor - ((anchor - lead) * progressPermille + 500) / 1000;
 }
 
 int computeFillScale(int pixel, const StripFrame& frame) {
-	const int start = frame.fillFrom.start + frame.fillFrom.width;
-	const int end = computeFillEnd(frame.fillFrom, frame.fillTo,
-								  frame.minFillLeds, frame.totalLeds);
-	// The run is [lo, hi) whichever way it runs, so the two cases below
-	// only differ in which end is the *leading* one.
-	const bool forward = (end >= start);
-	const int lo = forward ? start : end;
-	const int hi = forward ? end : start;
-	// The console being left stays lit, dim, throughout.
-	if (pixel < lo) {
+	// Only the console being left is dimmed, and only because it is the
+	// one the operator is leaving. Dimming "everything below the run"
+	// instead lit up bare gap pixels at the start of the strip, which
+	// read as the fill starting from LED 0 rather than from the console
+	// the operator is turning away from.
+	if (pixel >= frame.fillFrom.start &&
+		pixel < frame.fillFrom.start + frame.fillFrom.width) {
 		return frame.dimPct;
 	}
-	if (pixel >= hi) {
+	const int lo = (frame.fillLead < frame.fillAnchor) ? frame.fillLead
+													  : frame.fillAnchor;
+	const int hi = (frame.fillLead < frame.fillAnchor) ? frame.fillAnchor
+													  : frame.fillLead;
+	if (pixel < lo || pixel >= hi) {
 		return 0;
 	}
 	// Antialias the leading edge only -- it is the edge the operator is
-	// watching move. The trailing edge is a fixed boundary the fill grew
-	// out of, and softening it would make the whole run shimmer.
-	const long long lead = (forward ? hi : lo) * 1000;
+	// watching move. The anchor end is fixed, and softening it would
+	// make the whole run shimmer.
+	const long long lead = static_cast<long long>(frame.fillLead) * 1000;
 	const long long here = static_cast<long long>(pixel) * 1000;
-	if (forward) {
+	if (frame.fillForward) {
 		if (here + 1000 <= lead) {
 			return frame.fillPct;
 		}
@@ -618,10 +686,11 @@ int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
 	// shelf crossing runs *backwards* -- the knob goes one way and the
 	// light goes the other. Testing the block's leading edge alone
 	// therefore lights the fill on the wrong side for half the cases.
-	const int fillStart = frame.travelFrom.start + frame.travelFrom.width;
-	const int fillTo = computeFillEnd(frame.travelFrom, frame.fillTo,
-									  frame.minFillLeds, frame.totalLeds);
-	if (pixel >= fillStart && pixel < fillTo) {
+	const int fillLo = (frame.fillLead < frame.fillAnchor) ? frame.fillLead
+														   : frame.fillAnchor;
+	const int fillHi = (frame.fillLead < frame.fillAnchor) ? frame.fillAnchor
+														   : frame.fillLead;
+	if (pixel >= fillLo && pixel < fillHi) {
 		const bool forward =
 			frame.travelToLeftPermille >= frame.travelFromLeftPermille;
 		const long long here = static_cast<long long>(pixel) * 1000;

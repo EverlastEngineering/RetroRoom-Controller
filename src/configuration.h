@@ -183,23 +183,37 @@
 
 // What the strip settles to once everything is over.
 //
-//   ABOVE -- the consoles *above* the selected one, dimly lit. The set
-//            is their own windows, NOT a contiguous run from the top
-//            of the strip: the consoles do not tile it, and the pixels
-//            between one console's window and the next are the
-//            physical gap between shelves. Those stay dark, so the
-//            strip reads as a stack of separate consoles rather than
-//            one long bar. Setting this to 0 is the third reading of
-//            the same phrase -- light only the selected console and
-//            nothing above it.
+//   ABOVE -- the consoles *above* the selected one, dimly lit. **0 by
+//            default**: the resting strip shows the selection and
+//            nothing else. A cumulative reading (select the third
+//            console and the first two stay lit) is available by
+//            raising this, but it was reported from the bench as
+//            reading as "the whole string is lit" rather than as a
+//            stack, so it is not the default.
+//
+//            Note this is the *resting* state only. While a browse is
+//            under way the consoles behind the operator's turn stay
+//            visible at LEDSTRING_DIM_PCT, because that is what the
+//            animation travels over.
+//
 //   SELF  -- the selected console's own window, at full. Nothing
 //            paints over it; the selection is the brightest thing on
 //            the strip.
 #ifndef LEDSTRING_ABOVE_PCT
-#define LEDSTRING_ABOVE_PCT 22
+#define LEDSTRING_ABOVE_PCT 0
 #endif
 #ifndef LEDSTRING_SELF_PCT
 #define LEDSTRING_SELF_PCT 100
+#endif
+
+// Brightness of everything the strip is showing *around* the thing the
+// operator is currently looking at: the consoles behind them during a
+// browse, and the consoles above the proposal while it pulses. Distinct
+// from LEDSTRING_ABOVE_PCT because that one is a resting-state choice
+// and this one is part of the animation -- the proposal has to have
+// something to be compared against.
+#ifndef LEDSTRING_DIM_PCT
+#define LEDSTRING_DIM_PCT 22
 #endif
 
 // Base color of the strip. Everything is this hue at a percentage of

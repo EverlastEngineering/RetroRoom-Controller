@@ -122,6 +122,18 @@ struct DetentEvent {
 	// stays honest and the fast-mode decision is unaffected.
 	bool frozen;
 
+	// Progress through the current step, remapped so that the *last*
+	// detent before the step completes reads as 1000.
+	//
+	// This is not the same as fractionPermille, and the difference is
+	// visible: fractionPermille reaches 1000 only on the detent that
+	// commits the step, by which point the knob-turn indicator is no
+	// longer being drawn. Driving the fill from it left the indicator a
+	// detent short of the console it was heading for -- on the fourth
+	// of five detents the pixel nearest the target console was still
+	// dark.
+	int stepPermille;
+
 	// Whole detents consumed toward the current step. For logging.
 	int detents;
 
@@ -168,6 +180,10 @@ class DetentGate {
 	int detentsPerStep() const;
 
   private:
+	// Progress through the current step with the last *drawn* detent
+	// reading as 1000, which is what drives the knob-turn indicator.
+	int stepProgressPermille(int detentsPerStep) const;
+
 	// Whole detents consumed toward the current step, derived from
 	// fraction_ and the threshold in force. For logging only.
 	int detentProgressPermille(int detentsPerStep) const;
@@ -408,6 +424,20 @@ struct StripFrame {
 	int travelPct = 100; // TRAVEL: the travelling block
 	// Floor on the knob-turn fill's run, in LEDs. See computeFillEnd().
 	int minFillLeds = 3;
+
+    // The knob-turn fill, as an anchor and a leading edge rather than a
+    // pair of windows. The run is the GAP between two console windows:
+    // the anchor is the end of it nearest the console being left and
+    // never moves; the lead is the edge the operator watches travel
+    // towards the console being reached. Expressing it this way rather
+    // than as "from A to B" is what makes it behave the same whichever
+    // way the knob is turned -- the earlier version measured from the
+    // source's trailing edge in both directions, so a backwards step's
+    // run lay inside the console being left and the indicator crept the
+    // wrong way.
+    int fillAnchor = 0;
+    int fillLead = 0;
+    bool fillForward = true;
 	int fromPct = 0;    // TRANSIT: the console being left
 	int toPct = 0;      // TRANSIT: the console being approached
 	int blobPct = 100;  // TRANSIT: the travelling blob
@@ -524,18 +554,25 @@ void computeTravelPath(const LedRange& leave, int entryPixel,
 // have to stop being piecewise linear before sampling earned its keep.
 int coveragePercent(int leftPermille, int rightPermille, int pixel);
 
-// The pixel index the knob-turn fill run ends at, widened to at least
-// `minLengthLeds`.
+// Resolve the knob-turn fill's run for a step from `leave` to `target`,
+// with the block entering at `entryPixel`.
 //
-// A step between shelves is a couple of pixels in index space and a
-// long way round physically. Filling the literal gap would leave the
-// progression indicator barely moving on exactly the steps where the
-// operator most needs to see it move, so the run has a floor. The floor
-// is what makes the knob feel the same on every step in the cabinet,
-// rather than only on the steps where the shelves happen to be densely
-// packed.
-int computeFillEnd(const LedRange& from, const LedRange& to, int minLengthLeds,
-                   int totalLeds);
+// The run is the gap between the two console windows. `fillAnchor` is
+// the end of the gap nearest the console being left and never moves;
+// `fillLead` is the leading edge at full progress, and the shell walks
+// it with scaleFillLead() as the operator turns.
+//
+// `minLengthLeds` floors the run so a step between shelves -- a couple
+// of pixels in index space and a long way round the cabinet -- still has
+// something to show.
+void computeFillGeometry(const LedRange& leave, int entryPixel,
+                         const LedRange& target, int minLengthLeds,
+                         int totalLeds, StripFrame& frame);
+
+// Walk the fill's leading edge to `progressPermille` (0..1000). In the
+// core so the shell, the simulator and the tests cannot disagree about
+// which way it moves.
+int scaleFillLead(int anchor, int lead, bool forward, int progressPermille);
 
 // Brightness percentage for one pixel during the knob-turn fill.
 //

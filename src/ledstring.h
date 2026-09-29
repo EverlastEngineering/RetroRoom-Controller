@@ -66,14 +66,16 @@ extern void ledstring_loop();
 // run the knob-turn progression indicator part-way between `fromIdx` and
 // `toIdx`.
 //
-// The fill is normalised to whatever space is actually between the two
-// consoles, floored so a step across a shelf still shows a run worth
-// watching. `fractionPermille` is the browse position from
-// retroroom_core::DetentGate::onDetent(): 0 is the start of the run,
-// 1000 is the console being reached, and it is continuous so turning the
-// knob back walks the fill back the way it came.
+// The fill covers the gap between the two consoles' windows, growing
+// from the console being left towards the one being reached, whichever
+// way the operator is turning.
+// `stepPermille` is progress through the step with the last *drawn*
+// detent reading as 1000 (see DetentEvent::stepPermille) -- the
+// indicator has to reach the console it is heading for by then, or the
+// final detent has nothing to show.
 extern void ledstring_browseProgress(int fromIdx, int toIdx,
-                                     int fractionPermille);
+                                     int fractionPermille,
+                                     int stepPermille);
 
 // The step completed: play the scripted travel from `fromIdx` to
 // `toIdx`, then hand over to the pulsing preview on `toIdx`.

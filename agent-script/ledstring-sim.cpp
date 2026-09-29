@@ -53,7 +53,11 @@
 // LEDSTRING_* block and nothing else.
 #include "configuration.h"
 
+using retroroom_core::collectAboveWindows;
+using retroroom_core::computeFillGeometry;
 using retroroom_core::computeKeepEnd;
+using retroroom_core::computeTravelPath;
+using retroroom_core::scaleFillLead;
 using retroroom_core::computeStripFrame;
 using retroroom_core::DetentGate;
 using retroroom_core::DetentGateConfig;
@@ -305,15 +309,8 @@ void scenarioBrowse() {
 		f.effect = StripEffect::FILLING;
 		f.from = windowFor(anchor);
 		applyBrowsePath(f, anchor, target);
-		const int start = f.fillFrom.start + f.fillFrom.width;
-		const int full = computeFillEnd(f.fillFrom, f.fillTo, f.minFillLeds,
-										kTotalLeds);
-		int reach = start + ((full - start) * ev.fractionPermille) / 1000;
-		if (reach < start) {
-			reach = start;
-		}
-		f.fillTo = {reach, 0};
-		f.minFillLeds = 0;
+		f.fillLead = scaleFillLead(f.fillAnchor, f.fillLead, f.fillForward,
+								   ev.stepPermille);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "detent %d/%d fill",
 				 ev.detents, ev.detentsPerStep);
@@ -333,7 +330,11 @@ void scenarioBrowse() {
 	}
 	StripFrame pv = baseFrame();
 	pv.effect = StripEffect::PREVIEW;
-	pv.to = windowFor(target);
+	pv.from = windowFor(target);
+	pv.to = pv.from;
+	pv.aboveCount = collectAboveFor(target, aboveBuffer, kMaxAboveWindows);
+	pv.aboveWindows = aboveBuffer;
+	pv.abovePct = pv.dimPct;
 	render(pv, "preview pulses on NES");
 }
 

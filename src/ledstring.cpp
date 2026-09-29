@@ -107,6 +107,9 @@ int toIdx = 0;
 // continuous position rather than a detent count.
 int fractionPermille = 0;
 int previewIdx = 0;
+// Progress through the current step, for the knob-turn fill. Distinct
+// from the gate's raw position: the last *drawn* detent is 100%.
+int stepPermille = 0;
 // The console being committed. Its target picture is resolved when the
 // selection effect starts, not per frame.
 int selectIdx = 0;
@@ -233,7 +236,7 @@ retroroom_core::StripFrame baseFrame() {
 	f.blobPct = LEDSTRING_BLOB_PCT;
 	f.blobWidth = LEDSTRING_BLOB_WIDTH;
 	f.fillPct = LEDSTRING_FILL_PCT;
-	f.dimPct = LEDSTRING_ABOVE_PCT;
+	f.dimPct = LEDSTRING_DIM_PCT;
 	f.travelPct = LEDSTRING_SELF_PCT;
 	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
 	f.travelMs = LEDSTRING_TRAVEL_MS;
@@ -322,16 +325,11 @@ void paintFilling() {
 	f.effect = retroroom_core::StripEffect::FILLING;
 	f.from = windowFor(fromIdx);
 	applyBrowsePath(f, fromIdx, toIdx);
-
-	const int start = f.fillFrom.start + f.fillFrom.width;
-	const int full = retroroom_core::computeFillEnd(
-		f.fillFrom, f.fillTo, f.minFillLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
-	int reach = start + ((full - start) * fractionPermille) / 1000;
-	if (reach < start) {
-		reach = start;
-	}
-	f.fillTo = {reach, 0};
-	f.minFillLeds = 0;  // already floored; do not floor it again
+	// The leading edge walks across the gap as the operator turns. The
+	// floor was applied by computeFillGeometry() and is not re-applied
+	// here, so the run is the real gap at every angle of the knob.
+	f.fillLead = retroroom_core::scaleFillLead(f.fillAnchor, f.fillLead,
+											   f.fillForward, stepPermille);
 	pushFrame(f);
 }
 
@@ -350,7 +348,15 @@ void paintTravel(uint32_t elapsedMs) {
 void paintPreview(uint32_t elapsedMs) {
 	retroroom_core::StripFrame f = baseFrame();
 	f.effect = retroroom_core::StripEffect::PREVIEW;
-	f.to = windowFor(previewIdx);
+	f.from = windowFor(previewIdx);
+	f.to = f.from;
+	// The consoles the operator is choosing between stay lit, dim, for
+	// as long as the preview runs. They went dark on the last travel
+	// frame, which left the strip showing only the proposal and no
+	// longer anything to compare it against.
+	f.aboveCount = collectAboveFor(previewIdx, aboveBuffer);
+	f.aboveWindows = aboveBuffer;
+	f.abovePct = f.dimPct;
 	f.elapsedMs = elapsedMs;
 	pushFrame(f);
 }
@@ -483,13 +489,14 @@ void ledstring_loop() {
 	}
 }
 
-void ledstring_browseProgress(int from, int to, int fraction) {
+void ledstring_browseProgress(int from, int to, int fraction, int progress) {
 	// A detent in flight outranks anything still playing: the operator
 	// has already moved on.
 	mode = StripMode::FILLING;
 	fromIdx = from;
 	toIdx = to;
 	fractionPermille = fraction;
+	stepPermille = progress;
 	paintFilling();
 }
 

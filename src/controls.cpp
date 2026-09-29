@@ -374,7 +374,7 @@ void rotaryEncoderTick() {
 			browsedConsoleIndex = targetIndex;
 #if defined(HAS_LEDS)
 			ledstring_browseProgress(browseAnchorIndex, targetIndex,
-									 ev.fractionPermille);
+									 ev.fractionPermille, ev.stepPermille);
 #endif
 			Serial.print("Browse ");
 			Serial.print(ev.detents);
