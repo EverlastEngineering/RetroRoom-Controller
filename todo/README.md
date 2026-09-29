@@ -81,7 +81,8 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
-- `2026-09-25_led-string-wiring-diagram` — S3 of the old DRAFT: the 6-segment serpentine wiring diagram and the per-segment LED count at 30/60 LED/m. Document only, no code.
+- `2026-09-29_console-browse-stops-at-ends` — reaching the end of the console list should do nothing, not wrap to the far end. Touches `wraparoundNext` and its three call sites; also needs a decision on what a detent *at* the end does.
+- `2026-09-25_led-string-wiring-diagram` — S3 of the old DRAFT: the 6-segment serpentine wiring diagram and the per-segment LED count at 30/60 LED/m. Document only, no code. Note the cabinet has the TV between the console columns, so the chain runs top shelf L→R, around the TV, then the next shelf L→R.
 - `2026-09-25_led-string-e2e-readback` — S4 of the old DRAFT: `/leds.json` snapshot endpoint so the browse/selection frames can be asserted from the host. Blocked on deciding whether the endpoint is worth it now the animations are in.
 
 ### deferred/
