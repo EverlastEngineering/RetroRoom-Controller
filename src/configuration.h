@@ -55,9 +55,13 @@
 // peak in between, and it is the whole reason the travel reads as a
 // block of light rather than a dot sliding along.
 //
-// It should be comfortably larger than the widest console window or the
-// block spends the entire travel pinned at its cap and stops looking
-// like it is moving.
+// It is a *cap* on how wide the block gets, not a target: the block
+// always ends exactly the width of the console it lands on, whatever
+// this says, because travelEdges() takes this as a maximum and floors
+// it at the target's own width. So setting this too small does not make
+// a slimmer block -- it made the block fail to cover wide consoles at
+// all, arriving as a sliver against the far end of the window. A wide
+// console is safe; a value below the widest window is simply ignored.
 #ifndef LEDSTRING_TRAVEL_PEAK_WIDTH
 #define LEDSTRING_TRAVEL_PEAK_WIDTH 6
 #endif
@@ -116,8 +120,15 @@
 // It is a duration rather than a LED count on purpose. Retreating a
 // whole LED at a time cannot fade, and the snap is what makes a
 // countdown look like a fault rather than a release.
+//
+// This has to stay comfortably shorter than the ring's idle timeout
+// divided by the longest run in the cabinet, because that timeout waits
+// for the retreat to finish before it gives up (see
+// ledstring_fillRetreatInProgress). A retreat that outlasts the ring's
+// patience is fine -- the countdown is held, not shortened -- but a
+// *fast* retreat is what makes the give-up feel prompt afterwards.
 #ifndef LEDSTRING_FILL_RETREAT_STEP_MS
-#define LEDSTRING_FILL_RETREAT_STEP_MS 500
+#define LEDSTRING_FILL_RETREAT_STEP_MS 250
 #endif
 
 // Detents of the rotary knob required to move the browse cursor one

@@ -92,6 +92,18 @@ extern void ledstring_browseSnap(int fromIdx, int toIdx);
 // drop back to the resting paint for the selected console.
 extern void ledstring_browseClear();
 
+// Is the strip still giving an abandoned run back, one fading LED at a
+// time? True only while a fill frame still has LEDs left to withdraw.
+//
+// The ring's idle give-up calls ledstring_browseClear(), and clearing
+// the browse takes the run with it. So the ring asks this and holds its
+// countdown while it is true, rather than timing out part way through a
+// long retreat and emptying the strip in one step instead of unwinding.
+//
+// Folds in "are we filling at all", so any other mode answers false
+// without the caller having to know which modes exist.
+extern bool ledstring_fillRetreatInProgress();
+
 // ---- selection ---------------------------------------------------------
 
 // Play the selection effect for `idx`: the whole strip twinkles, then

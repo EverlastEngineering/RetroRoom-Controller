@@ -135,6 +135,17 @@ uint32_t lastFrameMs = 0;
 // able to reset it.
 uint32_t lastDetentMs = 0;
 
+// Whether the last painted fill still has LEDs left to give back.
+// The ring's idle give-up asks, because giving up resets the browse and
+// the reset takes the run with it -- so without this the ring times out
+// part way through a long retreat and the strip empties in one step
+// instead of unwinding.
+//
+// The mode is re-checked on read so the flag cannot go stale: every
+// other mode also ends the retreat, and one of them ending without
+// clearing the flag would strand the ring's countdown forever.
+static bool fillRetreatInProgress = false;
+
 // A console's clamped LED window. Defensive about the index: the
 // console accessors index without checking, and this runs from an
 // animation tick where a stale index would read past the end of the
@@ -394,11 +405,11 @@ void paintFilling() {
 	if (LEDSTRING_FILL_RETREAT_DELAY_MS > 0 &&
 		LEDSTRING_FILL_RETREAT_STEP_MS > 0) {
 		const uint32_t quietMs = (uint32_t)(millis() - lastDetentMs);
+		const int runLeds = (f.fillLead > f.fillAnchor)
+								? f.fillLead - f.fillAnchor
+								: f.fillAnchor - f.fillLead;
 		if (quietMs > (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS) {
 			const uint32_t into = quietMs - (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS;
-			const int runLeds = (f.fillLead > f.fillAnchor)
-									? f.fillLead - f.fillAnchor
-									: f.fillAnchor - f.fillLead;
 			int retreat = static_cast<int>((static_cast<long long>(into) * 1000) /
 										  (uint32_t)LEDSTRING_FILL_RETREAT_STEP_MS);
 			// Never withdraw more than the run holds. The core clamps as
@@ -409,6 +420,11 @@ void paintFilling() {
 			}
 			f.fillRetreatPermille = retreat;
 		}
+		// Started but not finished. Checked outside the quiet test so it
+		// also covers the run being exactly one LED long, where the
+		// retreat can finish inside a single frame.
+		fillRetreatInProgress = (quietMs > (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS) &&
+								(f.fillRetreatPermille < runLeds * 1000);
 	}
 	// The candidate keeps pulsing while the operator fills onward. It
 	// is still the console a press would select, and it is what the fill
@@ -623,7 +639,18 @@ void ledstring_browseSnap(int from, int to) {
 
 void ledstring_browseClear() {
 	mode = StripMode::RESTING;
+	// The run is gone with the browse, so there is nothing left to give
+	// back. The read side re-checks the mode anyway; clearing it here
+	// keeps the flag meaning what its name says.
+	fillRetreatInProgress = false;
 	paintResting(currentConsoleIndex);
+}
+
+bool ledstring_fillRetreatInProgress() {
+	// The mode is checked as well as the flag, so a mode change that
+	// does not go through ledstring_browseClear() -- a commit, a snap --
+	// cannot leave the ring's countdown held forever on a stale flag.
+	return fillRetreatInProgress && mode == StripMode::FILLING;
 }
 
 void ledstring_selectEffect(int idx) {

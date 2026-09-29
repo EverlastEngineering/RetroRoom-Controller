@@ -478,11 +478,28 @@ TravelEdges travelEdges(int fromLeftPermille, int fromRightPermille,
 								  easeOutPermille(progressPermille));
 
 	// Bound the stretch. Without this the two edges can cross on a long
-	// travel and the block inverts, which reads as a glitch. The peak is
-	// taken as a minimum width rather than as a cap on the position, so
-	// the block still ends exactly on the target window.
-	if (peakWidthPermille > 0 && (right - left) > peakWidthPermille) {
-		left = right - peakWidthPermille;
+	// travel and the block inverts, which reads as a glitch.
+	//
+	// The bound is a cap on the width, and a cap must never make the
+	// block narrower than the console it is landing on -- so the target's
+	// own width is a floor under it. The peak is 6 LEDs, which is fine
+	// for the 3-to-6-LED windows a strip was first laid out for and
+	// badly wrong for a 39-LED one: the block would arrive as a 6-LED
+	// sliver sitting against the far end of the target instead of
+	// covering it, and which end depends on the direction of travel.
+	// Clamping to `max(peak, targetWidth)` keeps the landing exact for
+	// any window while still bounding the stretch on a long travel.
+	//
+	// The two edges crossing is separately handled on the next line, so
+	// nothing here is load-bearing for the block's integrity -- only for
+	// how fat it is allowed to get.
+	int cap = peakWidthPermille;
+	const int targetWidth = toRightPermille - toLeftPermille;
+	if (targetWidth > cap) {
+		cap = targetWidth;
+	}
+	if (cap > 0 && (right - left) > cap) {
+		left = right - cap;
 	}
 	if (left > right) {
 		left = right;

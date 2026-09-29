@@ -1,4 +1,5 @@
 #include "lighting.h"
+#include "ledstring.h"
 
 
 
@@ -44,6 +45,20 @@ bool lighting_loop() {
 		return fadeStep();
 	}
 	if (ringProximityHold) {
+		ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
+		return false;
+	}
+	// The strip is still unwinding an abandoned run, one fading LED at a
+	// time. Giving up now would call ledstring_browseClear(), and the
+	// reset takes the run with it -- so the strip would empty in one step
+	// instead of fading, which is the exact thing the retreat exists to
+	// avoid.
+	//
+	// The countdown is *held*, not shortened: it is pushed out for as
+	// long as the retreat runs, so the operator gets the full idle
+	// timeout after the last LED goes rather than whatever was left of
+	// it. Same deferral, and same reason, as the proximity hold above.
+	if (ledstring_fillRetreatInProgress()) {
 		ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
 		return false;
 	}

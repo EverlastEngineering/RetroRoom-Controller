@@ -34,6 +34,7 @@ using retroroom_core::easeInOutPermille;
 using retroroom_core::LedRange;
 using retroroom_core::SelectionEffectConfig;
 using retroroom_core::twinkleSample;
+using retroroom_core::travelEdges;
 using retroroom_core::collectAboveWindows;
 using retroroom_core::computeTravelPath;
 using retroroom_core::computeFillGeometry;
@@ -1513,6 +1514,44 @@ static void test_the_retreat_applies_at_the_low_end_going_back(void) {
 	TEST_ASSERT_EQUAL_MESSAGE(100, out[2], "unretracted, the run is whole");
 }
 
+static void test_a_console_wider_than_the_peak_still_gets_the_whole_block(void) {
+	// The peak width is a cap on how fat the block gets, and a cap must
+	// never make it narrower than the console it is landing on.
+	//
+	// The peak is 6 LEDs. A 39-LED console is wider than that, so the
+	// block used to arrive as a 6-LED sliver sitting against the far end
+	// of the window rather than covering it -- and *which* end depended
+	// on the direction of travel, because the clamp pulls the left edge
+	// towards the right one. Wide windows are not hypothetical: they are
+	// what a strip laid out for big consoles has.
+	const int peak = 6 * 1000;
+	const int wide = 39 * 1000;
+
+	// Landing on a window wider than the peak, travelling forwards.
+	TravelEdges fwd = travelEdges(0, 2 * 1000, 55 * 1000, 55 * 1000 + wide,
+								  1000, peak);
+	TEST_ASSERT_EQUAL_MESSAGE(55 * 1000, fwd.leftPermille,
+							  "the block must cover the whole window, forwards");
+	TEST_ASSERT_EQUAL(55 * 1000 + wide, fwd.rightPermille);
+	TEST_ASSERT_EQUAL_MESSAGE(wide, fwd.widthPermille,
+							  "and be as wide as the window it lands on");
+
+	// And backwards, where the clamp used to bias the error the other
+	// way. Landing is exact either way now, which is the point.
+	TravelEdges back = travelEdges(94 * 1000, 94 * 1000 + 2 * 1000,
+								   55 * 1000, 55 * 1000 + wide, 1000, peak);
+	TEST_ASSERT_EQUAL_MESSAGE(55 * 1000, back.leftPermille,
+							  "the block must cover the whole window, backwards");
+	TEST_ASSERT_EQUAL(55 * 1000 + wide, back.rightPermille);
+
+	// A window narrower than the peak is untouched by the fix: the cap
+	// still applies, and the block still lands exactly on it.
+	TravelEdges narrow = travelEdges(0, 2 * 1000, 20 * 1000, 23 * 1000, 1000,
+									 peak);
+	TEST_ASSERT_EQUAL(20 * 1000, narrow.leftPermille);
+	TEST_ASSERT_EQUAL(23 * 1000, narrow.rightPermille);
+}
+
 static void test_a_step_within_a_shelf_still_measures_the_gap(void) {
 	// The guard on the rule above. Within a shelf the block enters at
 	// the source's trailing edge, which lands exactly *on* the far edge
@@ -1878,6 +1917,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_retreat_fades_rather_than_snapping);
 	RUN_TEST(test_a_retreat_longer_than_the_run_empties_it);
 	RUN_TEST(test_the_retreat_applies_at_the_low_end_going_back);
+	RUN_TEST(test_a_console_wider_than_the_peak_still_gets_the_whole_block);
 	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);
 	RUN_TEST(test_fill_uses_three_distinct_levels);
 	RUN_TEST(test_resting_frame_lights_each_window_above);
