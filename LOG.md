@@ -5,6 +5,106 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-29T00:00:00.000Z — Gated rotary browse with an LED-string blob, and the "above the selection" resting state
+
+**Context:** the rotary moved the browse cursor one console per
+detent, and the only feedback about where a click would land was a
+`Serial.println`. Someone standing at the cabinet could not see the
+target before committing to it. The ask was for visual snap feedback
+while turning: a blob that creeps toward the next console, a snap and
+pulsing preview on the final detent, a whole-strip twinkle on commit
+that collapses to the pixels above the selection, and a reduced detent
+requirement once the operator is clearly spinning.
+
+**Decision:**
+
+1. **A detent gate, and it counts position rather than detents.**
+   `retroroom_core::DetentGate` in `lib/LedStringPaint` tracks a
+   *continuous* position in permille of one console step rather than a
+   detent counter. This is the load-bearing choice. With a counter,
+   turning the knob back mid-transit has to either snap to the far side
+   or be modelled as a separate undo state. With a position, reversing
+   decrements it and the blob walks back along the path it came. The
+   target console is derived from the **sign of the position**, not the
+   sign of the detent — turning back while still out on the forward
+   side keeps aiming at the forward console while the blob retreats
+   toward the anchor. Getting this wrong is the bug the host test
+   `test_crossing_the_anchor_flips_the_target_side` caught before the
+   firmware ever ran it.
+
+2. **The division remainder is carried.** `1000 / detentsPerStep`
+   truncates for any threshold that does not divide 1000 evenly, so a
+   naive accumulator never arrives. The remainder is carried so a
+   threshold of 3 or 7 still completes in exactly that many detents.
+   Pinned by `test_thresholds_that_do_not_divide_1000_still_arrive`.
+
+3. **"Above the selected console" is the lower pixel indices.** The
+   strip is treated as indexed top-of-cabinet downward, so the pixels
+   above a console are the ones before its `ledPosition`. This is an
+   *assumption about the physical wiring* and is not yet verified —
+   filed as `todo/open/2026-09-25_led-string-wiring-diagram.md`. If the
+   string is actually numbered the other way, `computeKeepEnd()` and
+   `paintResting()` are the two places to change, and the resting-state
+   brightnesses in `src/configuration.h` need re-tuning.
+
+4. **The resting state includes the selected console's own window.**
+   `LEDSTRING_KEEP_INCLUDES_SELECTED` defaults to 1. The literal reading
+   of the ask ("only the ones above the selected console") would turn
+   the thing you just chose off, which reads as a glitch. The other
+   reading stays available as a define.
+
+5. **The selection effect cannot overrun its budget.** The per-pixel
+   stagger is subtracted from the ramp length rather than added to the
+   total, so raising the ripple shortens the ramp instead of stretching
+   the effect past `LEDSTRING_SELECT_EFFECT_MS`. Asserted directly by
+   `test_select_effect_is_finished_inside_its_budget` and
+   `test_select_effect_is_over_a_second_is_unreachable`.
+
+6. **`controls_browseReset()` is called from `selectConsole()`, not
+   from each caller.** Every commit path funnels through it, so a
+   leftover detent count cannot survive a commit and leave the next
+   turn starting a step from the wrong place. It sits outside the
+   `HAS_LEDS` guard even though it also resets the LED string, because
+   the gate lives in `controls.cpp` regardless of whether the second
+   strip is wired.
+
+7. **All the "feel" numbers live in `src/configuration.h`**, grouped by
+   which of the three behaviours they shape, each with a comment on
+   what it trades off. Nothing in the logic or the core hard-codes a
+   timing. The intent is that the feel gets retuned on the bench
+   without a logic change — that is the whole reason the tunables are
+   in a header rather than a JSON field.
+
+**Alternatives considered:**
+
+- *A per-console detent requirement in `/consoles.json`.* Rejected for
+  now: the ask was for a global feel knob, and a schema change plus a
+  stored config is more to get wrong while the numbers are still being
+  tuned. Easy to add later — the gate config is already a struct.
+- *A counter with a separate "reversing" state.* Rejected; the
+  continuous position is both simpler and the only version that reads
+  correctly on the strip.
+- *Driving the blob from `millis()` with a fixed travel time per step.*
+  Rejected: the travel then cannot follow the detents, so the operator
+  could turn faster than the blob and lose the correspondence between
+  knob position and where the highlight is. Position-driven travel
+  keeps them locked together.
+
+**Consequences:**
+
+- The ring on GP20 is untouched, as required.
+- `browsedConsoleIndex` (the console being approached) and
+  `browseAnchorIndex` (the console the blob departs from) are now
+  distinct, and neither is the live `currentConsoleIndex`.
+- The strip gained a four-state mode machine in `src/ledstring.cpp`,
+  pumped from `loop()`. It is a no-op comparison when resting, so the
+  idle cost is one branch.
+- E2E readback of the strip is filed as
+  `todo/open/2026-09-25_led-string-e2e-readback.md`; the host tests
+  cover the decisions but nothing yet asserts that the pixels reach the
+  wire.
+
+<!-- insert-below -->
 ## 2026-09-22T19:30:00.000Z — TDD read-back path for /consoles.json + single-target platformio.ini
 
 **Context:** The `POST /consoles.json` endpoint that landed in
