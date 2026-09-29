@@ -57,6 +57,18 @@ static bool proximityActive = false;
 static retroroom_core::DetentGate browseGate;
 static int browseAnchorIndex = -1;
 
+// When a step commits, rotary detents are ignored until this. 0 means
+// not armed, and a deadline of 0 is not reachable from a lockout
+// duration, so the two cannot be confused. See
+// LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS for why this exists.
+//
+// This is a *rotary* lockout. The press is handled by a different
+// path and is deliberately not gated: overshooting a detent and then
+// committing to it is the mistake being absorbed, and blocking the
+// press as well would strand the operator on a console they did not
+// ask for.
+static uint32_t settleLockoutUntilMs = 0;
+
 namespace {
 // The browse "feel" is configured once from src/configuration.h, the
 // same way src/ledstring.cpp assembles its effect config. See
@@ -316,6 +328,29 @@ void rotaryEncoderTick() {
 			return;
 		}
 
+		// Swallow the detents that arrive immediately after a step
+		// commits. A hand that overshoots the fifth detent by one
+		// otherwise starts filling toward the next console, so one
+		// mistimed turn costs two steps.
+		//
+		// The signed difference is what makes this correct across
+		// millis()' rollover, which a plain `now < until` would not be.
+		// Checked before the gate on purpose: the gate owns position
+		// arithmetic, and the whole point here is that a swallowed detent
+		// never reaches it. Leaving the gate untouched also means the
+		// lockout cannot perturb the fast-spin clock, which measures
+		// gaps between detents.
+		const uint32_t nowMs = millis();
+		if (LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS > 0 &&
+			settleLockoutUntilMs != 0 &&
+			(int32_t)(nowMs - settleLockoutUntilMs) < 0) {
+			// Ring included. The ring's spinner answers "which way am I
+			// turning", and a turn the operator is not allowed to act
+			// on should not be announced either -- the freeze at the
+			// ends of the list is already justified that way.
+			return;
+		}
+
 		// Browse only -- this deliberately does NOT touch
 		// currentConsoleIndex. Turning the knob previews a console; the
 		// rotary click is what commits it. Anything reading the
@@ -344,7 +379,7 @@ void rotaryEncoderTick() {
 		// the thing deciding whether a step completes, and a step off
 		// the end of the list does not exist.
 		const retroroom_core::DetentEvent ev =
-			browseGate.onDetent(direction, millis(), num_consoles,
+			browseGate.onDetent(direction, nowMs, num_consoles,
 								browseAnchorIndex);
 
 		if (ev.frozen) {
@@ -413,6 +448,13 @@ void rotaryEncoderTick() {
 		// the one it lands on.
 		ledstring_browseSnap(browseAnchorIndex, targetIndex);
 #endif
+		// Arm the settle lockout from the same timestamp the gate used,
+		// so the window starts when the step completed rather than a few
+		// microseconds later.
+		if (LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS > 0) {
+			settleLockoutUntilMs =
+				nowMs + (uint32_t)LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS;
+		}
 		browseAnchorIndex = targetIndex;
 		browsedConsoleIndex = targetIndex;
 		Serial.print("Browse snapped -> ");
@@ -426,6 +468,10 @@ void controls_browseReset() {
 	// declaration in controls.h for why it lives there rather than at
 	// each caller.
 	browseGate.reset();
+	// The settle lockout belongs to a browse, so ending the browse ends
+	// it. Left armed it would swallow the first detent after a commit,
+	// which is a real turn the operator meant to make.
+	settleLockoutUntilMs = 0;
 	browsedConsoleIndex = currentConsoleIndex;
 	browseAnchorIndex = currentConsoleIndex;
 #if defined(HAS_LEDS)

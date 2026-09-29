@@ -102,6 +102,27 @@
 #define LEDSTRING_FAST_DETENTS_PER_STEP 2
 #endif
 
+// Rotary detents are ignored for this long after a step completes, in
+// ms. 0 disables it.
+//
+// Landing on the fifth detent is hard: a hand that overshoots by one
+// immediately starts filling toward the *next* console, so a single
+// mistimed turn costs two steps and the overshoot looks like the knob
+// having a mind of its own. Swallowing the detents that arrive right
+// after a commit absorbs the overshoot without making the knob feel
+// sticky, because it only bites immediately after a snap -- the exact
+// moment the operator is not trying to go anywhere.
+//
+// Deliberately shorter than LEDSTRING_TRAVEL_MS. The travel is still
+// playing when the lockout ends, so turning after it expires cuts the
+// animation short rather than queueing behind it. That is the existing
+// behaviour for a detent arriving mid-travel and this does not make it
+// worse; making the lockout cover the whole travel would swallow real
+// input for twice as long.
+#ifndef LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS
+#define LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS 250
+#endif
+
 // A detent arriving within this many ms of the previous one marks the
 // spin as fast. **0 disables the escalation entirely**, which is the
 // current setting.
