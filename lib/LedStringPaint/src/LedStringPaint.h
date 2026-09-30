@@ -184,13 +184,29 @@ struct DetentEvent {
 	int direction;
 };
 
+// Clamp a config into something the gate can divide by.
+//
+// At the edge rather than at every use site: a zero or negative
+// detentsPerStep would make onDetent()'s `1000 / detentsPerStep`
+// divide by zero, and "fast" has to mean fewer detents than deliberate
+// or it is not fast.
+DetentGateConfig sanitizedDetentGateConfig(const DetentGateConfig& cfg);
+
 // Accumulates detents into a continuous position between consoles.
 class DetentGate {
   public:
 	DetentGate();
 
-	void configure(const DetentGateConfig& cfg);
-	const DetentGateConfig& config() const { return cfg_; }
+	// The config the accumulated position was measured against.
+	//
+	// NOT a cache of the live config, and the distinction is the whole
+	// point: this exists only so a *changed* threshold can be spotted and
+	// the progress invalidated, because a fraction measured against
+	// detentsPerStep=5 describes a different step than the same fraction
+	// measured against 17. Storing the live config here instead is what
+	// made a config-menu edit invisible -- the gate kept the thresholds
+	// it was built with and nothing ever reconfigured it.
+	const DetentGateConfig& config() const { return lastCfg_; }
 
 	// Drop all accumulated progress and the fast-spin memory. Called
 	// when the browse is abandoned (ring faded out) and after a commit.
@@ -200,6 +216,12 @@ class DetentGate {
 	// reported as a no-op so the caller can still repaint. `nowMs` is
 	// a millis() reading -- the gate stores the previous one to decide
 	// whether the spin has picked up.
+	//
+	// The thresholds arrive per call rather than being configured once,
+	// because they are parameters rather than state: only the position
+	// is something this object remembers. Passing them in means a
+	// setting changed from the config menu takes effect on the very next
+	// detent, with no reconfigure call to forget.
 	//
 	// `listSize` and `anchorIndex` are the list being browsed and where
 	// the anchor sits in it, so the gate can tell whether a step in the
@@ -213,7 +235,7 @@ class DetentGate {
 	// whether a step completes. Handing it a direction and asking it to
 	// trust that the caller checked first is how the two disagree.
 	DetentEvent onDetent(int direction, std::uint32_t nowMs, int listSize,
-	                     int anchorIndex);
+	                     int anchorIndex, const DetentGateConfig& cfg);
 
 	int fractionPermille() const { return fraction_; }
 	bool fastMode() const { return fastMode_; }
@@ -229,7 +251,8 @@ class DetentGate {
 	// fraction_ and the threshold in force. For logging only.
 	int detentProgressPermille(int detentsPerStep) const;
 
-	DetentGateConfig cfg_;
+	// See the note on lastCfg_. Change detection only.
+	DetentGateConfig lastCfg_;
 	// Position relative to the anchor, in permille of one console step.
 	int fraction_;
 	// Carries the division remainder of `1000 / detentsPerStep` so a

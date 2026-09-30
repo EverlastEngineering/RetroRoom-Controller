@@ -49,25 +49,22 @@ DetentGate::DetentGate()
 	: fraction_(0), detentRemainder_(0), fastMode_(false),
 	  hasLastDetent_(false), lastDetentMs_(0) {}
 
-void DetentGate::configure(const DetentGateConfig& cfg) {
-	cfg_ = cfg;
+DetentGateConfig sanitizedDetentGateConfig(const DetentGateConfig& cfg) {
+	DetentGateConfig out = cfg;
 	// Clamp at the edge rather than at every use site: a config with a
 	// zero or negative threshold would otherwise make onDetent()'s
 	// `1000 / detentsPerStep` divide by zero.
-	if (cfg_.detentsPerStep < 1) {
-		cfg_.detentsPerStep = 1;
+	if (out.detentsPerStep < 1) {
+		out.detentsPerStep = 1;
 	}
-	if (cfg_.fastDetentsPerStep < 1) {
-		cfg_.fastDetentsPerStep = 1;
+	if (out.fastDetentsPerStep < 1) {
+		out.fastDetentsPerStep = 1;
 	}
 	// "Fast" has to mean fewer detents, not more.
-	if (cfg_.fastDetentsPerStep > cfg_.detentsPerStep) {
-		cfg_.fastDetentsPerStep = cfg_.detentsPerStep;
+	if (out.fastDetentsPerStep > out.detentsPerStep) {
+		out.fastDetentsPerStep = out.detentsPerStep;
 	}
-	// A config change invalidates any progress measured against the old
-	// threshold, so start over rather than let the fraction describe a
-	// step the new threshold would express differently.
-	reset();
+	return out;
 }
 
 void DetentGate::reset() {
@@ -79,11 +76,29 @@ void DetentGate::reset() {
 }
 
 int DetentGate::detentsPerStep() const {
-	return fastMode_ ? cfg_.fastDetentsPerStep : cfg_.detentsPerStep;
+	return fastMode_ ? lastCfg_.fastDetentsPerStep : lastCfg_.detentsPerStep;
 }
 
 DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
-                                 int listSize, int anchorIndex) {
+                                 int listSize, int anchorIndex,
+                                 const DetentGateConfig& inCfg) {
+	const DetentGateConfig cfg = sanitizedDetentGateConfig(inCfg);
+	// A threshold change invalidates any progress measured against the
+	// old one -- a fraction in permille describes a different step at
+	// five detents than at seventeen -- so start over rather than let
+	// the position describe something the new threshold would express
+	// differently.
+	//
+	// This is the ONLY reason lastCfg_ exists. It is not where the live
+	// config comes from: that arrives on every call, so a value changed
+	// from the config menu takes effect on the next detent with nothing
+	// to reconfigure and nothing to forget.
+	if (cfg.detentsPerStep != lastCfg_.detentsPerStep ||
+	    cfg.fastDetentsPerStep != lastCfg_.fastDetentsPerStep) {
+		reset();
+	}
+	lastCfg_ = cfg;
+
 	DetentEvent ev;
 	ev.fractionPermille = fraction_;
 	ev.detentsPerStep = detentsPerStep();
@@ -116,8 +131,8 @@ DetentEvent DetentGate::onDetent(int direction, std::uint32_t nowMs,
 	// everything that followed.
 	//
 	// The signed subtraction is the millis()-wraparound-safe form.
-	fastMode_ = cfg_.fastSpinWindowMs > 0 && hasLastDetent_ &&
-				(std::uint32_t)(nowMs - lastDetentMs_) < cfg_.fastSpinWindowMs;
+	fastMode_ = cfg.fastSpinWindowMs > 0 && hasLastDetent_ &&
+				(std::uint32_t)(nowMs - lastDetentMs_) < cfg.fastSpinWindowMs;
 	lastDetentMs_ = nowMs;
 	hasLastDetent_ = true;
 

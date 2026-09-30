@@ -101,22 +101,23 @@ void spinRingFor(int direction) {
 	}
 }
 
-// The browse "feel" is configured once from ledFeel -- the `led` block
-// of /consoles.json -- the same way src/ledstring.cpp assembles its
-// effect config out of that same struct.
+// The browse thresholds, read from ledFeel -- the `led` block of
+// /consoles.json -- the same way src/ledstring.cpp assembles its effect
+// config out of that same struct.
 //
-// That is a load-order dependency and it is the only one: consoleDefinitions()
-// is what assigns ledFeel, and its one consumer here is a single
-// configure() call in controls_init(). setup() therefore has to call
-// consoleDefinitions() first. Call it the other way round and every
-// threshold below silently reverts to the built-in default, because
-// nothing re-runs this afterwards -- DetentGate has no lazy path, and
-// giving it one would let the knob's feel shift underneath a browse
-// that is already in progress.
+// Handed to the gate on EVERY DETENT rather than configured once, and
+// that is the point of the signature. The thresholds are parameters;
+// only the accumulated position is state. Holding them in the gate made
+// the knob ignore anything that changed ledFeel after boot, which is
+// exactly what the config menu does -- setting detentsPerStep to 17
+// showed 17 in the menu and left the knob on 5.
 //
-// The other feel values are read live instead (ledFeel.settleLockoutMs
-// in the browse below), which is why the two can disagree after a
-// misordered boot: those pick the config up, these do not.
+// This is the third time this session that a value was read out of
+// ledFeel too early to see a later change. The other two were a static
+// initialiser in src/ledstring.cpp and the setup() ordering of
+// controls_init() itself. The pattern is always the same: something
+// copies a value out of ledFeel and keeps it. The cure is not to be
+// careful about *when* it is read; it is not to keep a copy.
 retroroom_core::DetentGateConfig browseGateConfig() {
 	return retroroom_core::DetentGateConfig(
 		ledFeel.detentsPerStep, ledFeel.fastDetentsPerStep,
@@ -131,10 +132,9 @@ void checkPosition() {
 }
 
 void controls_init() {
-	// Configure the browse gate before the encoder can fire. configure()
-	// also resets any accumulated state, so doing it here rather than
-	// lazily keeps the first detent after boot honest.
-	browseGate.configure(browseGateConfig());
+	// Clear any accumulated gate state before the encoder can fire, so
+	// the first detent after boot starts from a whole step.
+	browseGate.reset();
 	browseAnchorIndex = -1;
 
 	encoder = new RotaryEncoder(ROTARY_PIN_IN2, ROTARY_PIN_IN1,
@@ -557,7 +557,7 @@ void rotaryEncoderTick() {
 		// the end of the list does not exist.
 		const retroroom_core::DetentEvent ev =
 			browseGate.onDetent(direction, nowMs, num_consoles,
-								browseAnchorIndex);
+								browseAnchorIndex, browseGateConfig());
 
 		if (ev.frozen) {
 			// Off the end of the list. The cabinet has physical ends and
