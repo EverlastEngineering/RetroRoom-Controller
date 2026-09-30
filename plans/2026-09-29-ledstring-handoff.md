@@ -14,12 +14,30 @@ excellent... I have more bugs and features but it's very usable."*
 | | |
 |---|---|
 | Branch | `session/pico-2-wireless` |
-| HEAD | `fb518a6` — "commit only what has been shown, and keep the candidate lit" |
+| HEAD | `a18e555` — "a console at the end of a shelf still explodes" |
 | Tree | clean |
-| Host tests | 139 passing (`pio test -d . -e test_native`) |
-| Firmware | builds clean; the user had just uploaded `fb518a6` themselves |
+| Host tests | `pio test -d . -e test_native` (run it; do not trust a number here) |
+| Firmware | builds clean, and is flashed after each commit — see §9 |
 
-The work is a single feature line, landed as nine commits:
+The work is a single feature line. The second block of commits is a
+follow-on session on the same effect, and several of its bugs are the
+most instructive in the whole line because each looked like a tuning
+problem and was not:
+
+```
+a18e555  a console at the end of a shelf still explodes
+9caf1ba  the commit explodes and ignites, and the twinkle is gone
+7e50af2  end the browse before starting the selection effect
+811c1a7  paint the twinkle, and start the pulse at its peak
+159f4df  let the ring keep spinning while the browse settles
+951d6ff  swallow the detents that follow a commit
+13c3a7a  give an abandoned run back instead of leaving it pointing
+fffdd7d  let the run finish unwinding before the browse gives up
+84acb46  the block must enter on the edge it departs by
+33c9c86  repaint the fill on the frame clock, not only on a detent
+```
+
+And before those:
 
 ```
 fb518a6  commit only what has been shown, keep the candidate lit
@@ -56,11 +74,26 @@ shelves. The rotary knob drives it.
    end of the *destination* shelf and sweeps back to the target, so the
    light travels the width of the cabinet while the knob went forward
    one console. Odd, and deliberate.
-4. **Selection effect.** Committing twinkles the whole strip and
-   collapses it to the selected console, in well under a second.
-5. **Freeze at the ends.** Turning off either end of the list does
+4. **The commit.** Two halves, 200 ms each: the console that was
+   pulsing **explodes** outward to twice its width while dimming to
+   nothing, then **ignites** back from zero width and zero brightness
+   to exactly its own window at full. The second half ends on the
+   resting paint, so the strip *arrives* at rest rather than being cut
+   to it. Clamped to the console's shelf, per side.
+5. **A ring strike on commit.** One flash of the whole ring before it
+   fades — the one moment the operator is guaranteed to be looking at
+   the knob.
+6. **Settle lockout.** Rotary detents are ignored for 250 ms after a
+   step commits, so overshooting the fifth detent costs one step
+   instead of two. The ring keeps turning throughout; only the browse
+   ignores those detents.
+7. **Abandoned runs give themselves back.** Stop turning for 3 s and
+   the progression run withdraws one LED at a time from its leading
+   edge, at 250 ms each, until only the pulsing candidate is left. It
+   finishes on the pulse by itself.
+8. **Freeze at the ends.** Turning off either end of the list does
    nothing at all — no fill, no travel, no ring spinner.
-6. **Colour per role.** Warm amber for what the operator is being
+9. **Colour per role.** Warm amber for what the operator is being
    *offered*; cool blue for the context they are choosing against.
 
 ---
@@ -196,6 +229,136 @@ dark on the fourth of five detents.
 `LedRange activeWindow;` holds whatever was on the stack. This showed
 up as a frame drawing a proposal over a random span of the strip.
 
+### An effect that *is* a console's window has to own that window
+
+This cost three commits and two identical-looking bugs that pointed
+opposite ways. Both were the same mistake.
+
+The twinkle never appeared. Its brightness was computed correctly and
+then thrown away by the **colour**: it took each pixel's role from the
+resting picture, and `resolvePixel()` answers black for `OFF`
+*whatever the level says*. With the stack not lit at rest, most of the
+strip rests dark, so the twinkle had only ever been visible on top of
+the lit stack — and turning the stack off at rest silently deleted it.
+It looked like it "went away at some point nobody could date".
+
+Then the first attempt at explode/ignite had the **mirror** fault: the
+effect only wrote where the strike reached, so the resting paint's
+full-brightness console showed *through* the ignite and the result was
+a bright block with a dim patch growing inside it.
+
+So: a full-frame effect must **own** every pixel it covers, and any
+pixel it covers but has gone dark. Do not derive a pixel's role or
+level from whatever was there before, and do not guard on "only paint
+where it is currently dark" — one of those two is always wrong. The
+fix that makes the ignite correct is structural: the ignite's final
+range and level *are* the resting paint's, so the effect arrives at
+rest rather than being cut to it.
+
+### `ledstring_browseClear()` cancels whatever is animating — order the commit carefully
+
+`selectConsole()` called `ledstring_selectEffect()` and *then*
+`controls_browseReset()`, which calls `ledstring_browseClear()`, which
+forces the mode to `RESTING` and repaints. The selection effect painted
+its first frame and was then cancelled on the next statement, so it
+never advanced by a single frame — at **any** value of
+`LEDSTRING_SELECT_TWINKLE_MS`, which is why the symptom was
+"setting it to 850ms changes nothing" and looked like a tuning problem.
+
+Two competing paints back to back is what the operator actually saw:
+a flicker or two, about 40 ms.
+
+The comment in that function already said *"the strip keeps animating,
+but the browse that was feeding it is over"*. The code said the
+opposite one line later, and the comment was the more convincing of the
+two. So: **end the browse first, then start the effect**, and the
+ordering is a stated contract on both sides — the call site says why
+it is load-bearing, and `ledstring.h` says what `browseClear` cancels.
+There is no test for it; it is control flow across three shell
+translation units, so the contract is the defence.
+
+### A rule that is defensible alone can be wrong next to another
+
+The first and last console on a shelf only ignited. Neither cause was
+the effect, and both were individually reasonable:
+
+- The shelf clamp capped the expansion to the **narrower** of the two
+  sides, so a console with no room on one side had none on the other
+  and did not expand at all.
+- A config with no `shelves` block fell back to deriving each shelf's
+  extent **from the consoles on it** — which says the shelf is exactly
+  as wide as its contents, with no bare string at either end. So the
+  outer sides had zero room by construction.
+
+Two over-strict rules compounding, and the result read as a deliberate
+design choice. When one symptom has two plausible causes, look for the
+pair rather than fixing the one that explains the symptom most
+neatly.
+
+The fixes encode two distinctions worth keeping: **"where the consoles
+are" is not "where the shelf ends"** (the fallback is the whole strip,
+the only bound we actually know), and **a one-sided expansion is fine,
+a dead one is not** — it is the LEDs *beside* a console that pay for
+capping to the minimum.
+
+### A cap must never be narrower than the thing it caps
+
+`LEDSTRING_TRAVEL_PEAK_WIDTH` is a cap on how wide the travelling block
+may get, and it was silently making the block **narrower than the
+console it landed on** whenever that console was wider than 6 LEDs. A
+39-LED window got a 6-LED sliver against the far end of it, and which
+end depended on the direction of travel.
+
+It was invisible for months because MAME's window was exactly 6 — the
+console sat precisely on the clamp boundary, so it showed up as "one
+LED too far to the right" and looked like an index bug. The fix is
+`max(peak, targetWidth)`. The config comment had it backwards, which is
+why the wrong reading was so persuasive.
+
+**Corollary: a value sitting exactly on a threshold is a bug that
+reports itself as a different bug.** Check the boundaries.
+
+### A handover must start from whatever the previous phase ended at
+
+The travel arrives at full brightness on the target window, and the
+preview pulse then began at `pulseMinPct` — stepping the console down
+by most of its range at exactly the moment the movement resolved into
+an answer. It read as "jank that matching the colour didn't fix", and
+that is what it was: a step in *luminance*, which no amount of colour
+matching can touch. Matching the hue is what made it visible that
+something else was still wrong.
+
+Same shape as the colour bug it followed: `LEDSTRING_COLOR_TRAVEL_*`
+has to equal `LEDSTRING_COLOR_PROPOSAL_*`, because the travel's last
+frame *is* the target window and the frame after it is that window
+pulsing as a proposal. There is a test asserting the two stay equal,
+and there is `-I src` on the host test env specifically so a test can
+read `configuration.h` — the invariant is *between* files and is not
+checkable otherwise.
+
+### An effect that sweeps an edge needs a fractional edge
+
+`StrikeWindow` is in permille of a LED. A boundary that can only land
+on a pixel edge means a new LED either appears at full brightness or
+not at all, which reads as a staircase rather than a sweep. The fill's
+antialiasing existed the whole time and had **never fired**, because
+the knob's position is a whole number of LEDs — it only got used when
+something needed sub-LED resolution.
+
+The same maths settles the "round the width down to an even number"
+question: the *target* is rounded, never the start. Rounding the start
+would make the explosion's first frame one LED narrower than the window
+that was pulsing a frame ago — a visible step at the exact moment of
+the commit. The half-LED edges that result are exact in permille, and
+the brightness is zero by the time they are reached.
+
+### Replace an effect; do not leave it behind with its tests
+
+The twinkle and the per-pixel collapse were deleted rather than
+disabled. Dead code with passing tests is how a replaced effect turns
+into the next bug: thirteen tests were asserting a `twinkleMs` field
+that no longer described anything the device did.
+
 ### A mode in `ledstring_loop()` can become time-dependent without anyone noticing
 
 `ledstring_loop()` decides what to repaint per mode. `FILLING` was
@@ -297,6 +460,25 @@ sampled more finely, not played faster.
 | `todo/open/2026-09-25_led-string-e2e-readback.md` | A `/leds.json` snapshot so the frames can be asserted from the host. Decided *not* to add a rotary-injection test hook — the math is covered on the host, and a new API surface needs a concrete reason. |
 | `todo/open/2026-09-29_console-browse-stops-at-ends.md` | Filed and **implemented** in `58e28be`; the todo still needs closing out. The open question it records — what a detent *at* the end should do — was answered on the bench: freeze entirely, ring spinner included. |
 
+Carried over from the first session, still open:
+
+- **The black beat between the two halves of the commit.** The explode
+  ends at zero brightness and the ignite starts at zero width *and*
+  zero brightness, so there is a couple of frames of total darkness.
+  That is the gap between the old console going and the new one
+  arriving, and the user has been asked whether it reads as a pause or
+  a blink. If it blinks: overlap the phases slightly, or start the
+  ignite's brightness above zero. Both are one-line changes.
+- **Shelf extents for the real cabinet.** `example5-single-shelf.json`
+  has a placeholder. The user needs to say where each shelf's bare
+  string starts and ends.
+- **Point the simulator at the live geometry.** It still replays the
+  two-row example, so a 3-LED console appears to explode by half a
+  LED. The wide-spacing case is the one worth being able to look at.
+- **The simulator never modelled the loop's repaint policy**, which is
+  where the frozen pulse and the cancelled commit both lived. It
+  replays frame maths, not frame *scheduling*.
+
 `LEDSTRING_FAST_SPIN_WINDOW_MS` is **0 (disabled)**, and the reason is
 worth keeping: 1000 ms is *shorter than a deliberate human detent*, so
 every browse escalated. The latch that compounded it is fixed
@@ -306,7 +488,35 @@ turn; a starting guess is 2000–3000 ms.
 
 ---
 
-## 8. Where the tuning lives
+## 8. The config schema, and what is in it now
+
+`/consoles.json` is the only operator-facing config. Two additions this
+session, both **optional** and both defaulting to current behaviour, so
+every config written before them still loads identically:
+
+| field | where | default | why |
+|---|---|---|---|
+| `shelf` (int) | per console | `0` | Which physical shelf. Not derivable: the shelves are one chain, so pixel order says nothing about where one ends. |
+| `shelves` (array) | top level | empty | `{id, fromLed, toLed}` — each shelf's **physical** extent, keyed by the `shelf` its consoles carry. `fromLed`/`toLed` inclusive. |
+
+`shelves` is what the commit's explosion is clamped to. Absent, the
+bound is the **whole strip** — deliberately not the span of the
+consoles on the shelf, because that says the shelf is exactly as wide
+as its contents and leaves the outer consoles no room to grow (see
+§4). Declaring real extents beats the fallback, because then the bound
+is the shelf rather than the strip.
+
+**Known problem in the live config, found by the new boot log:** XBOX
+is declared `ledWidth: 39` at `ledPosition: 55` on a 64-LED strip, so
+it has silently been clamped to **9** for its whole life. The old boot
+log printed the *declared* end (`55..93`) and read as though the
+console really were that wide. It now prints the clamped end and says
+when the two differ. If that console is meant to be a large block it
+needs a wider strip or an earlier `ledPosition`.
+
+---
+
+## 9. Where the tuning lives
 
 Everything is a `#define` in `src/configuration.h`, under the *"LED
 string (GP21) browse + selection feel"* block, grouped by which
@@ -323,7 +533,7 @@ conservative — this strip sits next to a television in a dark room.
 
 ---
 
-## 9. Repo conventions worth not re-learning
+## 10. Repo conventions worth not re-learning
 
 - **Never restate tool documentation or record drift-prone numbers**
   in `AGENT.md`/`readme.md`. Symptoms and where to look, not a
@@ -335,6 +545,27 @@ conservative — this strip sits next to a television in a dark room.
   The user wants to see everything. Prefer the `agent-script/`
   wrappers. (Filtering *my own* simulator output to read a 64-column
   table is fine and is not what that rule is about.)
+- **Check `git diff --stat` after every scripted multi-function edit.**
+  Twice in the last session a slice from "delete this function" to
+  "up to the next one named X" swallowed forty-five unrelated tests,
+  because the assumed neighbour was not the actual neighbour — and
+  `configuredFrame`, the shared fixture, went with them, which is what
+  the compiler noticed rather than the test run. The stat line is the
+  cheapest possible check and it is the *only* one that catches this.
+  Prefer deleting by exact function-name boundary, and restore with
+  `git checkout --` rather than trying to patch the damage back.
+- **After fixing a bug, check the two things you changed together.**
+  The end-consoles bug was two independent over-strict rules; the
+  frozen pulse was a stale comment next to a stale mode case. Both were
+  found by looking for the *second* cause, not by fixing the first
+  plausible one.
+- **Flash after every commit, not at the end of a batch.** The user
+  checks the hardware as each change lands, and most of the bugs in
+  the last session were only visible on the strip. They will also
+  flash independently and interrupt without warning — check
+  `git status` before resuming and expect a half-finished tree.
+- **Never use the `vscode_askQuestions` tool.** It breaks the agent's
+  automode on this machine. Ask in ordinary prose.
 - **Never edit a committed file with blind `python` string surgery.**
   Several times during this work a replace silently no-op'd — the
   file uses tabs, my patterns used spaces — and I spent whole rounds
