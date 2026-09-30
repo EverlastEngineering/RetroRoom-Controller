@@ -63,8 +63,29 @@ enum class StripMode {
 	SELECTING,  // a commit: twinkle, then settle
 };
 
-// Assemble the "feel" knobs from configuration.h exactly once. See
-// src/configuration.h for what each one is for and what it trades off.
+// The commit's two halves, from the config's `led` block.
+//
+// Rebuilt on each use rather than cached in a namespace-scope constant,
+// and that is deliberate. This used to be:
+//
+//     const SelectionEffectConfig kEffect = effectConfig();
+//
+// at namespace scope. That is a *static initialiser*, so it ran during
+// C++ static init -- before main(), therefore long before
+// consoleDefinitions(), therefore while ledFeel was still
+// defaultLedFeel(). led.explodeMs and led.igniteMs were pinned at
+// 400/200 for the life of the process and no config could move them.
+//
+// It was invisible here because every *other* feel value in this file is
+// read live, per frame, by baseFrame() below. One stale constant among
+// a dozen correct reads looks exactly like a working feature that
+// ignores its config. And no reordering of setup() can repair it: the
+// capture happens before setup() is entered, so the fix has to be "do
+// not read ledFeel at static-init time", not "read it later".
+//
+// The rule, learned the hard way in this file and in controls_init():
+// a value copied out of ledFeel during static initialisation predates
+// the config, and there is no boot order that fixes that.
 retroroom_core::SelectionEffectConfig effectConfig() {
 	retroroom_core::SelectionEffectConfig c;
 	// The total is the sum, not a third number. Two phases that each
@@ -77,8 +98,6 @@ retroroom_core::SelectionEffectConfig effectConfig() {
 	c.selfPct = ledFeel.selfPct;
 	return c;
 }
-
-const retroroom_core::SelectionEffectConfig kEffect = effectConfig();
 
 // Assemble the colour palette from src/configuration.h. The core
 // resolves each pixel to a *role* and this says what that role looks
@@ -313,7 +332,7 @@ retroroom_core::StripFrame baseFrame() {
 	f.pulseMinPct = ledFeel.pulseMinPct;
 	f.pulseMaxPct = ledFeel.pulseMaxPct;
 	f.pulsePeriodMs = ledFeel.pulseMs;
-	f.select = kEffect;
+	f.select = effectConfig();
 	return f;
 }
 
@@ -566,6 +585,35 @@ void ledstring_init() {
 	fill_solid(selectedLeds, ledFeel.totalLeds,
 			  CRGB::Black);
 	FastLED.show();
+
+	// What the animations will actually run at, now that
+	// consoleDefinitions() has parsed the config. Every value here is
+	// settable in `led` and none of them are otherwise visible at boot,
+	// which is why a setting that "does nothing" has been impossible to
+	// tell from a setting that was never applied -- the whole reason the
+	// kEffect bug above survived.
+	//
+	// The commit pair is read back through effectConfig() rather than
+	// straight off ledFeel, so this line reports what the strip runs on.
+	// If it ever disagrees with the file, that disagreement is the bug.
+	//
+	// The ring timings are printed from here too, even though
+	// lighting.cpp owns them, because lighting_init() runs *before*
+	// consoleDefinitions() and so cannot print the parsed values at all.
+	// One boot report for the one `led` block beats two half-reports from
+	// the two places that happen to run at a usable time.
+	const retroroom_core::SelectionEffectConfig eff = effectConfig();
+	Serial.print("feel: commit ");
+	Serial.print(eff.explodeMs);
+	Serial.print("+");
+	Serial.print(eff.igniteMs);
+	Serial.print("ms, travel ");
+	Serial.print(ledFeel.travelMs);
+	Serial.print("ms, ring ");
+	Serial.print(ledFeel.ringIdleMs);
+	Serial.print("ms idle / ");
+	Serial.print(ledFeel.ringFlashMs);
+	Serial.println("ms flash");
 }
 
 // Paint the active console's [ledPosition, ledPosition+ledWidth) window
@@ -645,7 +693,7 @@ void ledstring_loop() {
 	case StripMode::SELECTING: {
 		const uint32_t elapsed = (uint32_t)(now - animStartMs);
 		paintSelecting(elapsed);
-		if (elapsed >= kEffect.totalMs) {
+		if (elapsed >= effectConfig().totalMs) {
 			// Hand back to the resting paint rather than leaving the
 			// last animated frame frozen on the strip. Routing through
 			// paintResting also means the end of the effect is

@@ -91,9 +91,22 @@ void spinRingFor(int direction) {
 	}
 }
 
-// The browse "feel" is configured once from src/configuration.h, the
-// same way src/ledstring.cpp assembles its effect config. See
-// src/configuration.h for what each value trades off.
+// The browse "feel" is configured once from ledFeel -- the `led` block
+// of /consoles.json -- the same way src/ledstring.cpp assembles its
+// effect config out of that same struct.
+//
+// That is a load-order dependency and it is the only one: consoleDefinitions()
+// is what assigns ledFeel, and its one consumer here is a single
+// configure() call in controls_init(). setup() therefore has to call
+// consoleDefinitions() first. Call it the other way round and every
+// threshold below silently reverts to the built-in default, because
+// nothing re-runs this afterwards -- DetentGate has no lazy path, and
+// giving it one would let the knob's feel shift underneath a browse
+// that is already in progress.
+//
+// The other feel values are read live instead (ledFeel.settleLockoutMs
+// in the browse below), which is why the two can disagree after a
+// misordered boot: those pick the config up, these do not.
 retroroom_core::DetentGateConfig browseGateConfig() {
 	return retroroom_core::DetentGateConfig(
 		ledFeel.detentsPerStep, ledFeel.fastDetentsPerStep,

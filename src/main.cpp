@@ -73,11 +73,28 @@ void setup() {
 	network_scan_cache();
 	network_init();
 #endif
-	controls_init();
 #if defined(HAS_IR)
 	ir_control_init();
 #endif
 	consoleDefinitions();
+	// controls_init() comes *after* consoleDefinitions(), and not by
+	// accident. It is the only caller of DetentGate::configure(), and
+	// that reads ledFeel -- which is what consoleDefinitions() parses
+	// out of /consoles.json. Run it earlier and the knob's detent gate
+	// is wired to defaultLedFeel() for the rest of the session:
+	// detentsPerStep reads 5 no matter what the config says.
+	//
+	// The symptom is narrow enough to be confusing. Every *runtime*
+	// ledFeel read -- ledFeel.settleLockoutMs in the browse, the ring's
+	// timings in lighting.cpp, the strip's own config assembled by
+	// ledstring_init() -- is already past consoleDefinitions() and
+	// therefore correct, so the knob is the one thing that looks
+	// ignored. See browseGateConfig() in src/controls.cpp.
+	//
+	// Nothing in between needs the encoder, and the later attach is
+	// the safer side of the trade: no detent can be recorded while the
+	// gate is still holding defaults.
+	controls_init();
 	// Home the console latch. selectStack_init() also issues the
 	// initial selectStack() pass, which establishes the known starting
 	// position that restoreLastSelectedConsole() below steps relative
