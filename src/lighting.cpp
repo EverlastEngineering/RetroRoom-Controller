@@ -32,7 +32,26 @@ using retroroom_core::RingState;
 using retroroom_core::RingUpdate;
 
 CRGB leds[NUM_RING_LEDS];
-#define LED_BRIGHTNESS 150
+
+// The master brightness, as a FastLED global scale, and the config
+// value that multiplies it.
+//
+// This was a #define (LED_BRIGHTNESS 150) that read as though it
+// belonged to the ring. It does not: FastLED's setBrightness() sets one
+// mScale on the FastLED object which is applied to *every* controller
+// on show(), so the number has always scaled the GP21 string as well.
+// Nothing is changing behaviour here -- the comment was catching up
+// with the code.
+//
+// The base stays fixed and only the percentage moves, because the base
+// is the most the fitted supply can drive. led.brightnessPct stops at
+// 100 for the same reason: asking for more is not a brighter cabinet,
+// it is a brown-out when the strip is fully lit.
+static const uint8_t kBrightnessBase = 150;
+
+// The last scale actually pushed to FastLED, so the (comparatively
+// expensive) call happens on a change rather than every tick.
+static uint8_t lastBrightnessScale = 0;
 
 // How bright the dim base fill is at full level -- DarkBlue's blue
 // channel, written as a number so the relationship to CRGB::DarkBlue is
@@ -56,6 +75,19 @@ static RingPaint lastPushed;
 static bool hasPushed = false;
 
 namespace {
+
+// led.brightnessPct as a FastLED scale.
+//
+// Read live and pushed on a change, not configured once at init. A
+// cached copy of a ledFeel value is a value the config menu cannot
+// change -- the same mistake as the browse gate's detent thresholds,
+// and the reason those now arrive per call.
+uint8_t ledBrightnessScale() {
+	const uint32_t scaled =
+		(static_cast<uint32_t>(kBrightnessBase) *
+		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u;
+	return static_cast<uint8_t>(scaled > 255u ? 255u : scaled);
+}
 
 // The config's `led` block as the core wants it. Read fresh on every use
 // rather than cached at init, because a cached copy of ledFeel is exactly
@@ -163,7 +195,7 @@ void lighting_init() {
 	// parameter name). We use RR_FASTLED_DATA_PIN, defined in lighting.h
 	// to the numeric pin number from configuration.h.
 	FastLED.addLeds<WS2812B, LED_RING_DATA_PIN, GRB>(leds, NUM_RING_LEDS);
-	FastLED.setBrightness(LED_BRIGHTNESS);
+	FastLED.setBrightness(ledBrightnessScale());
 	// Clear the ring at boot. The previous boot-time R/G/B smoke test was
 	// removed on session/merge-pico-json (per user request); the LED will
 	// stay dark until something drives it.

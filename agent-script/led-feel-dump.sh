@@ -38,8 +38,17 @@ trap 'rm -f "$out"' EXIT
 
 # The defaults file is pure data and needs no JSON library, which is why
 # it is a separate translation unit from the parser.
+#
+# It does need CabinetMenu.h, because ConsoleConfig.h parses the
+# `menu` array into CabinetMenu's MenuItem and the parser's header
+# cannot name a type it does not include. That costs this script a
+# second include path, and it is a real price for the split -- the
+# "compile one file to learn the defaults" trick now needs two
+# directories on the path. Flagged rather than hidden: if the menu ever
+# wants to stop living in the config's header, this goes away.
 c++ -std=c++11 -O0 -Wall -Wextra \
     -I "$root/lib/ConsoleConfig/src" \
+    -I "$root/lib/CabinetMenu/src" \
     -o "$out" \
     "$here/led-feel-dump.cpp" \
     "$root/lib/ConsoleConfig/src/LedFeelDefaults.cpp"

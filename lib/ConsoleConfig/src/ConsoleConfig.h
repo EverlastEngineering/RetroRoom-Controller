@@ -159,6 +159,19 @@ struct LedFeel {
 	int ringFadeMs;      // how long any fade to black takes
 
 	// ---- the strip as a whole ----------------------------------------------
+	// Master brightness, 0..100. Scales the ring and the GP21 string
+	// together, because FastLED's setBrightness() is a single global
+	// scale applied to every controller on show() -- there is no
+	// per-strip brightness to reconcile, and adding one would be the
+	// first thing to let the two halves of the cabinet disagree about
+	// how bright they are.
+	//
+	// 100 is the ceiling and not a convention. Above the base scale the
+	// strip draws more current than the fitted supply can give, and the
+	// cabinet browns out under load rather than getting brighter. That
+	// is a hardware limit, so the field's range is 0..100 rather than
+	// 0..255 -- see LedFieldTable.cpp.
+	int brightnessPct;
 	int frameIntervalMs;  // how often an in-flight frame is pushed
 
 	// One RGB triple per role, in LedRoleId order. Written in the JSON as

@@ -73,7 +73,11 @@ const LedField kFields[] = {
     {"ringOffDelayMs", &LedFeel::ringOffDelayMs, 0, 60000},
     {"ringFadeMs", &LedFeel::ringFadeMs, 0, 60000},
 
-    // The strip as a whole.
+    // The strip as a whole. brightnessPct stops at 100 rather than
+    // 255 because the base it scales is already the most the fitted
+    // supply can drive; asking for more is not "brighter", it is a
+    // brown-out under load.
+    {"brightnessPct", &LedFeel::brightnessPct, 0, 100},
     {"frameIntervalMs", &LedFeel::frameIntervalMs, 1, 100},
 };
 

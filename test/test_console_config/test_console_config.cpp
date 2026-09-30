@@ -887,6 +887,53 @@ void test_only_the_strip_length_needs_a_reboot(void) {
             retroroom_core::findConfigField("lcd.backlightOffAfterMs", nullptr)));
 }
 
+// brightnessPct is the master scale for both strips, and 100 has to
+// mean "exactly as it looked before" -- the base it multiplies is the
+// one that used to be a #define in src/lighting.cpp.
+void test_brightness_defaults_to_unchanged(void) {
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        TEST_ASSERT_EQUAL_MESSAGE(100, d.brightnessPct,
+                                  "the default must preserve the previous "
+                                  "appearance, or every cabinet dims on upgrade");
+}
+
+// 100 is a hardware ceiling, not a preference: above the base scale the
+// strip asks for more current than the supply gives, and the cabinet
+// browns out under load. The menu is allowed to offer less, never more.
+void test_brightness_cannot_exceed_the_supply(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"brightnessPct": 250}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL_MESSAGE(100, r.feel.brightnessPct,
+                                  "more than 100 must be refused, not honoured");
+        TEST_ASSERT_TRUE_MESSAGE(!r.warnings.empty(),
+                                 "a clamp nobody hears about is the bug it "
+                                 "replaced");
+        // And zero is a legal, fully dark cabinet.
+        const retroroom_core::ConfigEdit off[] = {{"led.brightnessPct", 0}};
+        std::string out, error;
+        // A *valid* document: loadFromJson() refuses one with no
+        // irCodes, so round-tripping a fragment would test the parser's
+        // rejection rather than the writer.
+        const char* base =
+            R"({"irCodes": {"Video": "0x430"},
+                "consoles": [{"id": "NES", "tvInput": "Video",
+                              "selectorPosition": 1, "ledPosition": 1,
+                              "ledWidth": 1}],
+                "led": {"brightnessPct": 100}})";
+        TEST_ASSERT_TRUE(retroroom_core::applyConfigEdits(
+            base, off, 1, &out, &error));
+        LoadResult r2 = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_EQUAL(0, r2.feel.brightnessPct);
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -941,6 +988,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_lcd_clamp_is_reported);
 	RUN_TEST(test_config_paths_resolve_across_blocks);
 	RUN_TEST(test_only_the_strip_length_needs_a_reboot);
+	RUN_TEST(test_brightness_defaults_to_unchanged);
+	RUN_TEST(test_brightness_cannot_exceed_the_supply);
 	RUN_TEST(test_out_of_range_is_clamped_and_reported);
 	RUN_TEST(test_a_partial_led_block_leaves_everything_else_alone);
 	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);

@@ -110,6 +110,7 @@ new one arriving.
 
 | key | default | range | what it does |
 |---|---|---|---|
+| `brightnessPct` | `100` | 0..100 | Master brightness for **both** the ring and the GP21 string — FastLED applies one global scale to every controller, so there is no per-strip brightness and the two halves cannot disagree. 100 is the ceiling, not a convention: above the base scale the strip draws more current than the fitted supply, so more is a brown-out under load, not a brighter cabinet. 0 is fully dark. |
 | `frameIntervalMs` | `8` | 1..100 | How often an in-flight frame is pushed to the wire. A **sampling rate, not a step count** — every frame is computed from elapsed time, so raising it plays the same animation more smoothly rather than faster. The floor is how long the driver takes to clock the strip out plus whatever the rest of the loop needs; it measures that and prints `[ledstring] N frames, mean work Nus, worst frame Nus` when an animation ends, so set this from that line rather than by guessing. |
 
 ### Colours

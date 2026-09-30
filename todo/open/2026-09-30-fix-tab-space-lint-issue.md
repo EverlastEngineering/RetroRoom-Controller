@@ -1,0 +1,1 @@
+we keep running into issues where something is formatting with spaces vs tabs. i am using vscode that might be doing it, the agent seems to prefer spaces. investigate the issue and sort it out with the user and with a linter if necessary.

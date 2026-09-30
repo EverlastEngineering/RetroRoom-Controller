@@ -120,6 +120,13 @@ LedFeel defaultLedFeel() {
 	f.ringOffDelayMs = 300;
 	f.ringFadeMs = 300;
 
+	// 100 = the cabinet as it has always looked. The scale it multiplies
+	// is the one that was previously a #define in src/lighting.cpp, so
+	// the default is not a new number but the one that was already
+	// there, renamed. A default lower than that would quietly dim every
+	// cabinet on the next boot after an upgrade.
+	f.brightnessPct = 100;
+
 	// How often an in-flight frame goes to the wire. A sampling rate, not
 	// a step count: every frame is computed from elapsed time, so raising
 	// this plays the same animation more smoothly. The floor is how long

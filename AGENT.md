@@ -169,10 +169,60 @@ hardware, push the *decision* down into a lib and unit-test it there.
 Some `lib/` code is deliberately untested on the host — check the file's
 header before assuming either way.
 
-## 7. When in doubt
+## 7. Adding a `led.*` setting
+
+A new option in the config's `led` block touches **seven** places. Missing
+one is how a setting ends up parsing and doing nothing — which happened
+three times in a single session (a static initialiser, a `setup()` order,
+a cached `configure()`), and each looked exactly like a working feature
+that ignored its config.
+
+1. **`lib/ConsoleConfig/src/ConsoleConfig.h`** — the field on `LedFeel`,
+   with the comment saying what it trades off. This is the type's
+   contract: *one number, one home*.
+2. **`lib/ConsoleConfig/src/LedFieldTable.cpp`** — one row: key, member
+   pointer, range. This is the **only** place a range is written, and the
+   parser, the runtime setter and the menu all read it from here.
+3. **`lib/ConsoleConfig/src/LedFeelDefaults.cpp`** — the default, beside
+   the reasoning. The parser uses the struct's *current* value as the
+   default for an absent key, so this file is the only place one is
+   stated; put a literal in the table or the parser and you have two that
+   can disagree with nothing to catch it.
+4. **Wherever it is used** — and read `ledFeel` **live**, at the point
+   of use, never into a variable that outlives the call. The rule is not
+   "be careful when" but "do not keep a copy": the config menu changes
+   these at runtime, and anything cached is a value the operator cannot
+   change.
+5. **`agent-script/led-feel-dump.cpp`** — one `FIELD(...)` row. It is
+   generated from `defaultLedFeel()`, so it cannot drift; the one thing
+   it *can* do is print the wrong number, so add the row.
+6. **`example-configurations/README.md`** — the options table.
+7. **`test/test_console_config/`** — that it parses, that an absent key
+   takes the default, and that an out-of-range value is clamped **and**
+   reported.
+
+Then verify:
+
+```sh
+./agent-script/led-feel-dump.sh      # the new key appears, with the right default
+./agent-script/pio-build.sh
+pio test -d . -e test_native
+```
+
+**A setting the menu can reach also needs** a row in the config's `menu`
+array — a line of JSON, because the menu resolves `set:` through the same
+field table, not a per-key switch in the firmware.
+
+Settings bound at init (`led.totalLeds` goes into `FastLED.addLeds()`)
+must also be listed in `configFieldNeedsReboot()` in
+`LedFieldTable.cpp`, so the menu prompt, the API and the docs cannot
+disagree about which changes need a restart.
+
+## 8. When in doubt
 
 - Hardware question → [`pin-map-chart.md`](pin-map-chart.md), then
   `src/configuration.h`.
 - Current work → `todo/open/`.
 - Recent decisions and their reasoning → `LOG.md`.
+- Adding a config setting → §7, which lists every file it touches.
 - Project scope and feature state → `readme.md`.
