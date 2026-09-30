@@ -64,15 +64,6 @@ void setup() {
 #if defined(HAS_LEDS)
 	lighting_init();
 #endif
-#if defined(HAS_WIFI)
-	// Scan wifi networks BEFORE the AP comes up. The CYW43 radio
-	// can't scan while a client is associated with the SoftAP, so the
-	// boot window is the only safe place to populate /scan.json's
-	// cache. network_init() below brings up the AP that locks the
-	// radio onto a single channel.
-	network_scan_cache();
-	network_init();
-#endif
 #if defined(HAS_IR)
 	ir_control_init();
 #endif
@@ -128,6 +119,31 @@ void setup() {
 	// loop()'s display_loop() picks up the startup phase on its first
 	// tick and takes it from there.
 	display_wake();
+#endif
+#if defined(HAS_WIFI)
+	// Network LAST, and that ordering is the whole point.
+	//
+	// Nothing above this line needs the radio. consoleDefinitions()
+	// reads /consoles.json off local flash, and the knob, the strip, the
+	// ring and the LCD are all local. What the network buys is the web
+	// UI, the /consoles.json upload and the WebSocket -- none of which
+	// the operator has before the cabinet is up.
+	//
+	// It used to be here, before consoleDefinitions(), and the cost was
+	// the whole boot: network_scan_cache() is a synchronous
+	// WiFi.scanNetworks() (2-4 s) and network_init() then waited up to
+	// kStaTimeoutSec -- 20 s -- for a router that might not be there. The
+	// cabinet could spend half a minute fetching a config that was
+	// already on the chip, while the LCD said "Loading".
+	//
+	// The scan still runs before the AP, which is the constraint that
+	// actually mattered: the CYW43 cannot scan while a client is
+	// associated with the SoftAP, so the boot window is the only safe
+	// place to populate /scan.json's cache. Moving the whole block here
+	// keeps that ordering *within* the block, so it is untouched --
+	// network_scan_cache() is still called before network_init().
+	network_scan_cache();
+	network_init();
 #endif
 	Serial.println("Setup Complete.");
 	Serial.flush();

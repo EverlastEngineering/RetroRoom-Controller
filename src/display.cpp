@@ -437,6 +437,19 @@ void display_wake() {
 	backlightOffAtMs = millis() + lcdBacklightOffAfterMs;
 }
 
+// True while the config menu owns the screen. The live view's marquee
+// must not run underneath it: display_loop() is pumped from main.cpp
+// unconditionally, and for a console whose name or tagline is longer
+// than sixteen columns that cadence repaints the row -- over the top of
+// the menu, one character at a time, once a second.
+//
+// It has bitten already in a smaller way. A short line is never
+// repainted by tick_scroll(), so the menu looked fine on most cabinets
+// and the two repainted states drifted apart for a reason nobody could
+// see from the code: the menu survives exactly as long as the console
+// has a name that fits.
+static bool menuOwnsScreen = false;
+
 void display_showMenu(const char* top, const char* bottom) {
 	if (!lcdPresent) {
 		return;
@@ -455,6 +468,7 @@ void display_showMenu(const char* top, const char* bottom) {
 	// confused. A separate boolean would be a second thing to keep in
 	// step with this one.
 	backlightOffAtMs = 0;
+	menuOwnsScreen = true;
 	lcd_print_fitted(top, 0);
 	lcd_print_fitted(bottom, 1);
 }
@@ -467,6 +481,27 @@ void display_menuClosed() {
 	// and closing a menu repeatedly does not keep the panel lit
 	// indefinitely by resetting the count each time.
 	backlightOffAtMs = millis() + lcdBacklightOffAfterMs;
+	menuOwnsScreen = false;
+	// And put the live view back on the glass. display_showMenu() wrote
+	// straight to the panel, so the screen underneath is still whatever
+	// it was before -- which for a console with no tagline is a blank
+	// second line, left showing the menu's last row instead. The menu
+	// has no idea what the live view looks like, so repainting it is
+	// this file's job, not the menu's.
+	//
+	// The scroll offsets reset too. A row that was mid-marquee when the
+	// menu took over would otherwise come back mid-marquee, from a
+	// position that has nothing to do with when the console was
+	// selected, and a short row whose offset had run past its length
+	// would repaint from the wrong place entirely.
+	scroll1.offset = 0;
+	scroll1.holdUntilMs = 0;
+	scroll1.lastTickMs = millis();
+	scroll2.offset = 0;
+	scroll2.holdUntilMs = 0;
+	scroll2.lastTickMs = millis();
+	repaint_line(scroll1, 0);
+	repaint_line(scroll2, 1);
 }
 
 static void tick_scroll(LineScroll& scroll, int row) {
@@ -521,8 +556,14 @@ void display_loop() {
 			}
 			break;
 		case DisplayPhase::Live:
-			tick_scroll(scroll1, 0);
-			tick_scroll(scroll2, 1);
+			// Skipped while the menu owns the screen; see
+			// menuOwnsScreen. The phase and the scroll offsets are left
+			// exactly as they were, so the live view resumes where it
+			// was rather than restarting its marquee from the left.
+			if (!menuOwnsScreen) {
+				tick_scroll(scroll1, 0);
+				tick_scroll(scroll2, 1);
+			}
 			break;
 	}
 
