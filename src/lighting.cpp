@@ -2,174 +2,158 @@
 #include "ledstring.h"
 #include "consoles.h"       // ledFeel: the ring's timings come from the config
 #include <ConsoleConfig.h>  // LedFeel: the strip's feel, parsed from the config
+#include <RingPaint.h>
 
+// The shell around lib/RingPaint.
+//
+// This file used to own the ring outright: six mutable statics, each
+// function partially updating them, and a fade implemented as 255
+// fadeToBlackBy(1) calls -- one per main-loop iteration, so the ring took
+// as long to go out as the loop happened to take. It also kept the
+// brightness in the pixel buffer as accumulated decrements, which meant
+// any code path that cancelled a fade stranded the ring part-dimmed with
+// no state left able to finish it.
+//
+// The decision half now lives in lib/RingPaint as a pure state machine
+// with a single RingMode, host-tested in test/test_ring. What is left
+// here is deliberately only:
+//
+//   * the CRGB buffer and the FastLED controller,
+//   * mapping the config's `led` block onto a RingConfig,
+//   * mapping the two colours the core scales onto that buffer, and
+//   * forwarding the pad and encoder edges as events.
+//
+// If you find yourself adding a ring state variable here, it belongs in
+// the core instead -- see the "Why this exists" note in RingPaint.h.
 
+using retroroom_core::RingConfig;
+using retroroom_core::RingPaint;
+using retroroom_core::RingState;
+using retroroom_core::RingUpdate;
 
 CRGB leds[NUM_RING_LEDS];
 #define LED_BRIGHTNESS 150
 
-int currentRingLED = 0;
+// How bright the dim base fill is at full level -- DarkBlue's blue
+// channel, written as a number so the relationship to CRGB::DarkBlue is
+// visible rather than implied. The core decides how bright; the colours
+// that "bright" multiplies live here, in the shell, so colour choices
+// stay out of the decision logic.
+static const uint8_t kBaseBlue = 128;
 
-// Ring state. lightSingle() is the only path that turns the ring on,
-// and it always arms a deadline to turn it off, so there is no
-// reachable state in which the ring is lit with nothing scheduled to
-// darken it. That invariant is what fixes the ring sticking on when a
-// rotary turn repainted it mid-fade.
-static bool ringLit = false;
-static bool ringFading = false;
-static bool ringProximityHold = false;
-// Set by an explicit request to go dark (a select, or the hand leaving
-// the pad) as opposed to the idle deadline expiring. Kept separate from
-// the deadline so that ledFeel.ringIdleMs = 0 disables the *timeout*
-// without also disabling the explicit paths.
-static bool ringFadeRequested = false;
-static uint32_t ringHoldUntilMs = 0;
-// When the select strike stops holding the ring lit, and 0 when there is
-// no strike under way. Checked before every other ring state, because a
-// strike is a flash *over* whatever the ring was doing.
-static uint32_t ringFlashUntilMs = 0;
+// How long the ring takes to go out. A shell policy decision rather than
+// a capability of the core, so it lives here. Note what it is NOT: a
+// count of loop iterations. The core derives the level from elapsed
+// time, so this is wall clock and stays that way however busy the loop
+// gets.
+static const uint32_t kRingFadeMs = 300;
 
-// Hold the whole ring lit for the select strike. The caller owns the
-// timing; this only asserts the pixels, so it doubles as the "still
-// striking" step that lighting_loop() re-asserts every tick.
-//
-// Declared above lighting_loop() because the loop needs it and a
-// forward declaration would be a second thing to keep in step with the
-// definition.
-static void ringStrikeStep() {
-	fill_solid(leds, NUM_RING_LEDS, CRGB::White);
-	FastLED.show();
-	ringLit = true;
-	// A strike outranks a fade that was already under way, and it does
-	// not arm the idle timeout: the ring is going dark on purpose, and
-	// arming it would mean the strike could be interrupted by a timeout
-	// it ought to be immune to.
-	ringFading = false;
-	ringFadeRequested = false;
+// The ring's entire state, owned by the core. One object, one owner: the
+// thing that made the old version hard to reason about was the same
+// information spread across six booleans that any of five functions
+// could contradict.
+static RingState ringState;
+
+// The last picture actually pushed to the wire, so an unchanged tick does
+// not re-clock the ring. FastLED.show() is synchronous on the RP2040 PIO
+// backend -- it blocks until the last bit is out -- so calling it every
+// main-loop iteration, forever, for a ring that is almost always dark, is
+// time taken away from the strip and the network for nothing.
+static RingPaint lastPushed;
+static bool hasPushed = false;
+
+namespace {
+
+// The config's `led` block as the core wants it. Read fresh on every use
+// rather than cached at init, because a cached copy of ledFeel is exactly
+// what froze detentsPerStep in the browse gate and explodeMs in the
+// strip's commit effect. The fix there was to stop caching, not to cache
+// more carefully; see RingPaint.h for the long version.
+RingConfig ringConfig() {
+	RingConfig c;
+	c.idleMs = static_cast<uint32_t>(ledFeel.ringIdleMs);
+	c.flashMs = static_cast<uint32_t>(ledFeel.ringFlashMs);
+	c.fadeMs = kRingFadeMs;
+	c.pixelCount = NUM_RING_LEDS;
+	return c;
 }
 
-// One fadeToBlackBy step. The caller must keep calling until
-// ringFading clears itself. Returns true on the tick it completes.
-static bool fadeStep() {
-	fadeToBlackBy(leds, NUM_RING_LEDS, 1);
-	ringFading = true;
-	FastLED.show();
-	// Every pixel, not just the one the encoder happens to be parked on.
-	//
-	// Checking leds[currentRingLED] alone was only ever accidentally
-	// right: a strike fills the whole ring, so that pixel is the last to
-	// reach zero. lightSingle() does not -- it fills DarkBlue and lights
-	// one pixel white, and DarkBlue is not zero either, so a fade that
-	// started there declared itself finished while the rest of the ring
-	// was still lit. Nothing then calls fadeStep() again, because
-	// ringFading is cleared, so the ring would be left stuck mid-fade with
-	// no state able to finish it.
-	bool dark = true;
+bool samePaint(const RingPaint& a, const RingPaint& b) {
+	return a.baseLevel == b.baseLevel &&
+		   a.highlightLevel == b.highlightLevel &&
+		   a.highlightIndex == b.highlightIndex &&
+		   a.highlightCount == b.highlightCount;
+}
+
+// Write the core's answer into the buffer. Absolute levels, not
+// increments -- the other half of why a fade can no longer strand: there
+// is no running total here to fall out of step with.
+void pushPaint(const RingPaint& p) {
+	if (hasPushed && samePaint(p, lastPushed)) {
+		return;
+	}
+	const uint8_t base = static_cast<uint8_t>(
+		(static_cast<uint32_t>(kBaseBlue) * p.baseLevel) / 255);
 	for (int i = 0; i < NUM_RING_LEDS; ++i) {
-		if (leds[i].r + leds[i].g + leds[i].b != 0) {
-			dark = false;
-			break;
+		leds[i] = CRGB(0, 0, base);
+	}
+	for (int i = 0; i < p.highlightCount; ++i) {
+		const int idx = p.highlightIndex + i;
+		if (idx < 0 || idx >= NUM_RING_LEDS) {
+			continue;
 		}
+		leds[idx] = CRGB(p.highlightLevel, p.highlightLevel, p.highlightLevel);
 	}
-	if (dark) {
-		ringFading = ringLit = false;
-		return true;
-	}
-	return false;
+	FastLED.show();
+	lastPushed = p;
+	hasPushed = true;
 }
 
-// See lighting.h for the contract. The proximity hold is checked first
-// because it overrides the idle timeout: a hand at the knob means the
-// operator is still engaged, so the ring stays on and the deadline is
-// pushed out rather than allowed to fire.
+}  // namespace
+
+// See lighting.h for the contract. Returns true on the single tick a fade
+// completed, which is the cue for an abandoned browse to revert.
 bool lighting_loop() {
-	// The select strike, ahead of every other ring state. It is a flash
-	// over whatever was happening -- including a fade already under way,
-	// which is the normal case, because the rotary click paints the ring
-	// on its way in and a commit immediately afterwards would
-	// otherwise be turning it off as it arrives.
-	if (ringFlashUntilMs != 0) {
-		if ((int32_t)(millis() - ringFlashUntilMs) < 0) {
-			ringStrikeStep();
-			return false;
-		}
-		// Strike over. The interaction is genuinely over now, so this
-		// is the force-off the strike was standing in front of.
-		ringFlashUntilMs = 0;
-		lightRingForceOff();
-		return fadeStep();
-	}
-	if (ringFading) {
-		return fadeStep();
-	}
-	if (ringProximityHold) {
-		ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
-		return false;
-	}
-	// The strip is still unwinding an abandoned run, one fading LED at a
-	// time. Giving up now would call ledstring_browseClear(), and the
-	// reset takes the run with it -- so the strip would empty in one step
-	// instead of fading, which is the exact thing the retreat exists to
-	// avoid.
-	//
-	// The countdown is *held*, not shortened: it is pushed out for as
-	// long as the retreat runs, so the operator gets the full idle
-	// timeout after the last LED goes rather than whatever was left of
-	// it. Same deferral, and same reason, as the proximity hold above.
-	if (ledstring_fillRetreatInProgress()) {
-		ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
-		return false;
-	}
-	const bool deadlineExpired =
-		ledFeel.ringIdleMs != 0 && ringLit &&
-		(int32_t)(millis() - ringHoldUntilMs) >= 0;
-	if (ringFadeRequested || deadlineExpired) {
-		ringFadeRequested = false;
-		return fadeStep();
-	}
-	return false;
+	// The strip still unwinding an abandoned run holds the ring. Giving
+	// up there would call ledstring_browseClear(), and the reset takes
+	// the run with it -- so the strip would empty in one step instead of
+	// fading, which is the exact thing the retreat exists to avoid.
+	const RingUpdate u = retroroom_core::ringTick(
+		ringState, millis(), ringConfig(), ledstring_fillRetreatInProgress());
+	pushPaint(u.paint);
+	return u.fadeCompleted;
 }
 
 void lightRingSetProximityHold(bool held) {
-	if (held) {
-		ringProximityHold = true;
-		// A new approach supersedes any fade the departure just started.
-		ringFadeRequested = false;
-		lightSingle(currentRingLED);
-	} else {
-		ringProximityHold = false;
-		// Hand has left, so the interaction is over. Fade now rather
-		// than making the operator wait out the full idle timeout after
-		// they have already taken their hand away.
-		ringFadeRequested = true;
-	}
+	// The pad's *reading*, not a change: the core detects the edges
+	// itself. Passing an edge instead would let the two disagree about
+	// what counted as one, which is precisely how the old commit cleared
+	// the ring's hold without clearing the pad's memory of it -- and the
+	// next edge then resurrected a hold the operator had ended.
+	retroroom_core::ringProximity(ringState, millis(), held);
 }
 
 void lightRingSelectStrike() {
-	if (ledFeel.ringFlashMs <= 0) {
-		ringFlashUntilMs = 0;
-		lightRingForceOff();
-		return;
-	}
-	ringFlashUntilMs = millis() + (uint32_t)ledFeel.ringFlashMs;
-	ringStrikeStep();
+	retroroom_core::ringCommit(ringState, millis(), ringConfig());
 }
 
-void lightRingForceOff() {
-	// Cancel any hold first: an explicit select outranks a hand that may
-	// still be resting on the pad.
-	ringProximityHold = false;
-	ringFadeRequested = true;
+void ringLEDNext() {
+	retroroom_core::ringDetent(ringState, millis(), ringConfig(), 1);
+}
+
+void ringLEDPrevious() {
+	retroroom_core::ringDetent(ringState, millis(), ringConfig(), -1);
 }
 
 void lighting_init() {
 	// FastLED 3.10+ on RP2040 / RP2350 (the rpcommon PIO backend
 	// transparently supports both chips). The addLeds clockless helper
 	// signature that binds to a 3-arg `<CHIPSET, DATA_PIN, RGB_ORDER>`
-	// call is the one the upstream examples use, and it binds cleanly
-	// to WS2812B (which is `template<uint8_t DATA_PIN, EOrder RGB_ORDER>
-	// class WS2812B : public WS2812Controller800Khz<DATA_PIN, RGB_ORDER>`).
-	// GRB is what WS2812 / NeoPixel / the ring on DATA_PIN expect.
+	// call is the one the upstream examples use, and it binds cleanly to
+	// WS2812B (which is `template<uint8_t DATA_PIN, EOrder RGB_ORDER>
+	// class WS2812B : public ClocklessController<800KHz, DATA_PIN,
+	// RGB_ORDER>`). GRB is what WS2812 / NeoPixel / the ring on DATA_PIN
+	// expect.
 	//
 	// DATA_PIN is #undef'd by lighting.h before FastLED.h is included
 	// (because FastLED's rp2040 backend uses DATA_PIN as a template
@@ -179,123 +163,14 @@ void lighting_init() {
 	FastLED.setBrightness(LED_BRIGHTNESS);
 	// Clear the ring at boot. The previous boot-time R/G/B smoke test was
 	// removed on session/merge-pico-json (per user request); the LED will
-	// stay dark until something (lightSingle, lightRing, lightCycleTick,
-	// etc.) drives it.
+	// stay dark until something drives it.
+	//
+	// The core's state is reset here rather than left to its
+	// initialisers: lighting_init() is the ring's start of day, and the
+	// two should not be able to disagree about it.
+	ringState = RingState();
+	lastPushed = RingPaint();
+	hasPushed = false;
 	fill_solid(leds, NUM_RING_LEDS, CRGB::Black);
 	FastLED.show();
-}
-
-// Continuous RGB-cycle smoke test for the YD-RP2040 onboard WS2812.
-// Called from loop() on the pico_yd env (and harmless on the other Pico
-// envs since FastLED.show() is cheap). Cycles red -> green -> blue with
-// a soft crossfade so the PIO driver is repeatedly exercised at boot-time
-// cadence. Returns nothing; uses static state to track current color and
-// last update tick.
-//
-// lightCycleEnabled defaults true and nothing in the current build
-// toggles it. When disabled, lightCycleTick() blacks out the LED strip
-// and returns immediately; the FastLED PIO driver stays initialized but
-// no frames are pushed.
-//
-// NOTE: this is a temporary smoke-test helper. Once the StackSelector
-// perfboard lands and the rotary encoder drives ringLEDNext / ringLEDPrevious,
-// this function should be removed (or gated on a build flag).
-static bool lightCycleEnabled = true;
-static int lightCyclePhase = 0;
-static unsigned long lightCycleLastUpdate = 0;
-static bool lightCycleNeedsBlack = false;
-
-bool lightCycleIsEnabled() { return lightCycleEnabled; }
-void lightCycleToggle() {
-	// No current caller. If this is rebound to a button, note that
-	// EasyButton's onPressed() fires on the RELEASE edge, not the press.
-	lightCycleEnabled = !lightCycleEnabled;
-	Serial.print("USR toggle -> lightCycle ");
-	Serial.println(lightCycleEnabled ? "ON" : "OFF");
-	if (!lightCycleEnabled) {
-		// Force the strip to black on the next tick and reset the phase
-		// so re-enabling starts cleanly from red.
-		lightCycleNeedsBlack = true;
-		lightCyclePhase = 0;
-		lightCycleLastUpdate = 0;
-	}
-}
-
-void lightCycleTick() {
-	const unsigned long cyclePeriodMs = 1000;  // 1 second per color
-
-	if (!lightCycleEnabled) {
-		// Push one black frame after a toggle-off, then idle until
-		// the user re-enables.
-		if (lightCycleNeedsBlack) {
-			fill_solid(leds, NUM_RING_LEDS, CRGB::Black);
-			FastLED.show();
-			lightCycleNeedsBlack = false;
-			Serial.println("lightCycle: strip cleared");
-		}
-		return;
-	}
-
-	unsigned long now = millis();
-	if (now - lightCycleLastUpdate < cyclePeriodMs) {
-		return;
-	}
-	lightCycleLastUpdate = now;
-
-	lightCyclePhase = (lightCyclePhase + 1) % 3;
-	switch (lightCyclePhase) {
-	case 0:
-		fill_solid(leds, NUM_RING_LEDS, CRGB::Red);
-		Serial.println("lightCycle: red");
-		break;
-	case 1:
-		fill_solid(leds, NUM_RING_LEDS, CRGB::Green);
-		Serial.println("lightCycle: green");
-		break;
-	case 2:
-		fill_solid(leds, NUM_RING_LEDS, CRGB::Blue);
-		Serial.println("lightCycle: blue");
-		break;
-	}
-	FastLED.show();
-}
-
-void lightSingle (int led) {
-	// Serial.print("Lit pixel #");
-	// Serial.println(currentRingLED);
-	// The ring has fewer pixels than the console list may have entries
-	// (NUM_RING_LEDS vs HowManyConsoles()), and this is called with a
-	// console index, so clamp rather than write past the end of leds[].
-	if (led < 0) {
-		led = 0;
-	}
-	if (led > NUM_RING_LEDS - 1) {
-		led = NUM_RING_LEDS - 1;
-	}
-	fill_solid(leds, NUM_RING_LEDS, CRGB::DarkBlue);
-	// fill_rainbow(leds,NUM_LEDS,50,32);
-	// fadeLightBy(leds,NUM_LEDS,150);
-	leds[led] = CRGB::White;
-	FastLED.show();
-	// Arm the off-switch here, at the single choke point. Anything that
-	// repaints the ring also schedules its expiry, which is what makes
-	// "lit with no way to go dark" unreachable. A repaint also cancels a
-	// fade that was already under way -- turning the encoder mid-fade is
-	// the operator actively using the control, not a reason to go dark.
-	ringLit = true;
-	ringFading = false;
-	ringFadeRequested = false;
-	ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
-}
-
-void ringLEDNext() {
-	currentRingLED++;
-	if (currentRingLED > NUM_RING_LEDS-1) currentRingLED = 0;
-	lightSingle(currentRingLED);
-}
-
-void ringLEDPrevious() {
-	if (currentRingLED == 0) currentRingLED = NUM_RING_LEDS-1;
-	else currentRingLED--;
-	lightSingle(currentRingLED);
 }

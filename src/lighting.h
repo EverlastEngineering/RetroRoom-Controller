@@ -26,33 +26,31 @@
 
 #if defined(HAS_LEDS)
 extern void lighting_init();
-// Advances the ring fade, and decides when the fade starts. Returns
-// true on the single tick where a fade completed, which is the cue for
-// the browsed cursor to revert to the selected console.
+// Advance the ring one tick. Returns true on the single tick where a
+// fade completed, which is the cue for the browsed cursor to revert to
+// the selected console.
 extern bool lighting_loop();
-// Holds the ring lit while a hand is at the knob (the capacitive
-// proximity pad), suppressing the idle timeout. Releasing the hold also
-// expires the timeout immediately rather than waiting it out.
+// Report the proximity pad's current reading. A hand at the knob holds
+// the ring lit and suppresses the idle timeout; the hand leaving starts a
+// fade immediately rather than waiting the timeout out.
+//
+// The argument is the pad's *state*, not an edge: lib/RingPaint detects
+// the edges itself, so there is one answer to "did the hand just arrive"
+// rather than two that can disagree.
 extern void lightRingSetProximityHold(bool held);
-// Starts the fade now, regardless of the idle timeout. Used on select,
-// where the interaction is over and the ring should not linger.
-extern void lightRingForceOff();
-// A commit: one strike of the whole ring, then the force-off above. This
-// is the call every selection path should make -- selectConsole() is the
+// A commit: one strike of the whole ring, then the force-off. This is
+// the call every selection path should make -- selectConsole() is the
 // single commit point, so putting the strike here covers the rotary
 // press, NEXT/PREV, /next, /prev and the post-boot restore at once.
-// RING_SELECT_FLASH_MS = 0 makes it the plain force-off.
+// led.ringFlashMs = 0 makes it the plain force-off with no flash.
+//
+// A commit also ends the interaction even if a hand is still resting on
+// the pad, and it stays ended until the hand lifts and returns.
 extern void lightRingSelectStrike();
-extern void lightSingle(int led);
+// A rotary detent. Moves the ring's free-running spinner pixel, which is
+// not a console index and never has been.
 extern void ringLEDNext();
 extern void ringLEDPrevious();
-// Continuous smoke-test cycle (red -> green -> blue). Used by loop() on
-// the pico_yd env to exercise the FastLED PIO driver after lighting_init().
-// Returns immediately if the cycle period hasn't elapsed.
-extern void lightCycleTick();
-// Query / toggle the cycle. Not currently bound to any control.
-extern bool lightCycleIsEnabled();
-extern void lightCycleToggle();
 #endif
 
 #endif

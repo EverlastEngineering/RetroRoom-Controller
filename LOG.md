@@ -5,7 +5,95 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
-## 2026-09-29T00:00:00.000Z — Gated rotary browse with an LED-string blob, and the "above the selection" resting state
+## 2026-09-30T03:58:32.000Z — The selector ring moves to a pure core, and its brightness stops being history
+
+**Context:** `led.ringFlashMs` was set to 120 ms and to 640 ms on the
+same cabinet and produced the same observable behaviour: the ring took
+about four seconds to start going out, then one or two more to finish.
+`ringFlashMs` had not been ignored. The ring's fade was
+`fadeToBlackBy(leds, NUM_RING_LEDS, 1)` called once per main-loop
+iteration, so it took 255 loop iterations to reach black — several
+seconds on a loop busy with the network stack, the LCD and the strip. A
+520 ms difference inside a five-second event is invisible. Chasing it
+turned up two more, and then a third on the same theme.
+
+The three, in the order they bit:
+
+1. The fade's duration was a **count of loop iterations**, not a length
+   of time, so it changed with system load and with every unrelated edit
+   to `loop()`.
+2. The brightness lived in the CRGB buffer as **accumulated decrements**.
+   `lightSingle()` set `ringFading = false` on every re-light, which
+   cancelled an in-flight fade with no way to resume it — and because
+   the partial progress lived in those same decrements, the ring was
+   stranded part-dimmed with no state able to finish it. The symptom was
+   a ring that "goes dim but never goes out", on both the commit strike
+   and the proximity glow. The slow fade had been hiding this: with a
+   five-second fade nothing visibly completed, so nothing looked stuck.
+3. A commit cleared the ring's proximity hold in
+   `lightRingForceOff()` but not the pad's last reading in
+   `controls.cpp`, so the two disagreed and the next pad edge
+   resurrected a hold the operator had already ended.
+
+Underneath all three: the ring's state was six mutable statics, each
+function partially updating them. Answering "what is the ring doing"
+meant cross-referencing five functions, which is why diagnosis took
+three attempts and two of them were wrong.
+
+**Decision:**
+
+1. **`retroroom_core` in `lib/RingPaint`, with a single `RingMode`.**
+   One enum — `DARK / IDLE / PROXIMITY / FLASH / FADING` — replaces
+   `ringLit`, `ringFading`, `ringProximityHold`, `ringFadeRequested`,
+   `ringHoldUntilMs` and `ringFlashUntilMs`. Five booleans that can
+   disagree with each other is why the file was hard to read; one enum
+   cannot. Same shape as `lib/LedStringPaint` and for the same reason:
+   `test_native` builds only `lib/`, so a decision in `src/` is a
+   decision nothing can test.
+
+2. **Brightness is a pure function of `(mode, elapsed)`, never
+   accumulated.** The load-bearing choice. A fade snapshots the
+   `RingPaint` it is ramping down from and recomputes the level every
+   tick, so there is no running total to lose and no pixel buffer to
+   strand. Interrupting a fade costs at most the few milliseconds since
+   the last tick. This is less a bug fix than making the bug
+   unrepresentable, which is why it is the decision and not the others.
+
+3. **A fade's clock starts at the deadline, not at the tick that
+   noticed.** Coming out of a strike the fade begins at
+   `modeStartMs + flashMs`, not "now". Without this a late tick restarts
+   the fade and its duration quietly goes back to depending on loop rate
+   — reintroducing bug (1) through a different door. It is one extra
+   argument to `beginFade`, and
+   `test_brightness_depends_on_elapsed_time_not_on_tick_count` holds it.
+
+4. **The shell keeps three jobs: the buffer, the config mapping, and the
+   edges.** `src/lighting.cpp` is 176 lines, most of them comments, and
+   holds no ring state variable. If one is needed there, it belongs in
+   the core.
+
+5. **The pad's reading and the pad's accepted approach are separate
+   fields.** `proximityNear` is the hardware, `proximityEngaged` is
+   whether an approach has been honoured. A commit clears the second and
+   not the first, so a hand that never leaves cannot resurrect the hold,
+   but lifting and returning genuinely does. The shell now passes the
+   pad's *state* rather than an edge, so there is one answer to "did the
+   hand just arrive" instead of two that can disagree.
+
+**Consequences:** `test/test_ring` adds 20 cases covering completion
+under interruption, brightness independent of tick count, the strike's
+extent and duration, the commit/proximity interaction, `idleMs = 0`, the
+retreat hold, spinner wrap and `millis()` rollover. All three shipped
+bugs are in there. `lightSingle()`, `lightRingForceOff()` and the
+`lightCycle*` smoke-test trio are gone — their concepts are replaced, or
+they were writing `leds[]` behind the core's back, and nothing outside
+`lighting.cpp` referenced any of them.
+
+Not recorded here: where the fade duration lives. `kRingFadeMs` is a
+constant in `lighting.cpp` rather than a `led` option, because it is a
+fixed visual detail of the ring rather than a feel the operator tunes.
+That is a judgement call and it is reversible.
+
 
 **Context:** the rotary moved the browse cursor one console per
 detent, and the only feedback about where a click would land was a
