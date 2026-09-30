@@ -90,6 +90,9 @@ std::vector<Console> consoles;
 // The shelf extents from the config's optional `shelves` block. Empty
 // is the normal case and is not an error.
 std::vector<Shelf> shelfBounds;
+// Defaults first, so anything that reads this before the config is
+// loaded gets the same numbers the config would have given it.
+retroroom_core::LedFeel ledFeel = retroroom_core::defaultLedFeel();
 
 void addConsole(const Console& console) {
 	consoles.push_back(console);
@@ -202,6 +205,20 @@ void consoleDefinitions() {
 		Serial.println(result.error.c_str());
 		return;
 	}
+	// The strip's feel, and every clamp the parser had to apply. The
+	// warnings are printed rather than swallowed: a value in the file
+	// that is not the value on the strip is invisible otherwise, and
+	// that is exactly how a console sat clamped to a third of its
+	// declared width without anybody noticing.
+	ledFeel = result.feel;
+	for (const std::string& w : result.warnings) {
+		Serial.print("console config: ");
+		Serial.println(w.c_str());
+	}
+	Serial.print("LED string: ");
+	Serial.print(ledFeel.totalLeds);
+	Serial.println(" LEDs");
+
 	lcdBacklightOffAfterMs = result.lcdBacklightOffAfterMs;  // RAM-only; loaded per boot
 	for (const auto& c : result.consoles) {
 		addConsole(c);

@@ -91,5 +91,8 @@
             "fromLed": 26,
             "toLed": 63
         }
-    ]
+    ],
+    "led": {
+        "totalLeds": 64
+    }
 }

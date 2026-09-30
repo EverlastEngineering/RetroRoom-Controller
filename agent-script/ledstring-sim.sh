@@ -44,15 +44,18 @@ scenario="${1:-all}"
 out="$(mktemp -t ledstringsim)"
 trap 'rm -f "$out"' EXIT
 
-# -I on both the lib and src: the simulator includes <LedStringPaint.h>
-# and "configuration.h". src/configuration.h guards its board-specific
-# blocks behind ARDUINO_RASPBERRY_PI_* symbols, so a host build gets
-# only the LEDSTRING_* block.
+# -I on the libs and src: the simulator includes <LedStringPaint.h>,
+# <ConsoleConfig.h> and "configuration.h". LedFeelDefaults.cpp comes
+# along so the feel values are the firmware's own defaults, read from
+# the file that owns them -- a second copy here is a second set of
+# numbers that will eventually disagree with the device.
 c++ -std=c++11 -O0 -Wall -Wextra \
     -I "$root/lib/LedStringPaint/src" \
+    -I "$root/lib/ConsoleConfig/src" \
     -I "$root/src" \
     -o "$out" \
     "$here/ledstring-sim.cpp" \
-    "$root/lib/LedStringPaint/src/LedStringPaint.cpp"
+    "$root/lib/LedStringPaint/src/LedStringPaint.cpp" \
+    "$root/lib/ConsoleConfig/src/LedFeelDefaults.cpp"
 
 "$out" "$scenario"

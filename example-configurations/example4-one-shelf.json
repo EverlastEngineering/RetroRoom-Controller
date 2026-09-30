@@ -3,19 +3,43 @@
         "SVideo": "0x030",
         "Front": "0x830",
         "Video": "0x430",
-        "YUV":   "0xE30"
+        "YUV": "0xE30"
     },
     "consoleNames": {
-        "NES":  "Nintendo Entertainment System",
-        "SMS":  "Sega Master System",
+        "NES": "Nintendo Entertainment System",
+        "SMS": "Sega Master System",
         "XBOX": "Microsoft Xbox"
     },
     "consoles": [
-        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 2, "shelf": 0},
-        {"id": "SMS",  "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 10, "ledWidth": 2, "shelf": 0},
-        {"id": "XBOX", "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 20, "ledWidth": 2, "shelf": 0}
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 1,
+            "ledWidth": 2,
+            "shelf": 0
+        },
+        {
+            "id": "SMS",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 10,
+            "ledWidth": 2,
+            "shelf": 0
+        },
+        {
+            "id": "XBOX",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 20,
+            "ledWidth": 2,
+            "shelf": 0
+        }
     ],
     "lcd": {
         "backlightOffAfterMs": 2000
+    },
+    "led": {
+        "totalLeds": 64
     }
 }

@@ -32,7 +32,7 @@
             "tvInput": "YUV",
             "selectorPosition": 3,
             "ledPosition": 55,
-            "ledWidth": 9,
+            "ledWidth": 39,
             "shelf": 0
         }
     ],
@@ -40,10 +40,16 @@
         {
             "id": 0,
             "fromLed": 0,
-            "toLed": 63
+            "toLed": 117
         }
     ],
     "lcd": {
         "backlightOffAfterMs": 2000
+    },
+    "led": {
+        "totalLeds": 118,
+        "detentsPerStep": 5,
+        "explodeMs": 400,
+        "igniteMs": 200
     }
 }

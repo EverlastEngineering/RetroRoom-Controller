@@ -3,19 +3,43 @@
         "SVideo": "0x030",
         "Front": "0x830",
         "Video": "0x430",
-        "YUV":   "0xE30"
+        "YUV": "0xE30"
     },
     "consoleNames": {
-        "NES":  "Nintendo NES",
+        "NES": "Nintendo NES",
         "SNES": "Super Nintendo",
-        "GEN":  "Sega Genesis"
+        "GEN": "Sega Genesis"
     },
     "consoles": [
-        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1, "tagline": "Now you're playing with power!"},
-        {"id": "SNES", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5, "tagline": "Now you're playing with power. Super Power!"},
-        {"id": "GEN",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 13, "ledWidth": 5, "tagline": "Genesis does what Nintendon't!"}
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 1,
+            "ledWidth": 1,
+            "tagline": "Now you're playing with power!"
+        },
+        {
+            "id": "SNES",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 7,
+            "ledWidth": 5,
+            "tagline": "Now you're playing with power. Super Power!"
+        },
+        {
+            "id": "GEN",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 13,
+            "ledWidth": 5,
+            "tagline": "Genesis does what Nintendon't!"
+        }
     ],
     "lcd": {
         "backlightOffAfterMs": 30000
+    },
+    "led": {
+        "totalLeds": 64
     }
 }

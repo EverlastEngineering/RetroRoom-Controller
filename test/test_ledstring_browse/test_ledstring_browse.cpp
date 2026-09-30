@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <LedStringPaint.h>
 #include <unity.h>
-#include "configuration.h"
+#include <ConsoleConfig.h>  // defaultLedFeel(): the firmware's own defaults
 
 using retroroom_core::computeBlobWindow;
 using retroroom_core::computeKeepEnd;
@@ -1575,18 +1575,21 @@ static void test_the_travel_is_the_colour_it_hands_over_to(void) {
 	//
 	// The values are compared rather than hard-coded, so retuning the
 	// proposal does not silently reintroduce the flip.
-	TEST_ASSERT_EQUAL_MESSAGE(LEDSTRING_COLOR_PROPOSAL_R,
-							  LEDSTRING_COLOR_TRAVEL_R,
+	const retroroom_core::LedFeel real = retroroom_core::defaultLedFeel();
+	TEST_ASSERT_EQUAL_MESSAGE(real.colorR[retroroom_core::kRoleProposal],
+							  real.colorR[retroroom_core::kRoleTravel],
 							  "the travel block must not change hue on handover");
-	TEST_ASSERT_EQUAL(LEDSTRING_COLOR_PROPOSAL_G, LEDSTRING_COLOR_TRAVEL_G);
-	TEST_ASSERT_EQUAL(LEDSTRING_COLOR_PROPOSAL_B, LEDSTRING_COLOR_TRAVEL_B);
+	TEST_ASSERT_EQUAL(real.colorG[retroroom_core::kRoleProposal],
+					real.colorG[retroroom_core::kRoleTravel]);
+	TEST_ASSERT_EQUAL(real.colorB[retroroom_core::kRoleProposal],
+					real.colorB[retroroom_core::kRoleTravel]);
 	// And both have to be at the same *brightness* as the pulse peak,
 	// or the handover is a step in luminance even with the hue fixed.
 	StripFrame f = configuredFrame(StripEffect::PREVIEW);
 	f.from = kNes;
 	f.to = kNes;
-	f.travelPct = LEDSTRING_SELF_PCT;
-	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
+	f.travelPct = real.selfPct;
+	f.pulseMaxPct = real.pulseMaxPct;
 	TEST_ASSERT_EQUAL_MESSAGE(f.pulseMaxPct, f.travelPct,
 							  "the block must arrive at the pulse's peak brightness");
 }

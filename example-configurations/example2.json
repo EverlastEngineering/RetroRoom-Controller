@@ -3,22 +3,51 @@
         "SVideo": "0x030",
         "Front": "0x830",
         "Video": "0x430",
-        "YUV":   "0xE30"
+        "YUV": "0xE30"
     },
     "consoleNames": {
-        "NES":  "Nintendo Entertainment System",
-        "SMS":  "Sega Master System",
+        "NES": "Nintendo Entertainment System",
+        "SMS": "Sega Master System",
         "XBOX": "Microsoft Xbox",
         "MAME": "MAME Arcade Cabinet"
-        
     },
     "consoles": [
-        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1, "tagline": "Now you're playing with power!"},
-        {"id": "SMS", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5, "tagline": "The challenge will always be there."},
-        {"id": "XBOX",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 17, "ledWidth": 5, "tagline": "It's good to play together."},
-        {"id": "MAME", "tvInput": "SVideo","selectorPosition": 4, "ledPosition": 27, "ledWidth": 15}
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 1,
+            "ledWidth": 1,
+            "tagline": "Now you're playing with power!"
+        },
+        {
+            "id": "SMS",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 7,
+            "ledWidth": 5,
+            "tagline": "The challenge will always be there."
+        },
+        {
+            "id": "XBOX",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 17,
+            "ledWidth": 5,
+            "tagline": "It's good to play together."
+        },
+        {
+            "id": "MAME",
+            "tvInput": "SVideo",
+            "selectorPosition": 4,
+            "ledPosition": 27,
+            "ledWidth": 15
+        }
     ],
     "lcd": {
         "backlightOffAfterMs": 30000
+    },
+    "led": {
+        "totalLeds": 64
     }
 }

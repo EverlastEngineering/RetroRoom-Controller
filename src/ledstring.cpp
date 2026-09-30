@@ -16,13 +16,19 @@
 #include "consoles.h"        // for CurrentConsole() — held in src/consoles.cpp
 
 // Independent of the ring's CRGB leds[NUM_LEDS] in src/lighting.cpp.
-// Sized at NUM_SELECTED_CONSOLE_LED_STRING_LEDS (64 today, per
-// src/configuration.h) so the buffer is large enough for the largest
-// example config's MAME 15-LED-wide block at offset 27 + 15 = 42.
-CRGB selectedLeds[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
+// The buffer is sized at the *build* capacity, not the configured
+// length, and FastLED is told the configured length. So the allocation
+// is fixed and the string can be a different length without touching
+// anything but the config -- which is the whole point of putting
+// totalLeds in the JSON. The spare pixels are never written and never
+// clocked out.
+//
+// A heap buffer sized at load would avoid the slack, and would also
+// make a malformed length a way to write off the end of the heap.
+CRGB selectedLeds[retroroom_core::kLedStripCapacity];
 
-// CRGB color constants for the strip. The lit color is no longer a
-// constant here: it is LEDSTRING_COLOR_* in src/configuration.h, scaled
+// CRGB colour constants for the strip. The lit colour is no longer a
+// constant here: it is a colour in the config's `led` block, scaled
 // per-frame by whatever is being drawn (resting stack, blob, pulse,
 // twinkle). Only the off color stays literal.
 static const CRGB LEDSTRING_OFF_COLOR = CRGB::Black;
@@ -64,11 +70,11 @@ retroroom_core::SelectionEffectConfig effectConfig() {
 	// The total is the sum, not a third number. Two phases that each
 	// think they own the end of the effect is how the loop and the
 	// config drift apart.
-	c.explodeMs = LEDSTRING_SELECT_EXPLODE_MS;
-	c.igniteMs = LEDSTRING_SELECT_IGNITE_MS;
+	c.explodeMs = ledFeel.explodeMs;
+	c.igniteMs = ledFeel.igniteMs;
 	c.totalMs = c.explodeMs + c.igniteMs;
-	c.abovePct = LEDSTRING_ABOVE_PCT;
-	c.selfPct = LEDSTRING_SELF_PCT;
+	c.abovePct = ledFeel.abovePct;
+	c.selfPct = ledFeel.selfPct;
 	return c;
 }
 
@@ -82,22 +88,22 @@ retroroom_core::RolePalette buildPalette() {
 	retroroom_core::RolePalette p;
 	p.colors[static_cast<int>(retroroom_core::LedRole::OFF)] = {0, 0, 0};
 	p.colors[static_cast<int>(retroroom_core::LedRole::STACK)] = {
-		LEDSTRING_COLOR_STACK_R, LEDSTRING_COLOR_STACK_G,
-		LEDSTRING_COLOR_STACK_B};
+		ledFeel.colorR[retroroom_core::kRoleStack], ledFeel.colorG[retroroom_core::kRoleStack],
+		ledFeel.colorB[retroroom_core::kRoleStack]};
 	p.colors[static_cast<int>(retroroom_core::LedRole::LEAVING)] = {
-		LEDSTRING_COLOR_LEAVING_R, LEDSTRING_COLOR_LEAVING_G,
-		LEDSTRING_COLOR_LEAVING_B};
+		ledFeel.colorR[retroroom_core::kRoleLeaving], ledFeel.colorG[retroroom_core::kRoleLeaving],
+		ledFeel.colorB[retroroom_core::kRoleLeaving]};
 	p.colors[static_cast<int>(retroroom_core::LedRole::FILL)] = {
-		LEDSTRING_COLOR_FILL_R, LEDSTRING_COLOR_FILL_G, LEDSTRING_COLOR_FILL_B};
+		ledFeel.colorR[retroroom_core::kRoleFill], ledFeel.colorG[retroroom_core::kRoleFill], ledFeel.colorB[retroroom_core::kRoleFill]};
 	p.colors[static_cast<int>(retroroom_core::LedRole::TRAVEL)] = {
-		LEDSTRING_COLOR_TRAVEL_R, LEDSTRING_COLOR_TRAVEL_G,
-		LEDSTRING_COLOR_TRAVEL_B};
+		ledFeel.colorR[retroroom_core::kRoleTravel], ledFeel.colorG[retroroom_core::kRoleTravel],
+		ledFeel.colorB[retroroom_core::kRoleTravel]};
 	p.colors[static_cast<int>(retroroom_core::LedRole::PROPOSAL)] = {
-		LEDSTRING_COLOR_PROPOSAL_R, LEDSTRING_COLOR_PROPOSAL_G,
-		LEDSTRING_COLOR_PROPOSAL_B};
+		ledFeel.colorR[retroroom_core::kRoleProposal], ledFeel.colorG[retroroom_core::kRoleProposal],
+		ledFeel.colorB[retroroom_core::kRoleProposal]};
 	p.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] = {
-		LEDSTRING_COLOR_SELECTED_R, LEDSTRING_COLOR_SELECTED_G,
-		LEDSTRING_COLOR_SELECTED_B};
+		ledFeel.colorR[retroroom_core::kRoleSelected], ledFeel.colorG[retroroom_core::kRoleSelected],
+		ledFeel.colorB[retroroom_core::kRoleSelected]};
 	return p;
 }
 
@@ -153,16 +159,16 @@ retroroom_core::LedRange windowFor(int idx) {
 	}
 	const retroroom_core::Console& c = consoles[idx];
 	return retroroom_core::computeConsoleWindow(
-		c.led_position, c.led_width, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
+		c.led_position, c.led_width, ledFeel.totalLeds);
 }
 
 // Upper bound on how many console windows we will hand to a frame as
 // "the ones above". The strip physically cannot hold more than
-// NUM_SELECTED_CONSOLE_LED_STRING_LEDS non-empty windows, and the fixed
-// array keeps the frame's layout allocation-free. Sized off the strip
-// rather than a magic number so a longer strip cannot silently drop a
-// console.
-enum { kMaxAboveWindows = NUM_SELECTED_CONSOLE_LED_STRING_LEDS };
+// above list is bounded by the number of *consoles*, not the number of
+// LEDs: there can only ever be one entry per console. Sizing it off
+// the strip happened to work because there were never more consoles
+// than LEDs, which is a coincidence and not a relationship.
+enum { kMaxAboveWindows = 64 };
 
 // Scratch for the windows above, resolved once per resting or
 // selection frame. See collectAboveFor() for why it is a list and not a
@@ -217,7 +223,7 @@ retroroom_core::LedRange shelfBoundsFor(int idx) {
 	// expand into at all. That is not what a shelf is: there is bare
 	// string past the end console, and using it is the whole point of
 	// declaring extents.
-	return {0, NUM_SELECTED_CONSOLE_LED_STRING_LEDS};
+	return {0, ledFeel.totalLeds};
 }
 
 // Turn a resolved frame into pixels and push it to the wire. This is
@@ -239,9 +245,12 @@ uint32_t worstFrameUs = 0;
 // logic, one of which nobody would ever run.
 void pushFrame(const retroroom_core::StripFrame& frame) {
 	const uint32_t t0 = micros();
-	retroroom_core::StripPixel px[NUM_SELECTED_CONSOLE_LED_STRING_LEDS];
+	// Static, and sized at the build capacity: on the stack this is
+	// several kilobytes on every single frame, and nothing here is
+	// reentrant -- the paint functions are only ever called from loop().
+	static retroroom_core::StripPixel px[retroroom_core::kLedStripCapacity];
 	retroroom_core::computeStripFrame(frame, px);
-	for (int i = 0; i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS; ++i) {
+	for (int i = 0; i < ledFeel.totalLeds; ++i) {
 		const retroroom_core::LedColor c = retroroom_core::resolvePixel(frame, px[i]);
 		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r),
 							  static_cast<uint8_t>(c.g),
@@ -261,7 +270,7 @@ void pushFrame(const retroroom_core::StripFrame& frame) {
 
 // Print what the last animation actually achieved, so the frame rate is
 // set from the board rather than guessed at. See the comment on
-// LEDSTRING_FRAME_INTERVAL_MS in src/configuration.h.
+// ledFeel.frameIntervalMs in src/configuration.h.
 void reportFrameTiming() {
 	if (frameCount == 0) {
 		return;
@@ -283,27 +292,27 @@ void reportFrameTiming() {
 // filled in by the callers below.
 retroroom_core::StripFrame baseFrame() {
 	retroroom_core::StripFrame f;
-	f.totalLeds = NUM_SELECTED_CONSOLE_LED_STRING_LEDS;
-	f.abovePct = LEDSTRING_ABOVE_PCT;
-	f.selfPct = LEDSTRING_SELF_PCT;
-	f.fromPct = LEDSTRING_BROWSE_FROM_PCT;
-	f.toPct = LEDSTRING_BROWSE_TO_PCT;
-	f.blobPct = LEDSTRING_BLOB_PCT;
-	f.blobWidth = LEDSTRING_BLOB_WIDTH;
-	f.fillPct = LEDSTRING_FILL_PCT;
-	f.dimPct = LEDSTRING_DIM_PCT;
-	f.travelPct = LEDSTRING_SELF_PCT;
-	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
-	f.travelMs = LEDSTRING_TRAVEL_MS;
-	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	f.totalLeds = ledFeel.totalLeds;
+	f.abovePct = ledFeel.abovePct;
+	f.selfPct = ledFeel.selfPct;
+	f.fromPct = ledFeel.browseFromPct;
+	f.toPct = ledFeel.browseToPct;
+	f.blobPct = ledFeel.blobPct;
+	f.blobWidth = ledFeel.blobWidth;
+	f.fillPct = ledFeel.fillPct;
+	f.dimPct = ledFeel.dimPct;
+	f.travelPct = ledFeel.selfPct;
+	f.minFillLeds = ledFeel.fillMinLeds;
+	f.travelMs = ledFeel.travelMs;
+	f.travelPeakWidth = ledFeel.travelPeakWidth;
 	// The console that is actually selected, which stays dim through
 	// every browse state. Not the one the browse is on -- that is the
 	// whole distinction the role exists for.
 	f.activeWindow = windowFor(currentConsoleIndex);
 	f.palette = buildPalette();
-	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
-	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
-	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
+	f.pulseMinPct = ledFeel.pulseMinPct;
+	f.pulseMaxPct = ledFeel.pulseMaxPct;
+	f.pulsePeriodMs = ledFeel.pulseMs;
 	f.select = kEffect;
 	return f;
 }
@@ -396,7 +405,7 @@ int travelEntryFor(int from, int to) {
 void applyBrowsePath(retroroom_core::StripFrame& f, int from, int to) {
 	const retroroom_core::LedRange target = windowFor(to);
 	retroroom_core::computeTravelPath(windowFor(from), travelEntryFor(from, to),
-									 target, LEDSTRING_TRAVEL_SPARK_LEDS, f);
+									 target, ledFeel.travelSparkLeds, f);
 }
 
 // The knob-turn progression indicator.
@@ -428,16 +437,16 @@ void paintFilling() {
 	//
 	// Computed in permille so the LED being given back *dims* rather
 	// than being switched off -- see StripFrame::fillRetreatPermille.
-	if (LEDSTRING_FILL_RETREAT_DELAY_MS > 0 &&
-		LEDSTRING_FILL_RETREAT_STEP_MS > 0) {
+	if (ledFeel.fillRetreatDelayMs > 0 &&
+		ledFeel.fillRetreatStepMs > 0) {
 		const uint32_t quietMs = (uint32_t)(millis() - lastDetentMs);
 		const int runLeds = (f.fillLead > f.fillAnchor)
 								? f.fillLead - f.fillAnchor
 								: f.fillAnchor - f.fillLead;
-		if (quietMs > (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS) {
-			const uint32_t into = quietMs - (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS;
+		if (quietMs > (uint32_t)ledFeel.fillRetreatDelayMs) {
+			const uint32_t into = quietMs - (uint32_t)ledFeel.fillRetreatDelayMs;
 			int retreat = static_cast<int>((static_cast<long long>(into) * 1000) /
-										  (uint32_t)LEDSTRING_FILL_RETREAT_STEP_MS);
+										  (uint32_t)ledFeel.fillRetreatStepMs);
 			// Never withdraw more than the run holds. The core clamps as
 			// well, but clamping here keeps the frame honest for anything
 			// else that reads the retreat.
@@ -449,7 +458,7 @@ void paintFilling() {
 		// Started but not finished. Checked outside the quiet test so it
 		// also covers the run being exactly one LED long, where the
 		// retreat can finish inside a single frame.
-		fillRetreatInProgress = (quietMs > (uint32_t)LEDSTRING_FILL_RETREAT_DELAY_MS) &&
+		fillRetreatInProgress = (quietMs > (uint32_t)ledFeel.fillRetreatDelayMs) &&
 								(f.fillRetreatPermille < runLeds * 1000);
 	}
 	// The candidate keeps pulsing while the operator fills onward. It
@@ -519,7 +528,7 @@ void ledstring_fillRange(int fromInclusive, int toExclusive, CRGB color) {
 		return;
 	}
 	for (int i = fromInclusive; i < toExclusive; ++i) {
-		if (i >= 0 && i < NUM_SELECTED_CONSOLE_LED_STRING_LEDS) {
+		if (i >= 0 && i < ledFeel.totalLeds) {
 			selectedLeds[i] = color;
 		}
 	}
@@ -538,7 +547,7 @@ void ledstring_allOff() {
 	// operator would see the strip light up again on its way down to
 	// the reboot.
 	mode = StripMode::RESTING;
-	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
+	fill_solid(selectedLeds, ledFeel.totalLeds,
 			  LEDSTRING_OFF_COLOR);
 	FastLED.show();
 }
@@ -550,11 +559,11 @@ void ledstring_init() {
 	// its own show() cadence. On RP2350 the rp2040 PIO backend
 	// transparently supports this (rpcommon/platforms/arm/rp2040).
 	FastLED.addLeds<WS2812B, SELECTED_CONSOLE_LED_STRING_DATA, GRB>(
-		selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
+		selectedLeds, ledFeel.totalLeds);
 	// Push black on boot. The strip powers up dark; ledstring_setConsole()
 	// paints the active console's window after consoleDefinitions() lands
 	// its first console.
-	fill_solid(selectedLeds, NUM_SELECTED_CONSOLE_LED_STRING_LEDS,
+	fill_solid(selectedLeds, ledFeel.totalLeds,
 			  CRGB::Black);
 	FastLED.show();
 }
@@ -578,7 +587,7 @@ void ledstring_loop() {
 		return;
 	}
 	const uint32_t now = millis();
-	if ((uint32_t)(now - lastFrameMs) < LEDSTRING_FRAME_INTERVAL_MS) {
+	if ((uint32_t)(now - lastFrameMs) < ledFeel.frameIntervalMs) {
 		return;
 	}
 	lastFrameMs = now;
@@ -606,7 +615,7 @@ void ledstring_loop() {
 		// This is what makes it an animation instead of a readout.
 		const uint32_t elapsed = (uint32_t)(now - animStartMs);
 		paintTravel(elapsed);
-		if (elapsed >= LEDSTRING_TRAVEL_MS) {
+		if (elapsed >= ledFeel.travelMs) {
 			// Hand over to the pulsing preview. The last travel frame is
 			// already exactly the target window, so the handover is
 			// invisible.
@@ -626,7 +635,7 @@ void ledstring_loop() {
 			// following fill instead of restarting. The subtraction is
 			// deliberately allowed to wrap: elapsedMs is computed the
 			// same way, so the two agree either side of millis()' rollover.
-			animStartMs = now - (uint32_t)(LEDSTRING_PREVIEW_PULSE_MS / 2);
+			animStartMs = now - (uint32_t)(ledFeel.pulseMs / 2);
 		}
 		break;
 	}

@@ -17,6 +17,16 @@ extern std::vector<Console> consoles;
 // and that bare space at either end is what the commit animation
 // expands into.
 extern std::vector<Shelf> shelfBounds;
+// How the LED string looks and feels, from the config's optional `led`
+// block. Filled with the defaults before the config is even read, so it
+// is never in a half-parsed state, and the defaults live in exactly one
+// place -- lib/ConsoleConfig -- rather than beside the code that uses
+// them.
+//
+// src/consoles.cpp, controls.cpp, lighting.cpp and the LED-string shell
+// all read this rather than a #define each. That is the point: one
+// number, one home.
+extern retroroom_core::LedFeel ledFeel;
 // The *selected* console. Written only by a commit: the rotary click
 // (which moves it to browsedConsoleIndex first), selectConsole(),
 // advanceConsole(), rewindConsole() and the post-boot restore. Every

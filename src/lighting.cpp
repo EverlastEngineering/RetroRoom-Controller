@@ -1,5 +1,7 @@
 #include "lighting.h"
 #include "ledstring.h"
+#include "consoles.h"       // ledFeel: the ring's timings come from the config
+#include <ConsoleConfig.h>  // LedFeel: the strip's feel, parsed from the config
 
 
 
@@ -18,7 +20,7 @@ static bool ringFading = false;
 static bool ringProximityHold = false;
 // Set by an explicit request to go dark (a select, or the hand leaving
 // the pad) as opposed to the idle deadline expiring. Kept separate from
-// the deadline so that RING_HIGHLIGHT_IDLE_MS = 0 disables the *timeout*
+// the deadline so that ledFeel.ringIdleMs = 0 disables the *timeout*
 // without also disabling the explicit paths.
 static bool ringFadeRequested = false;
 static uint32_t ringHoldUntilMs = 0;
@@ -84,7 +86,7 @@ bool lighting_loop() {
 		return fadeStep();
 	}
 	if (ringProximityHold) {
-		ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
+		ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
 		return false;
 	}
 	// The strip is still unwinding an abandoned run, one fading LED at a
@@ -98,11 +100,11 @@ bool lighting_loop() {
 	// timeout after the last LED goes rather than whatever was left of
 	// it. Same deferral, and same reason, as the proximity hold above.
 	if (ledstring_fillRetreatInProgress()) {
-		ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
+		ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
 		return false;
 	}
 	const bool deadlineExpired =
-		RING_HIGHLIGHT_IDLE_MS != 0 && ringLit &&
+		ledFeel.ringIdleMs != 0 && ringLit &&
 		(int32_t)(millis() - ringHoldUntilMs) >= 0;
 	if (ringFadeRequested || deadlineExpired) {
 		ringFadeRequested = false;
@@ -127,12 +129,12 @@ void lightRingSetProximityHold(bool held) {
 }
 
 void lightRingSelectStrike() {
-	if (RING_SELECT_FLASH_MS <= 0) {
+	if (ledFeel.ringFlashMs <= 0) {
 		ringFlashUntilMs = 0;
 		lightRingForceOff();
 		return;
 	}
-	ringFlashUntilMs = millis() + (uint32_t)RING_SELECT_FLASH_MS;
+	ringFlashUntilMs = millis() + (uint32_t)ledFeel.ringFlashMs;
 	ringStrikeStep();
 }
 
@@ -266,7 +268,7 @@ void lightSingle (int led) {
 	ringLit = true;
 	ringFading = false;
 	ringFadeRequested = false;
-	ringHoldUntilMs = millis() + RING_HIGHLIGHT_IDLE_MS;
+	ringHoldUntilMs = millis() + ledFeel.ringIdleMs;
 }
 
 void ringLEDNext() {

@@ -40,7 +40,21 @@ GP17 (free) SPI0 SS                   │ SPI0 block — 4 contiguous,
 GP18 (free) SPI0 SCK                  │ fully free
 GP19 (free) SPI0 MOSI                 ┘
 GP20 LED_RING_DATA_PIN (FastLED ring)          ┐
-GP21 SELECTED_CONSOLE_LED_STRING_DATA │ output pins
+GP21 SELECTED_CONSOLE_LED_STRING_DATA │ output pins. The string on
+                                      ┘ this pin is ~2 m of WS2812B at
+                                       1.5 LEDs/inch, so **about 118
+                                       LEDs**, and it is NOT cut to
+                                       size -- there is spare string at
+                                       the far end. Recorded here
+                                       because it is a hardware fact
+                                       and the firmware cannot know
+                                       it: the buffer is built for
+                                       512 (retroroom_core::
+                                       kLedStripCapacity) and the
+                                       config's `led.totalLeds` says
+                                       how many are really there. The
+                                       parser refuses anything above
+                                       the build.
 GP22 IR_CONTROL_PIN                   ┘
 GP23 (free)                           ┐
 GP24 (free)                           │ free GPIO — the CYW43 radio does

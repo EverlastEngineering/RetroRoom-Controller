@@ -4,6 +4,7 @@
 #include "network.h"
 #include "stackselector.h"
 #include "consoles.h"
+#include <ConsoleConfig.h>  // LedFeel: the strip's feel, parsed from the config
 #include "lighting.h"
 #include "ledstring.h"
 #include <LedStringPaint.h>  // retroroom_core::DetentGate
@@ -60,7 +61,7 @@ static int browseAnchorIndex = -1;
 // When a step commits, rotary detents are ignored until this. 0 means
 // not armed, and a deadline of 0 is not reachable from a lockout
 // duration, so the two cannot be confused. See
-// LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS for why this exists.
+// ledFeel.settleLockoutMs for why this exists.
 //
 // This is a *rotary* lockout. The press is handled by a different
 // path and is deliberately not gated: overshooting a detent and then
@@ -95,8 +96,8 @@ void spinRingFor(int direction) {
 // src/configuration.h for what each value trades off.
 retroroom_core::DetentGateConfig browseGateConfig() {
 	return retroroom_core::DetentGateConfig(
-		LEDSTRING_DETENTS_PER_STEP, LEDSTRING_FAST_DETENTS_PER_STEP,
-		LEDSTRING_FAST_SPIN_WINDOW_MS);
+		ledFeel.detentsPerStep, ledFeel.fastDetentsPerStep,
+		ledFeel.fastSpinWindowMs);
 }
 }  // namespace
 
@@ -365,7 +366,7 @@ void rotaryEncoderTick() {
 		// act on is still a turn they made, and the ring is the one
 		// indicator that reports turns without committing to them.
 		const uint32_t nowMs = millis();
-		if (LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS > 0 &&
+		if (ledFeel.settleLockoutMs > 0 &&
 			settleLockoutUntilMs != 0 &&
 			(int32_t)(nowMs - settleLockoutUntilMs) < 0) {
 			spinRingFor(direction);
@@ -379,7 +380,7 @@ void rotaryEncoderTick() {
 		// therefore keeps reporting the live console while the operator
 		// spins, and an abandoned spin reverts cleanly.
 		//
-		// A console step is LEDSTRING_DETENTS_PER_STEP detents, not
+		// A console step is ledFeel.detentsPerStep detents, not
 		// one, so the LED string can show a blob creeping toward the
 		// next console as they turn and snap when they commit to it.
 		// The gate below owns the threshold arithmetic; see
@@ -470,9 +471,9 @@ void rotaryEncoderTick() {
 		// Arm the settle lockout from the same timestamp the gate used,
 		// so the window starts when the step completed rather than a few
 		// microseconds later.
-		if (LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS > 0) {
+		if (ledFeel.settleLockoutMs > 0) {
 			settleLockoutUntilMs =
-				nowMs + (uint32_t)LEDSTRING_BROWSE_SETTLE_LOCKOUT_MS;
+				nowMs + (uint32_t)ledFeel.settleLockoutMs;
 		}
 		browseAnchorIndex = targetIndex;
 		browsedConsoleIndex = targetIndex;

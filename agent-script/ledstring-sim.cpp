@@ -46,6 +46,7 @@
 #include <vector>
 
 #include <LedStringPaint.h>
+#include <ConsoleConfig.h>
 
 // The firmware's tunables. configuration.h guards its board-specific
 // blocks behind ARDUINO_RASPBERRY_PI_* symbols, none of which are
@@ -74,21 +75,19 @@ namespace {
 // example-configurations/example2.json. The 64-pixel strip, four
 // consoles, the widest window (MAME, 15 wide) at the far end.
 //
-// The strip length is a property of what is physically wired, so
-// NUM_SELECTED_CONSOLE_LED_STRING_LEDS lives in configuration.h's
-// board-specific block and a host build defines none of those boards.
-// Fall back to the Pico block's 64. This is the ONE number in the
-// simulator that is not shared with the firmware; the banner says so
-// out loud, and if the real strip ever changes length, change it here
-// too or the sim stops being a preview of the hardware.
-#ifndef NUM_SELECTED_CONSOLE_LED_STRING_LEDS
-#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
-static const bool kStripLengthFromFirmware = false;
-#else
-static const bool kStripLengthFromFirmware = true;
-#endif
+// The same defaults the firmware gets when a config has no `led` block,
+// from the same file -- so "what the simulator shows" and "what the
+// device does" cannot drift apart.
+const retroroom_core::LedFeel gFeel = retroroom_core::defaultLedFeel();
 
-const int kTotalLeds = NUM_SELECTED_CONSOLE_LED_STRING_LEDS;
+// The strip the *example geometry* occupies, which is what this
+// simulator draws -- not the firmware's buffer capacity. A default
+// `totalLeds` is deliberately the capacity, so that a config which
+// mentions LEDs past the end of a real string is left unlit and
+// visible rather than silently clipped and invisible. Rendering 512
+// columns of mostly-nothing to show that is not what the simulator is
+// for; it replays one example cabinet.
+const int kTotalLeds = 64;
 
 struct SimConsole {
 	const char* name;
@@ -214,7 +213,7 @@ int travelEntryFor(int from, int to) {
 // Mirrors applyBrowsePath() in src/ledstring.cpp.
 void applyBrowsePath(StripFrame& f, int from, int to) {
 	computeTravelPath(windowFor(from), travelEntryFor(from, to), windowFor(to),
-					  LEDSTRING_TRAVEL_SPARK_LEDS, f);
+					  gFeel.travelSparkLeds, f);
 }
 
 void applyResting(StripFrame& f, int idx) {
@@ -238,18 +237,18 @@ int wrapNext(int current, int direction) {
 RolePalette buildPalette() {
 	RolePalette p;
 	p.colors[static_cast<int>(LedRole::OFF)] = {0, 0, 0};
-	p.colors[static_cast<int>(LedRole::STACK)] = {LEDSTRING_COLOR_STACK_R,
-		LEDSTRING_COLOR_STACK_G, LEDSTRING_COLOR_STACK_B};
-	p.colors[static_cast<int>(LedRole::LEAVING)] = {LEDSTRING_COLOR_LEAVING_R,
-		LEDSTRING_COLOR_LEAVING_G, LEDSTRING_COLOR_LEAVING_B};
-	p.colors[static_cast<int>(LedRole::FILL)] = {LEDSTRING_COLOR_FILL_R,
-		LEDSTRING_COLOR_FILL_G, LEDSTRING_COLOR_FILL_B};
-	p.colors[static_cast<int>(LedRole::TRAVEL)] = {LEDSTRING_COLOR_TRAVEL_R,
-		LEDSTRING_COLOR_TRAVEL_G, LEDSTRING_COLOR_TRAVEL_B};
-	p.colors[static_cast<int>(LedRole::PROPOSAL)] = {LEDSTRING_COLOR_PROPOSAL_R,
-		LEDSTRING_COLOR_PROPOSAL_G, LEDSTRING_COLOR_PROPOSAL_B};
-	p.colors[static_cast<int>(LedRole::SELECTED)] = {LEDSTRING_COLOR_SELECTED_R,
-		LEDSTRING_COLOR_SELECTED_G, LEDSTRING_COLOR_SELECTED_B};
+	p.colors[static_cast<int>(LedRole::STACK)] = {gFeel.colorR[retroroom_core::kRoleStack],
+		gFeel.colorG[retroroom_core::kRoleStack], gFeel.colorB[retroroom_core::kRoleStack]};
+	p.colors[static_cast<int>(LedRole::LEAVING)] = {gFeel.colorR[retroroom_core::kRoleLeaving],
+		gFeel.colorG[retroroom_core::kRoleLeaving], gFeel.colorB[retroroom_core::kRoleLeaving]};
+	p.colors[static_cast<int>(LedRole::FILL)] = {gFeel.colorR[retroroom_core::kRoleFill],
+		gFeel.colorG[retroroom_core::kRoleFill], gFeel.colorB[retroroom_core::kRoleFill]};
+	p.colors[static_cast<int>(LedRole::TRAVEL)] = {gFeel.colorR[retroroom_core::kRoleTravel],
+		gFeel.colorG[retroroom_core::kRoleTravel], gFeel.colorB[retroroom_core::kRoleTravel]};
+	p.colors[static_cast<int>(LedRole::PROPOSAL)] = {gFeel.colorR[retroroom_core::kRoleProposal],
+		gFeel.colorG[retroroom_core::kRoleProposal], gFeel.colorB[retroroom_core::kRoleProposal]};
+	p.colors[static_cast<int>(LedRole::SELECTED)] = {gFeel.colorR[retroroom_core::kRoleSelected],
+		gFeel.colorG[retroroom_core::kRoleSelected], gFeel.colorB[retroroom_core::kRoleSelected]};
 	return p;
 }
 
@@ -272,31 +271,31 @@ static char roleGlyph(LedRole r) {
 StripFrame baseFrame() {
 	StripFrame f;
 	f.totalLeds = kTotalLeds;
-	f.abovePct = LEDSTRING_ABOVE_PCT;
-	f.selfPct = LEDSTRING_SELF_PCT;
-	f.fromPct = LEDSTRING_BROWSE_FROM_PCT;
-	f.toPct = LEDSTRING_BROWSE_TO_PCT;
-	f.blobPct = LEDSTRING_BLOB_PCT;
-	f.blobWidth = LEDSTRING_BLOB_WIDTH;
-	f.fillPct = LEDSTRING_FILL_PCT;
-	f.dimPct = LEDSTRING_ABOVE_PCT;
-	f.travelPct = LEDSTRING_SELF_PCT;
-	f.minFillLeds = LEDSTRING_FILL_MIN_LEDS;
-	f.travelMs = LEDSTRING_TRAVEL_MS;
-	f.travelPeakWidth = LEDSTRING_TRAVEL_PEAK_WIDTH;
+	f.abovePct = gFeel.abovePct;
+	f.selfPct = gFeel.selfPct;
+	f.fromPct = gFeel.browseFromPct;
+	f.toPct = gFeel.browseToPct;
+	f.blobPct = gFeel.blobPct;
+	f.blobWidth = gFeel.blobWidth;
+	f.fillPct = gFeel.fillPct;
+	f.dimPct = gFeel.abovePct;
+	f.travelPct = gFeel.selfPct;
+	f.minFillLeds = gFeel.fillMinLeds;
+	f.travelMs = gFeel.travelMs;
+	f.travelPeakWidth = gFeel.travelPeakWidth;
 	// The simulator's "active" console is whatever the scenario says
 	// the operator is currently playing. The browse is always driven
 	// from there, so the dim context is the same thing throughout.
 	f.activeWindow = windowFor(scenarioActive);
 	f.palette = buildPalette();
-	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
-	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
-	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
-	f.select.explodeMs = LEDSTRING_SELECT_EXPLODE_MS;
-	f.select.igniteMs = LEDSTRING_SELECT_IGNITE_MS;
+	f.pulseMinPct = gFeel.pulseMinPct;
+	f.pulseMaxPct = gFeel.pulseMaxPct;
+	f.pulsePeriodMs = gFeel.pulseMs;
+	f.select.explodeMs = gFeel.explodeMs;
+	f.select.igniteMs = gFeel.igniteMs;
 	f.select.totalMs = f.select.explodeMs + f.select.igniteMs;
-	f.select.abovePct = LEDSTRING_ABOVE_PCT;
-	f.select.selfPct = LEDSTRING_SELF_PCT;
+	f.select.abovePct = gFeel.abovePct;
+	f.select.selfPct = gFeel.selfPct;
 	return f;
 }
 
@@ -315,7 +314,7 @@ StripFrame baseFrame() {
 const char kRamp[] = ".:-=+o*#%@";
 
 void render(const StripFrame& frame, const char* caption) {
-	retroroom_core::StripPixel px[kTotalLeds] = {};
+	static retroroom_core::StripPixel px[retroroom_core::kLedStripCapacity];
 	computeStripFrame(frame, px);
 
 	printf("  %-34s |", caption);
@@ -337,7 +336,7 @@ void render(const StripFrame& frame, const char* caption) {
 // separate two roles at the same level, which is the whole reason the
 // colours exist -- so the simulator has to be able to show them.
 void renderRoles(const StripFrame& frame, const char* caption) {
-	retroroom_core::StripPixel px[kTotalLeds] = {};
+	static retroroom_core::StripPixel px[retroroom_core::kLedStripCapacity];
 	computeStripFrame(frame, px);
 	printf("  %-34s |", caption);
 	for (int i = 0; i < kTotalLeds; ++i) {
@@ -358,16 +357,12 @@ void banner() {
 	printf("LED string simulator -- example3-two-rows.json geometry, %d pixels, %d consoles\n",
 		   kTotalLeds, kConsoleCount);
 	printf("roles: S=selected P=proposal T=travel f=fill l=leaving s=stack .=off\n");
-	if (!kStripLengthFromFirmware) {
-		printf("  (strip length is a host fallback: it is a board/wiring value,\n"
-			   "   not a tuning knob. It matches src/configuration.h today.)\n");
-	}
 	printf("%d detents/step, %d when fast (within %dms), blob %dpx, "
 		   "pulse %dms, select %dms\n\n",
-		   LEDSTRING_DETENTS_PER_STEP, LEDSTRING_FAST_DETENTS_PER_STEP,
-		   LEDSTRING_FAST_SPIN_WINDOW_MS, LEDSTRING_BLOB_WIDTH,
-		   LEDSTRING_PREVIEW_PULSE_MS,
-		   LEDSTRING_SELECT_EXPLODE_MS + LEDSTRING_SELECT_IGNITE_MS);
+		   gFeel.detentsPerStep, gFeel.fastDetentsPerStep,
+		   gFeel.fastSpinWindowMs, gFeel.blobWidth,
+		   gFeel.pulseMs,
+		   gFeel.explodeMs + gFeel.igniteMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,9 +383,9 @@ void scenarioBrowse() {
 	render(rest, "resting (SMS selected)");
 
 	DetentGate gate;
-	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
-									LEDSTRING_FAST_DETENTS_PER_STEP,
-									LEDSTRING_FAST_SPIN_WINDOW_MS));
+	gate.configure(DetentGateConfig(gFeel.detentsPerStep,
+									gFeel.fastDetentsPerStep,
+									gFeel.fastSpinWindowMs));
 	// SMS is active; the operator is turning back toward NES.
 	const int anchor = 1;
 	const int target = 0;
@@ -398,7 +393,7 @@ void scenarioBrowse() {
 	uint32_t t = 0;
 	uint32_t snapAt = 0;
 
-	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP - 1; ++i) {
+	for (int i = 0; i < gFeel.detentsPerStep - 1; ++i) {
 		t += 2000;
 		snapAt = 2000;
 		const retroroom_core::DetentEvent ev = gate.onDetent(-1, t,
@@ -424,7 +419,7 @@ void scenarioBrowse() {
 		StripFrame f = baseFrame();
 		f.effect = StripEffect::TRAVEL;
 		applyBrowsePath(f, anchor, target);
-		f.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 8);
+		f.elapsedMs = static_cast<std::uint32_t>(gFeel.travelMs * step / 8);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "travel t=%3ums",
 				 f.elapsedMs);
@@ -450,7 +445,7 @@ void scenarioSelect(int consoleIdx) {
 		   "nothing, then comes back from zero width at full brightness.\n"
 		   "%dms explode + %dms ignite, and the second ends on exactly the\n"
 		   "resting paint.\n\n",
-		   LEDSTRING_SELECT_EXPLODE_MS, LEDSTRING_SELECT_IGNITE_MS);
+		   gFeel.explodeMs, gFeel.igniteMs);
 
 	const LedRange w = windowFor(consoleIdx);
 	const LedRange shelf = shelfBoundsFor(consoleIdx);
@@ -471,7 +466,7 @@ void scenarioSelect(int consoleIdx) {
 
 	for (int i = 0; i <= 4; ++i) {
 		f.elapsedMs = static_cast<std::uint32_t>(
-			(static_cast<long>(LEDSTRING_SELECT_EXPLODE_MS) * i) / 4);
+			(static_cast<long>(gFeel.explodeMs) * i) / 4);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "explode  t=%3ums", f.elapsedMs);
 		render(f, caption);
@@ -479,8 +474,8 @@ void scenarioSelect(int consoleIdx) {
 	}
 	for (int i = 1; i <= 4; ++i) {
 		f.elapsedMs = static_cast<std::uint32_t>(
-			LEDSTRING_SELECT_EXPLODE_MS +
-			(static_cast<long>(LEDSTRING_SELECT_IGNITE_MS) * i) / 4);
+			gFeel.explodeMs +
+			(static_cast<long>(gFeel.igniteMs) * i) / 4);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "ignite   t=%3ums", f.elapsedMs);
 		render(f, caption);
@@ -533,17 +528,17 @@ void scenarioAbove() {
 	for (int p = 0; p < kTotalLeds; ++p) {
 		int pct = 0;
 		if (p < keepEndFor(1)) {
-			pct = LEDSTRING_ABOVE_PCT;
+			pct = gFeel.abovePct;
 		}
 		if (p >= 7 && p < 12) {
-			pct = LEDSTRING_SELF_PCT;
+			pct = gFeel.selfPct;
 		}
 		int bucket = (pct == 0) ? 0 : ((pct - 1) * 9) / 100 + 1;
 		putchar(kRamp[bucket]);
 	}
 	printf("|\n");
 
-	// (c) the selection alone -- LEDSTRING_ABOVE_PCT = 0.
+	// (c) the selection alone -- gFeel.abovePct = 0.
 	{
 		StripFrame f = baseFrame();
 		f.effect = StripEffect::RESTING;
@@ -584,7 +579,7 @@ void scenarioShelf() {
 		StripFrame t = baseFrame();
 		t.effect = StripEffect::TRAVEL;
 		applyBrowsePath(t, from, to);
-		t.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 10);
+		t.elapsedMs = static_cast<std::uint32_t>(gFeel.travelMs * step / 10);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "travel t=%3ums", t.elapsedMs);
 		render(t, caption);
@@ -641,7 +636,7 @@ void scenarioShelfBack() {
 		StripFrame t = baseFrame();
 		t.effect = StripEffect::TRAVEL;
 		applyBrowsePath(t, from, to);
-		t.elapsedMs = static_cast<std::uint32_t>(LEDSTRING_TRAVEL_MS * step / 10);
+		t.elapsedMs = static_cast<std::uint32_t>(gFeel.travelMs * step / 10);
 		char caption[64];
 		snprintf(caption, sizeof(caption), "travel t=%3ums", t.elapsedMs);
 		render(t, caption);
@@ -684,8 +679,8 @@ void scenarioRetreat() {
 							  ? base.fillLead - base.fillAnchor
 							  : base.fillAnchor - base.fillLead;
 	const int heldPermille =
-		(3 * 1000) / (LEDSTRING_DETENTS_PER_STEP > 0
-						  ? LEDSTRING_DETENTS_PER_STEP
+		(3 * 1000) / (gFeel.detentsPerStep > 0
+						  ? gFeel.detentsPerStep
 						  : 1);
 	base.fillLead = scaleFillLead(base.fillAnchor, base.fillLead,
 								  base.fillForward, heldPermille);
@@ -694,25 +689,25 @@ void scenarioRetreat() {
 							? base.fillLead - base.fillAnchor
 							: base.fillAnchor - base.fillLead;
 	printf("  run holds %d LEDs of a %d-LED gap (detents 3 of %d)\n\n", runLeds,
-		   wholeLeds, LEDSTRING_DETENTS_PER_STEP);
+		   wholeLeds, gFeel.detentsPerStep);
 
 	// Quiet, then the retreat. Phase the clock so the first LED is
 	// caught half withdrawn rather than fully lit or fully gone.
-	for (int ms = 0; ms <= (runLeds + 1) * LEDSTRING_FILL_RETREAT_STEP_MS;
-		 ms += LEDSTRING_FILL_RETREAT_STEP_MS / 2) {
+	for (int ms = 0; ms <= (runLeds + 1) * gFeel.fillRetreatStepMs;
+		 ms += gFeel.fillRetreatStepMs / 2) {
 		StripFrame f = base;
-		const uint32_t quiet = LEDSTRING_FILL_RETREAT_DELAY_MS +
+		const uint32_t quiet = gFeel.fillRetreatDelayMs +
 							   static_cast<uint32_t>(ms);
-		if (quiet > LEDSTRING_FILL_RETREAT_DELAY_MS) {
+		if (quiet > static_cast<std::uint32_t>(gFeel.fillRetreatDelayMs)) {
 			f.fillRetreatPermille = static_cast<int>(
 				(static_cast<long long>(ms) * 1000) /
-				LEDSTRING_FILL_RETREAT_STEP_MS);
+				gFeel.fillRetreatStepMs);
 		}
 		// Pulse phase, so the candidate is at the same brightness on
 		// every row and the fill is the only thing moving.
 		f.elapsedMs = 550;
 		char caption[80];
-		if (quiet <= LEDSTRING_FILL_RETREAT_DELAY_MS) {
+		if (quiet <= static_cast<std::uint32_t>(gFeel.fillRetreatDelayMs)) {
 			snprintf(caption, sizeof(caption), "quiet %4dms  (holding)", ms);
 		} else {
 			const int left = runLeds - (f.fillRetreatPermille / 1000);
@@ -725,7 +720,7 @@ void scenarioRetreat() {
 	for (int ms = 0; ms <= 1000; ms += 250) {
 		StripFrame f = base;
 		f.elapsedMs = 550;
-		f.fillRetreatPermille = (ms * 1000) / LEDSTRING_FILL_RETREAT_STEP_MS;
+		f.fillRetreatPermille = (ms * 1000) / gFeel.fillRetreatStepMs;
 		char caption[64];
 		snprintf(caption, sizeof(caption), "withdrawn %4dms", ms);
 		renderRoles(f, caption);
@@ -767,11 +762,11 @@ void scenarioCarry() {
 
 	printf("\n  -- now turn toward SMS, one detent at a time --\n");
 	DetentGate gate;
-	gate.configure(DetentGateConfig(LEDSTRING_DETENTS_PER_STEP,
-									LEDSTRING_FAST_DETENTS_PER_STEP,
-									LEDSTRING_FAST_SPIN_WINDOW_MS));
+	gate.configure(DetentGateConfig(gFeel.detentsPerStep,
+									gFeel.fastDetentsPerStep,
+									gFeel.fastSpinWindowMs));
 	uint32_t t = 0;
-	for (int i = 0; i < LEDSTRING_DETENTS_PER_STEP - 1; ++i) {
+	for (int i = 0; i < gFeel.detentsPerStep - 1; ++i) {
 		t += 2000;
 		const retroroom_core::DetentEvent ev =
 			gate.onDetent(1, t, kConsoleCount, candidate);
