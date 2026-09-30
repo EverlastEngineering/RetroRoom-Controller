@@ -258,9 +258,14 @@ void consoleDefinitions() {
 		// config error, and printing the declared end hides it -- the
 		// log would say 55..93 on a 64-LED strip and read as though
 		// the console really were that wide.
-		const int clampedWidth = (c.led_position + c.led_width >
-								 NUM_SELECTED_CONSOLE_LED_STRING_LEDS)
-									? (NUM_SELECTED_CONSOLE_LED_STRING_LEDS - c.led_position)
+		//
+		// Clamped against the *configured* length, not the build
+		// capacity. The capacity is 512 and the default totalLeds is the
+		// capacity, so this reports a window as fine unless the
+		// operator has said the string is shorter -- which is the whole
+		// point of being able to.
+		const int clampedWidth = (c.led_position + c.led_width > ledFeel.totalLeds)
+									? (ledFeel.totalLeds - c.led_position)
 									: c.led_width;
 		Serial.print(c.led_position + clampedWidth - 1);
 		if (clampedWidth != c.led_width) {

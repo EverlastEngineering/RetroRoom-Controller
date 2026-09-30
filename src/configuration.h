@@ -82,7 +82,6 @@
 	#define LED_RING_DATA_PIN          20  // FastLED ring 
 	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // FastLED strip
 	#define IR_CONTROL_PIN    22
-	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
 	// I2C0 (SDA/SCL) for the 16x2 HD44780 + PCF8574 backpack. Defined here
 	// rather than in display.h so that pin-map-chart.md really is the only
 	// place pins are declared -- the chart asserts every pin in the table
@@ -121,33 +120,22 @@
 	#define LED_RING_DATA_PIN 23  // YD-RP2040 onboard WS2812 (PIN_NEOPIXEL)
 	#define SELECTED_CONSOLE_LED_STRING_DATA 21  // Placeholder; no second strip wired on the YD.
 	#define IR_CONTROL_PIN    22
-	#define NUM_SELECTED_CONSOLE_LED_STRING_LEDS 64
 #endif
 
-/** Consoles */
-#define NES "Nintendo Entertainment System"
-#define SNES "Super Nintendo Entertainment System"
-#define Gamecube "Nintendo Gamecube"
-#define N64 "Nintendo 64"
-#define Wii "Nintendo Wii"
-#define TurboGrafx16 "TurboGrafx-16"
-#define PS1 "Sony PlayStation"
-#define PS2 "Sony PlayStation 2"
-#define SMS "Sega Master System"
-#define Genesis "Sega Genesis"
-#define Dreamcast "Sega Dreamcast"
-#define Xbox "Microsoft Xbox"
-
-/** VIDEO 1: The Hex Code for the Ir Control For SVideo Input */
-#define SVideo 0x030
-/** VIDEO 2: The Hex Code for the Ir Control For Front Panel Video Input */
-#define FrontPanelComposite 0x830
-/** VIDEO 3: The Hex Code for the Ir Control For Video Input */
-#define Composite 0x430
-/** VIDEO 4: The Hex Code for the Ir Control For Component Input */
-#define Component 0xE30
-/** The Hex Code for the Ir Control For SCART Input, which comes 
- * into the televsion on component after being converted. */
-#define SCART Component
+// ---------------------------------------------------------------------------
+// Deleted, and why
+// ---------------------------------------------------------------------------
+//
+// The console display names (NES, SNES, PS1, ...) and the IR codes
+// (SVideo, Composite, Component, ...) used to live here as macros. They
+// are not dead by accident -- they are dead because /consoles.json
+// carries both, in `consoleNames` and `irCodes`, and the parser resolves
+// a console's name and its tvInput from there.
+//
+// Which left this file holding a second copy of every display name and
+// every IR code: the same failure the `led` block migration was about,
+// one step further along. Nothing read them, so they were not a bug --
+// they were a trap for whoever touched this file next, and a place to
+// "fix" a name that nothing uses.
 
 #endif

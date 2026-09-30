@@ -8,7 +8,8 @@
 //
 // The string is a 64-pixel WS2812B strip sized to fit the largest
 // example config's [ledPosition, ledPosition+ledWidth) range (MAME in
-// example2.json: 27+15=42, rounded up to NUM_SELECTED_CONSOLE_LED_STRING_LEDS=64
+// retroroom_core::kLedStripCapacity, which is what the strip is built
+// for; the config's led.totalLeds says how many are really fitted
 // in src/configuration.h).
 //
 // This module is **only built** when HAS_LEDS is defined (matches the

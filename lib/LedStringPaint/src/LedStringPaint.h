@@ -85,7 +85,7 @@ struct LedRange {
 //                 against corrupted JSON).
 //   ledWidth:     number of pixels in the window (>= 1 expected for
 //                 non-zero widths; <= 0 returns a zero-width range).
-//   totalLeds:    the size of the physical strip (NUM_SELECTED_CONSOLE_LED_STRING_LEDS);
+//   totalLeds:    the size of the physical strip, from the config;
 //                 used to clamp the window.
 LedRange computeConsoleWindow(int ledPosition, int ledWidth, int totalLeds);
 
