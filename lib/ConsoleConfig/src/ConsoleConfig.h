@@ -65,6 +65,118 @@ struct Shelf {
 	int toLed = 0;
 };
 
+// The roles the LED string can show a pixel as, in the order the
+// colours are written in the JSON. Mirrors retroroom_core::LedRole --
+// kept as its own enum because lib/ConsoleConfig must not depend on the
+// paint library, and the test that keeps the two in step compares them.
+enum LedRoleId {
+	kRoleStack = 0,
+	kRoleLeaving,
+	kRoleFill,
+	kRoleTravel,
+	kRoleProposal,
+	kRoleSelected,
+	kRoleCount
+};
+
+// Everything about how the LED string *feels*, in one struct.
+//
+// The rule this type exists to enforce: **one number, one home.** Each
+// value has exactly one default and one range, both declared here
+// beside the comment explaining what the number trades off. The JSON is
+// parsed *into* this struct, so a field that is missing is a field that
+// takes the default below, and nothing anywhere else states what the
+// default is.
+//
+// That is the whole reason this is a struct and not a block of numbers
+// in the JSON file with defaults repeated in C. A flat mirror of the old
+// #defines would put every default in two places at once, and the
+// failure mode is not subtle: the file says one thing, the code says
+// another, and which one the operator sees depends on which path loaded
+// the config.
+struct LedFeel {
+	// ---- the strip itself -------------------------------------------------
+	// How many LEDs the string has. The firmware is built for
+	// LED_STRING_CAPACITY; this is how many of them are actually fitted.
+	//
+	// Absent means LED_STRING_CAPACITY -- treat the string as filling the
+	// buffer -- which is the old behaviour, so a config that predates the
+	// field lays out exactly as it did.
+	//
+	// ERR LOW. A window that runs past the end is clamped, and the console
+	// silently lands in the wrong place. A count larger than the string
+	// only means the spare LEDs never light, which is a thing you can
+	// see. So when in doubt, under-count.
+	int totalLeds;
+
+	// ---- the travel: the block moving between consoles ---------------------
+	int travelMs;          // how long the move takes
+	int travelPeakWidth;   // cap on the block's width; floored at the target
+	int travelSparkLeds;   // width where the block leaves the console
+
+	// ---- brightness, as a percentage of the role's colour -----------------
+	int abovePct;   // the resting stack. 0: only the selection is lit
+	int selfPct;    // the selected console's own window
+	int dimPct;     // context during a browse
+	int fillPct;    // the knob-turn progression run
+	int blobPct;    // the browse blob
+	int browseFromPct;  // the window being left
+	int browseToPct;    // the window being approached
+
+	// ---- the knob's feel ---------------------------------------------------
+	int detentsPerStep;       // detents for a deliberate console step
+	int fastDetentsPerStep;   // ...once spinning. Clamped to the above
+	int fastSpinWindowMs;     // gap that marks a spin. 0 disables it
+	int settleLockoutMs;      // detents ignored after a commit. 0 disables
+
+	// ---- the progression run ----------------------------------------------
+	int fillMinLeds;        // floor on the run, in LEDs
+	int fillRetreatDelayMs; // quiet before an abandoned run gives itself back
+	int fillRetreatStepMs;  // per LED on the way back. This is also the fade
+	int blobWidth;          // blob width in LEDs
+
+	// ---- the preview pulse -------------------------------------------------
+	int pulseMs;       // one cycle
+	int pulseMinPct;   // dimmest
+	int pulseMaxPct;   // brightest
+
+	// ---- the commit --------------------------------------------------------
+	int explodeMs;  // the window dissolving outward
+	int igniteMs;   // the window coming back
+	// The total is the sum of the two, computed in loadLedFeel(). It is
+	// not a field: a third number that can disagree with the two it
+	// summarises is how the loop and the config drift apart.
+
+	// ---- the ring ----------------------------------------------------------
+	int ringIdleMs;   // how long the ring stays lit before giving up
+	int ringFlashMs;  // the strike on a commit. 0 disables
+
+	// ---- the strip as a whole ----------------------------------------------
+	int frameIntervalMs;  // how often an in-flight frame is pushed
+
+	// One RGB triple per role, in LedRoleId order. Written in the JSON as
+	// {"selected": [r, g, b], ...} rather than as twenty-one keys.
+	int colorR[kRoleCount];
+	int colorG[kRoleCount];
+	int colorB[kRoleCount];
+};
+
+// The most LEDs the firmware is built to drive. A hardware fact, the
+// same category as the data pin, and it lives here rather than in
+// src/configuration.h because this is the code that has to *reject* a
+// config claiming more -- one number, in the file that enforces it.
+//
+// Sized generously: the buffer is allocated at this size whatever the
+// config says, and the cost is 3 bytes per LED. pin-map-chart.md records
+// the length the cabinet actually has.
+constexpr int kLedStripCapacity = 512;
+
+// Where the defaults live, for anything that needs them without parsing
+// a document: the simulator, and the host tests. Returns the same
+// values a config with no `led` block would produce, so there is one
+// answer to "what is the default" in the whole codebase.
+LedFeel defaultLedFeel();
+
 struct LoadResult {
 	bool ok = false;
 	std::string error;
@@ -77,6 +189,19 @@ struct LoadResult {
 	// is exactly as wide as the consoles on it, and loses the bare
 	// string at either end.
 	std::vector<Shelf> shelves;
+	// The strip length and how it feels. Populated whether or not the
+	// document has a `led` block: a config that says nothing gets the
+	// defaults, which is the whole point of loadLedFeel().
+	LedFeel feel = defaultLedFeel();
+	// Everything the parser had to pull back into range, one line per
+	// clamp, for the shell to print at boot. Empty when the config was
+	// entirely legal.
+	//
+	// Accept-and-clamp rather than reject is deliberate: a hand-edited
+	// config should not stop a cabinet working, and the alternative to
+	// clamping is booting values nobody asked for. A clamp that is
+	// invisible is no better than the bug it replaced, hence the list.
+	std::vector<std::string> warnings;
 	// Top-level LCD config. Default 30000 ms (30 s) when the `lcd` block
 	// is absent or when the field is missing. The shell exposes this to
 	// the LCD driver via retroroom_store::getLcdBacklightOffAfterMs().

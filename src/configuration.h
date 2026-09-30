@@ -269,10 +269,10 @@
 // worth changing your mind about if it reads as a blink rather than a
 // pause.
 #ifndef LEDSTRING_SELECT_EXPLODE_MS
-#define LEDSTRING_SELECT_EXPLODE_MS 200
+#define LEDSTRING_SELECT_EXPLODE_MS 900
 #endif
 #ifndef LEDSTRING_SELECT_IGNITE_MS
-#define LEDSTRING_SELECT_IGNITE_MS 200
+#define LEDSTRING_SELECT_IGNITE_MS 400
 #endif
 
 // What the strip settles to once everything is over.

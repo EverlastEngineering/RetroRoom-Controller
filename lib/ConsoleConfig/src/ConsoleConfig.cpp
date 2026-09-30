@@ -36,6 +36,289 @@ const IrCode* findIrCode(const std::vector<IrCode>& codes, const std::string& na
 
 }  // namespace
 
+// ===========================================================================
+// The LED string's feel
+// ===========================================================================
+//
+// Every default and every range is in this file and nowhere else. The
+// JSON is parsed *into* the struct in the header, so "the value is
+// missing" is not a case each call site has to reason about -- it is
+// the value below.
+//
+// The policy on a bad value follows the one already used for the LCD
+// backoff: accept, clamp, and say so. A config the operator wrote by
+// hand should not be a reason their cabinet stops working, and the
+// alternative to clamping is booting values nobody asked for. But a
+// clamp nobody hears about is no better than the bug it replaced, so
+// every one appends a line to result.warnings for the shell to print.
+
+namespace {
+
+// Read an integer: the default when absent, clamped to [lo, hi] when
+// not, and a line in `warnings` when the clamp bit.
+int readInt(JsonObjectConst obj, const char* key, int def, int lo, int hi,
+			std::vector<std::string>* warnings) {
+	JsonVariantConst v = obj[key];
+	if (v.isNull()) {
+		return def;
+	}
+	const long long raw = v.as<long long>();
+	const long long clamped = (raw < lo) ? lo : ((raw > hi) ? hi : raw);
+	if (clamped != raw && warnings != nullptr) {
+		warnings->push_back(std::string("led.") + key + " = " +
+							std::to_string(raw) + " is outside " +
+							std::to_string(lo) + ".." + std::to_string(hi) +
+							"; using " + std::to_string(clamped));
+	}
+	return static_cast<int>(clamped);
+}
+
+}  // namespace
+
+LedFeel defaultLedFeel() {
+	LedFeel f;
+	f.totalLeds = kLedStripCapacity;
+
+	// The travel. The block's peak is a *cap* on how wide it gets, not
+	// a target: the block always ends exactly the width of the console
+	// it lands on, because travelEdges() floors the cap at the target's
+	// width. A value below the widest window in the cabinet is therefore
+	// simply ignored -- which is the safe direction, and worth knowing
+	// before anyone lowers it hoping for a slimmer block.
+	f.travelMs = 420;
+	f.travelPeakWidth = 6;
+	f.travelSparkLeds = 2;  // 1 reads as a stray pixel, 2 as an object
+
+	// Brightness, as a percentage of the role's own colour. ABOVE is the
+	// resting stack and defaults to 0: a cumulative reading was reported
+	// from the bench as "the whole string is lit" rather than as a stack.
+	// The dim/fill split is deliberate -- sharing a level between "where
+	// the stack ends" and "how far I have got" leaves nothing to read
+	// progress from.
+	f.abovePct = 0;
+	f.selfPct = 100;
+	f.dimPct = 22;
+	f.fillPct = 45;
+	f.blobPct = 100;
+	f.browseFromPct = 25;
+	f.browseToPct = 45;
+
+	// The knob. Five detents was chosen by feel on the bench: fewer and
+	// a step happens by accident, more and the knob stops feeling like it
+	// is choosing anything. The fast path is two.
+	//
+	// fastSpinWindowMs is 0, which DISABLES the escalation, and the
+	// reason is worth keeping: it was 1000ms, which sounds generous but
+	// is *shorter than a deliberate human detent*. The first detent
+	// registered as deliberate, the second tripped the window, and from
+	// there on the browse was permanently in fast mode. It has to be
+	// comfortably LONGER than the operator's slowest deliberate turn.
+	// We do not have a number for that yet, which is why it is off
+	// rather than merely retuned; a starting guess would be 2000-3000ms.
+	// The latching that compounded this is fixed independently -- the
+	// escalation now reflects the gap before each detent, so it drops
+	// back the moment they slow down.
+	f.detentsPerStep = 5;
+	f.fastDetentsPerStep = 2;
+	f.fastSpinWindowMs = 0;
+
+	// 250ms after a commit, detents are ignored so an overshoot costs one
+	// step rather than two. Deliberately shorter than the travel: once
+	// the lockout expires a turn cuts the animation short, which is what
+	// a mid-travel detent already did, and covering the whole travel
+	// would swallow real input for twice as long.
+	f.settleLockoutMs = 250;
+
+	// The progression run. The floor exists because a step *between
+	// shelves* is a couple of pixels in index space and a long way round
+	// physically, so filling the literal gap would leave the indicator
+	// barely moving on exactly the steps hardest to read.
+	//
+	// The retreat gives an abandoned run back rather than leaving it
+	// pointing at a console nobody asked for, one LED at a time from the
+	// leading edge. 250ms per LED is also that LED's fade, so the run
+	// reels in rather than strobing; 0 for the delay disables it.
+	f.fillMinLeds = 3;
+	f.fillRetreatDelayMs = 3000;
+	f.fillRetreatStepMs = 250;
+	f.blobWidth = 3;
+
+	// The preview pulse. 1100ms reads as a slow breath rather than a
+	// heartbeat. The dim end wants to stay clearly non-zero or the pulse
+	// strobes.
+	f.pulseMs = 1100;
+	f.pulseMinPct = 30;
+	f.pulseMaxPct = 100;
+
+	// The commit, in two halves: the window dissolving outward, then
+	// coming back. 400 to dissolve and 200 to rebuild -- the explosion
+	// is the one that has to be read as a movement, and the ignite is the
+	// one that only has to arrive. They meet at zero brightness, which
+	// is the gap between the old console going and the new one arriving.
+	f.explodeMs = 400;
+	f.igniteMs = 200;
+
+	// The ring. The idle timeout is also what reverts an abandoned
+	// browse, and it is *held* while the progression run is still
+	// unwinding so it never cuts a retreat short.
+	f.ringIdleMs = 5000;
+	f.ringFlashMs = 120;  // the strike on a commit. 0 disables
+
+	// How often an in-flight frame goes to the wire. A sampling rate, not
+	// a step count: every frame is computed from elapsed time, so raising
+	// this plays the same animation more smoothly. The floor is how long
+	// FastLED.show() takes to clock the strip out plus whatever the rest
+	// of loop() needs -- the driver measures that and prints it, so set
+	// this from the measurement rather than by guessing.
+	f.frameIntervalMs = 8;
+
+	// Colours. Amber for what the operator is being offered, cool blue
+	// for the context it is contrasted against: that is the one
+	// distinction worth having by eye alone. Values are deliberately
+	// conservative -- this strip sits next to a television in a dark
+	// room, and a misconfigured colour here is a glare problem.
+	//
+	// TRAVEL must equal PROPOSAL. The travel's last frame *is* the target
+	// window and the frame after it is that window pulsing as a
+	// proposal, so any difference is a flash of a different hue at exactly
+	// the moment the movement resolves into an answer.
+	const int defaults[kRoleCount][3] = {
+		{12, 28, 40},  // stack: context, and dark so it never competes
+		{20, 34, 48},  // leaving: the console being turned away from
+		{16, 40, 56},  // fill: the progression run, cool so it reads as
+		{64, 40, 8},   //       progress and not as a console that is on
+		{64, 40, 8},   // travel: the proposal in flight -- see above
+		{48, 36, 24},  // selected: the resting selection, warmer and calmer
+	};
+	for (int r = 0; r < kRoleCount; ++r) {
+		f.colorR[r] = defaults[r][0];
+		f.colorG[r] = defaults[r][1];
+		f.colorB[r] = defaults[r][2];
+	}
+	return f;
+}
+
+namespace {
+
+// Parse the optional top-level `led` block. Internal on purpose: taking
+// a JsonObjectConst in the public header would put ArduinoJson in front
+// of every consumer of this library -- the shell, the simulator, the
+// tests -- none of which should have to know it parses anything.
+// Driven through loadFromJson(), which is the real entry point and
+// therefore the better thing for the tests to exercise anyway.
+void loadLedFeel(JsonObjectConst led, std::vector<std::string>* warnings,
+				 LedFeel* out) {
+	LedFeel f = defaultLedFeel();
+	if (out == nullptr) {
+		return;
+	}
+	if (led.isNull()) {
+		// No `led` block at all. The defaults are already in `f`, and
+		// that is the whole contract: a config written before this
+		// feature existed behaves exactly as it did.
+		*out = f;
+		return;
+	}
+
+#define RR_FEEL(key, field, def, lo, hi) \
+	f.field = readInt(led, key, def, lo, hi, warnings)
+
+	// The strip. totalLeds is the one value that cannot be believed if
+	// it exceeds the build: the buffer is allocated at compile time and
+	// the animation would address LEDs that do not exist. A config
+	// claiming more is pulled down to the capacity rather than refused,
+	// for the same accept-and-clamp reason as everything else -- but the
+	// clamp is reported, because this one is a hardware mismatch and the
+	// operator is the one who needs to know.
+	RR_FEEL("totalLeds", totalLeds, kLedStripCapacity, 1, kLedStripCapacity);
+
+	RR_FEEL("travelMs", travelMs, 420, 0, 60000);
+	RR_FEEL("travelPeakWidth", travelPeakWidth, 6, 1, 64);
+	RR_FEEL("travelSparkLeds", travelSparkLeds, 2, 1, 64);
+	RR_FEEL("abovePct", abovePct, 0, 0, 100);
+	RR_FEEL("selfPct", selfPct, 100, 0, 100);
+	RR_FEEL("dimPct", dimPct, 22, 0, 100);
+	RR_FEEL("fillPct", fillPct, 45, 0, 100);
+	RR_FEEL("blobPct", blobPct, 100, 0, 100);
+	RR_FEEL("browseFromPct", browseFromPct, 25, 0, 100);
+	RR_FEEL("browseToPct", browseToPct, 45, 0, 100);
+	RR_FEEL("detentsPerStep", detentsPerStep, 5, 1, 64);
+	RR_FEEL("fastDetentsPerStep", fastDetentsPerStep, 2, 1, 64);
+	RR_FEEL("fastSpinWindowMs", fastSpinWindowMs, 0, 0, 60000);
+	RR_FEEL("settleLockoutMs", settleLockoutMs, 250, 0, 60000);
+	RR_FEEL("fillMinLeds", fillMinLeds, 3, 0, 512);
+	RR_FEEL("fillRetreatDelayMs", fillRetreatDelayMs, 3000, 0, 60000);
+	RR_FEEL("fillRetreatStepMs", fillRetreatStepMs, 250, 0, 60000);
+	RR_FEEL("blobWidth", blobWidth, 3, 1, 512);
+	RR_FEEL("pulseMs", pulseMs, 1100, 1, 60000);
+	RR_FEEL("pulseMinPct", pulseMinPct, 30, 0, 100);
+	RR_FEEL("pulseMaxPct", pulseMaxPct, 100, 0, 100);
+	RR_FEEL("explodeMs", explodeMs, 400, 0, 60000);
+	RR_FEEL("igniteMs", igniteMs, 200, 0, 60000);
+	RR_FEEL("ringIdleMs", ringIdleMs, 5000, 0, 600000);
+	RR_FEEL("ringFlashMs", ringFlashMs, 120, 0, 60000);
+	RR_FEEL("frameIntervalMs", frameIntervalMs, 8, 1, 100);
+
+#undef RR_FEEL
+
+	// Cross-field rules, applied after the reads so one number in the
+	// file cannot be a lie on its own. Kept here rather than at the call
+	// sites because each is a relationship, and a relationship restated
+	// in two places is one that will eventually disagree with itself.
+	if (f.fastDetentsPerStep > f.detentsPerStep) {
+		if (warnings != nullptr) {
+			warnings->push_back("led.fastDetentsPerStep was above "
+								"led.detentsPerStep; clamped to it");
+		}
+		f.fastDetentsPerStep = f.detentsPerStep;
+	}
+	if (f.blobWidth > f.totalLeds) {
+		f.blobWidth = f.totalLeds;
+	}
+	if (f.fillMinLeds > f.totalLeds) {
+		f.fillMinLeds = f.totalLeds;
+	}
+
+	// Colours: one [r, g, b] array per role, named, rather than
+	// twenty-one keys. An absent or malformed one leaves the default --
+	// half a colour is not a thing anybody meant to ask for.
+	static const char* kRoleKeys[kRoleCount] = {
+		"stack", "leaving", "fill", "travel", "proposal", "selected",
+	};
+	static const char* kChannel[3] = {"r", "g", "b"};
+	JsonObjectConst colors = led["colors"];
+	for (int r = 0; r < kRoleCount; ++r) {
+		JsonVariantConst v = colors[kRoleKeys[r]];
+		if (v.isNull() || !v.is<JsonArrayConst>()) {
+			continue;
+		}
+		JsonArrayConst rgb = v.as<JsonArrayConst>();
+		if (rgb.size() != 3) {
+			if (warnings != nullptr) {
+				warnings->push_back(std::string("led.colors.") + kRoleKeys[r] +
+									" needs exactly [r, g, b]; left at the default");
+			}
+			continue;
+		}
+		int* dst[3] = {&f.colorR[r], &f.colorG[r], &f.colorB[r]};
+		for (int ch = 0; ch < 3; ++ch) {
+			const long long raw = rgb[ch].as<long long>();
+			const long long clamped = (raw < 0) ? 0 : ((raw > 255) ? 255 : raw);
+			if (clamped != raw && warnings != nullptr) {
+				warnings->push_back(std::string("led.colors.") + kRoleKeys[r] +
+									"." + kChannel[ch] +
+									" is outside 0..255; using " +
+									std::to_string(clamped));
+			}
+			*dst[ch] = static_cast<int>(clamped);
+		}
+	}
+
+	*out = f;
+}
+
+}  // namespace
+
 LoadResult loadFromJson(const char* json, std::size_t len) {
 	LoadResult result;
 
@@ -163,6 +446,11 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 			result.shelves.push_back(shelf);
 		}
 	}
+
+	// The `led` block, last: it has no bearing on whether the config is
+	// valid, only on what the strip does with it. A missing block is not
+	// an error, and a clamped one leaves a line in result.warnings.
+	loadLedFeel(doc["led"], &result.warnings, &result.feel);
 
 	result.ok = true;
 	return result;

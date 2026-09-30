@@ -396,6 +396,177 @@ static void test_can_step_within_agrees_with_step(void) {
 	TEST_ASSERT_FALSE(canStepWithin(0, 0, 1));
 }
 
+// A config with no `led` block at all must come out exactly as it did
+// before the block existed. That is the whole promise of making every
+// field optional, and it is the thing that lets an operator hand-edit a
+// file without reading this.
+void test_a_config_with_no_led_block_gets_the_defaults(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 5, "ledWidth": 1}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE_MESSAGE(r.ok, r.error.c_str());
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        TEST_ASSERT_EQUAL(d.totalLeds, r.feel.totalLeds);
+        TEST_ASSERT_EQUAL(d.detentsPerStep, r.feel.detentsPerStep);
+        TEST_ASSERT_EQUAL(d.explodeMs, r.feel.explodeMs);
+        TEST_ASSERT_EQUAL(d.igniteMs, r.feel.igniteMs);
+        TEST_ASSERT_EQUAL(d.frameIntervalMs, r.feel.frameIntervalMs);
+        TEST_ASSERT_EQUAL(0, static_cast<int>(r.warnings.size()));
+}
+
+// The field the whole exercise is about: a string longer than 64.
+void test_total_leds_comes_from_the_config(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 55, "ledWidth": 39}
+            ],
+            "led": {"totalLeds": 118}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE_MESSAGE(r.ok, r.error.c_str());
+        TEST_ASSERT_EQUAL(118, r.feel.totalLeds);
+        TEST_ASSERT_EQUAL(0, static_cast<int>(r.warnings.size()));
+        // ...and the window that used to be silently clipped now fits
+        // inside it. This is the actual point: on a 64-LED build a
+        // console at LED 55 could be at most 9 wide, and the config
+        // asked for 39.
+        TEST_ASSERT_TRUE_MESSAGE(55 + 39 <= r.feel.totalLeds,
+                                 "the declared window must fit the declared strip");
+}
+
+// A config claiming more LEDs than the firmware was built for cannot be
+// believed: the buffer is allocated at compile time and the animation
+// would address LEDs that do not exist. It is pulled down to the
+// capacity and *reported*, because this is a hardware mismatch and the
+// operator is the one who has to resolve it.
+void test_total_leds_cannot_exceed_what_was_built_for(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"totalLeds": 4096}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(retroroom_core::kLedStripCapacity, r.feel.totalLeds);
+        TEST_ASSERT_TRUE_MESSAGE(r.warnings.size() > 0,
+                                 "a hardware mismatch must be reported, not silent");
+}
+
+// One number, one home: a partial block changes only what it names.
+void test_a_partial_led_block_leaves_everything_else_alone(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"detentsPerStep": 3}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_EQUAL(3, r.feel.detentsPerStep);
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        TEST_ASSERT_EQUAL(d.travelMs, r.feel.travelMs);
+        TEST_ASSERT_EQUAL(d.explodeMs, r.feel.explodeMs);
+        TEST_ASSERT_EQUAL(d.ringIdleMs, r.feel.ringIdleMs);
+        TEST_ASSERT_EQUAL(d.colorR[retroroom_core::kRoleSelected],
+                         r.feel.colorR[retroroom_core::kRoleSelected]);
+}
+
+// Out of range is clamped *and reported*. Clamping quietly is the same
+// as being wrong, from the operator's side of the glass.
+void test_out_of_range_is_clamped_and_reported(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"fillPct": 500, "detentsPerStep": 0}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_EQUAL(100, r.feel.fillPct);
+        TEST_ASSERT_EQUAL(1, r.feel.detentsPerStep);
+        TEST_ASSERT_TRUE_MESSAGE(r.warnings.size() >= 2,
+                                 "both clamps must be reported");
+}
+
+// Cross-field rules live in the loader, so one number in the file
+// cannot be a lie on its own.
+void test_fast_detents_cannot_exceed_detents_per_step(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"detentsPerStep": 4, "fastDetentsPerStep": 9}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_EQUAL(4, r.feel.fastDetentsPerStep);
+        TEST_ASSERT_TRUE(r.warnings.size() > 0);
+}
+
+// Colours as [r, g, b] arrays, one per role, and a malformed one
+// leaves the default rather than half a colour.
+void test_colours_parse_and_malformed_ones_keep_the_default(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {
+                "colors": {
+                    "selected": [10, 20, 30],
+                    "proposal": [1, 2, 3],
+                    "fill": [9, 9]
+                }
+            }
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_EQUAL(10, r.feel.colorR[retroroom_core::kRoleSelected]);
+        TEST_ASSERT_EQUAL(20, r.feel.colorG[retroroom_core::kRoleSelected]);
+        TEST_ASSERT_EQUAL(30, r.feel.colorB[retroroom_core::kRoleSelected]);
+        TEST_ASSERT_EQUAL(1, r.feel.colorR[retroroom_core::kRoleProposal]);
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        TEST_ASSERT_EQUAL_MESSAGE(d.colorR[retroroom_core::kRoleFill],
+                                  r.feel.colorR[retroroom_core::kRoleFill],
+                                  "a malformed colour keeps the default");
+        TEST_ASSERT_TRUE(r.warnings.size() > 0);
+}
+
+// The travel must stay the same hue as the proposal it hands over to,
+// and that is now a value in a file an operator can edit.
+void test_travel_and_proposal_keep_the_same_colour(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"colors": {"travel": [5, 6, 7]}}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        // Allowed to differ -- it is a value, and a value the operator
+        // owns. But the *default* must not, and a test that only checked
+        // the defaults would miss the file saying otherwise.
+        TEST_ASSERT_EQUAL(5, r.feel.colorR[retroroom_core::kRoleTravel]);
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        TEST_ASSERT_EQUAL_MESSAGE(d.colorR[retroroom_core::kRoleTravel],
+                                  d.colorR[retroroom_core::kRoleProposal],
+                                  "by default the travel is the proposal in flight");
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -432,5 +603,13 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_loads_lcd_backlight_default_when_absent);
 	RUN_TEST(test_loads_lcd_backlight_explicit_value);
 	RUN_TEST(test_loads_lcd_backlight_clamps_out_of_range);
+	RUN_TEST(test_travel_and_proposal_keep_the_same_colour);
+	RUN_TEST(test_colours_parse_and_malformed_ones_keep_the_default);
+	RUN_TEST(test_fast_detents_cannot_exceed_detents_per_step);
+	RUN_TEST(test_out_of_range_is_clamped_and_reported);
+	RUN_TEST(test_a_partial_led_block_leaves_everything_else_alone);
+	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);
+	RUN_TEST(test_total_leds_comes_from_the_config);
+	RUN_TEST(test_a_config_with_no_led_block_gets_the_defaults);
 	return UNITY_END();
 }
