@@ -51,5 +51,8 @@
         "detentsPerStep": 5,
         "explodeMs": 400,
         "igniteMs": 200
-    }
+    },
+    "menu": [
+        { "label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30 }
+    ]
 }

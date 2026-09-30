@@ -59,6 +59,24 @@ const Console& BrowsedConsole();
 // (lib/ConsoleConfig). The legacy "consoleDefinitions()" name is kept so
 // main.cpp's setup() call site stays the same; the body is now driven by
 // the core parser rather than a hand-rolled hardcoded array.
+// The operator's config menu, from the `menu` array in /consoles.json.
+// Empty when the config declares none, which is a menu with only "Go
+// Back" in it rather than a missing menu -- see
+// todo/open/2026-09-30_menu-lock-down-mode.md.
+const retroroom_core::Menu CabinetMenu();
+
+// Change one `led` setting by name, as the config menu does. Routed
+// through the same table the parser used to read the file, so there is
+// no per-key plumbing and a key that works in one works in the other.
+// Returns false if the name is not a `led` setting.
+//
+// NOT persisted: the value lives in RAM for the session. Writing it
+// back to /consoles.json needs the reload question in
+// todo/open/2026-09-30_reload-config-without-reboot.md answered first,
+// and a menu that appeared to save and did not would be worse than one
+// that does not claim to.
+bool setLedFeelValue(const char* key, int value);
+
 void consoleDefinitions();
 
 // Restore the console that was selected when the device last lost

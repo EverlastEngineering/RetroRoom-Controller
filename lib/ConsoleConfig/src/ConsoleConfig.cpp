@@ -97,48 +97,23 @@ void loadLedFeel(JsonObjectConst led, std::vector<std::string>* warnings,
 		return;
 	}
 
-#define RR_FEEL(key, field, def, lo, hi) \
-	f.field = readInt(led, key, def, lo, hi, warnings)
-
-	// The strip. totalLeds is the one value that cannot be believed if
-	// it exceeds the build: the buffer is allocated at compile time and
-	// the animation would address LEDs that do not exist. A config
-	// claiming more is pulled down to the capacity rather than refused,
-	// for the same accept-and-clamp reason as everything else -- but the
-	// clamp is reported, because this one is a hardware mismatch and the
-	// operator is the one who needs to know.
-	RR_FEEL("totalLeds", totalLeds, kLedStripCapacity, 1, kLedStripCapacity);
-
-	RR_FEEL("travelMs", travelMs, 420, 0, 60000);
-	RR_FEEL("travelPeakWidth", travelPeakWidth, 6, 1, 64);
-	RR_FEEL("travelSparkLeds", travelSparkLeds, 2, 1, 64);
-	RR_FEEL("abovePct", abovePct, 0, 0, 100);
-	RR_FEEL("selfPct", selfPct, 100, 0, 100);
-	RR_FEEL("dimPct", dimPct, 22, 0, 100);
-	RR_FEEL("fillPct", fillPct, 45, 0, 100);
-	RR_FEEL("blobPct", blobPct, 100, 0, 100);
-	RR_FEEL("browseFromPct", browseFromPct, 25, 0, 100);
-	RR_FEEL("browseToPct", browseToPct, 45, 0, 100);
-	RR_FEEL("detentsPerStep", detentsPerStep, 5, 1, 64);
-	RR_FEEL("fastDetentsPerStep", fastDetentsPerStep, 2, 1, 64);
-	RR_FEEL("fastSpinWindowMs", fastSpinWindowMs, 0, 0, 60000);
-	RR_FEEL("settleLockoutMs", settleLockoutMs, 250, 0, 60000);
-	RR_FEEL("fillMinLeds", fillMinLeds, 3, 0, 512);
-	RR_FEEL("fillRetreatDelayMs", fillRetreatDelayMs, 3000, 0, 60000);
-	RR_FEEL("fillRetreatStepMs", fillRetreatStepMs, 250, 0, 60000);
-	RR_FEEL("blobWidth", blobWidth, 3, 1, 512);
-	RR_FEEL("pulseMs", pulseMs, 1100, 1, 60000);
-	RR_FEEL("pulseMinPct", pulseMinPct, 30, 0, 100);
-	RR_FEEL("pulseMaxPct", pulseMaxPct, 100, 0, 100);
-	RR_FEEL("explodeMs", explodeMs, 400, 0, 60000);
-	RR_FEEL("igniteMs", igniteMs, 200, 0, 60000);
-	RR_FEEL("ringIdleMs", ringIdleMs, 5000, 0, 600000);
-	RR_FEEL("ringFlashMs", ringFlashMs, 120, 0, 60000);
-	RR_FEEL("ringOffDelayMs", ringOffDelayMs, 300, 0, 60000);
-	RR_FEEL("ringFadeMs", ringFadeMs, 300, 0, 60000);
-	RR_FEEL("frameIntervalMs", frameIntervalMs, 8, 1, 100);
-
-#undef RR_FEEL
+	// Every scalar, through the one table in LedFieldTable.cpp.
+	//
+	// The default passed to readInt() is the struct's *current* value,
+	// which is defaultLedFeel()'s -- not a second copy of it. The old
+	// RR_FEEL macro passed a literal, which meant loadLedFeel() seeded
+	// the struct from defaultLedFeel() and then overwrote every field
+	// with the macro's copy, so the defaults file was dead code for any
+	// key absent from the JSON and nothing checked the two agreed.
+	// totalLeds is not special-cased: the parser's job is the range, and
+	// the capacity ceiling is that field's `hi`.
+	int fieldCount = 0;
+	const LedField* fields = ledFields(&fieldCount);
+	for (int i = 0; i < fieldCount; ++i) {
+		const LedField& field = fields[i];
+		f.*(field.member) = readInt(led, field.key, f.*(field.member),
+								   field.lo, field.hi, warnings);
+	}
 
 	// Cross-field rules, applied after the reads so one number in the
 	// file cannot be a lie on its own. Kept here rather than at the call
@@ -297,6 +272,92 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 			if (ms < 0) ms = 0;
 			if (ms > 600000) ms = 600000;
 			result.lcdBacklightOffAfterMs = static_cast<std::uint32_t>(ms);
+		}
+	}
+
+	// Top-level menu array (optional). The operator's own settings menu:
+	// each entry names a `led` key, so adding an adjustable setting is a
+	// line of JSON rather than a firmware change.
+	//
+	// Entries are validated against the shared field table, and one that
+	// does not name a real `led` key is dropped with a warning rather
+	// than taking the whole menu down. A menu is the thing an operator
+	// edits by hand, so a typo in it is likely, and a cabinet whose
+	// menu vanished because of one is worse than a menu with one entry
+	// missing.
+	JsonArrayConst menuArr = doc["menu"];
+	if (!menuArr.isNull()) {
+		for (JsonVariantConst entry : menuArr) {
+			JsonObjectConst obj = entry.as<JsonObjectConst>();
+			if (obj.isNull()) {
+				continue;
+			}
+			const char* label = obj["label"] | "";
+			const char* key = obj["set"] | "";
+			if (label[0] == '\0' || key[0] == '\0') {
+				result.warnings.push_back(
+					"menu entry needs both \"label\" and \"set\"; skipped");
+				continue;
+			}
+			// The `led` prefix is stripped so the JSON says
+			// "led.detentsPerStep" and the table, which is keyed on the
+			// bare field name, can be asked directly. Writing the prefix
+			// in the config is the clearer thing for the operator to
+			// read, so the parser does the unwrapping rather than making
+			// them remember which half of the path the table knows.
+			std::string field = key;
+			if (field.compare(0, 4, "led.") == 0) {
+				field = field.substr(4);
+			}
+			const LedField* def = findLedField(field.c_str());
+			if (def == nullptr) {
+				result.warnings.push_back(
+					std::string("menu entry \"") + label +
+					"\" names an unknown setting \"" + field + "\"; skipped");
+				continue;
+			}
+			// `min`/`max` narrow what the menu offers and default to the
+			// field's own range. They are allowed to be narrower and NOT
+			// wider: a menu that offers values the file would refuse is
+			// a menu that lies.
+			int lo = obj["min"] | def->lo;
+			int hi = obj["max"] | def->hi;
+			if (lo < def->lo) lo = def->lo;
+			if (hi > def->hi) hi = def->hi;
+			if (lo > hi) {
+				result.warnings.push_back(
+					std::string("menu entry \"") + label +
+					"\" has min above max; using the setting's own range");
+				lo = def->lo;
+				hi = def->hi;
+			}
+			int step = obj["step"] | 1;
+			if (step < 1) step = 1;
+			// "type": "bool" is sugar for min 0 / max 1 / step 1. The
+			// core needs the flag because a bool alternates rather than
+			// stepping, and reading min/max to work that out would put
+			// the same decision in two places.
+			const bool isBool =
+				(obj["type"] | std::string("")) == std::string("bool");
+			result.menu.labels.push_back(label);
+			result.menu.keys.push_back(field);
+			// Built after the strings are all in place, so the pointers
+			// below cannot be invalidated by a later push_back.
+			MenuItem item;
+			item.label = result.menu.labels.back().c_str();
+			item.key = result.menu.keys.back().c_str();
+			item.isBool = isBool;
+			item.lo = isBool ? 0 : lo;
+			item.hi = isBool ? 1 : hi;
+			item.step = isBool ? 1 : step;
+			result.menu.items.push_back(item);
+		}
+		// The strings may have been reallocated by now, so repoint every
+		// item at its own string. Cheap, once, and it removes the only
+		// way this can dangle.
+		for (std::size_t i = 0; i < result.menu.items.size(); ++i) {
+			result.menu.items[i].label = result.menu.labels[i].c_str();
+			result.menu.items[i].key = result.menu.keys[i].c_str();
 		}
 	}
 

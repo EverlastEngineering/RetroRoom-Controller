@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include <CabinetMenu.h>  // MenuItem: what a `menu` entry parses into
+
 namespace retroroom_core {
 
 struct IrCode {
@@ -182,6 +184,66 @@ constexpr int kLedStripCapacity = 512;
 // answer to "what is the default" in the whole codebase.
 LedFeel defaultLedFeel();
 
+// One `led` option: where it lives, and the range it may legally hold.
+//
+// The single table of these is in LedFieldTable.cpp. The parser and the
+// runtime setter both go through it, so adding an option is one row
+// rather than a macro, a setter case and a documentation line.
+//
+// No default here on purpose: defaultLedFeel() is the default. See that
+// file for why this table deliberately carries none.
+struct LedField {
+    const char* key;
+    int LedFeel::*member;
+    int lo;
+    int hi;
+};
+
+// Every `led` option, in the order the file should document them. The
+// array is owned by the library; do not free it.
+const LedField* ledFields(int* count);
+
+// Look up one key. Null if the key is not a `led` option -- which is the
+// answer for the colours too, since they are not scalars.
+const LedField* findLedField(const char* key);
+
+// Read and write by key name.
+//
+// This is what makes a menu item a JSON edit rather than a firmware
+// change: an operator writes {"set": "led.detentsPerStep", ...} and the
+// same table the parser used to read the file reads and writes it back.
+// There is no per-key plumbing anywhere, so a key that works in the
+// file works in the menu and vice versa.
+
+// The current value, or `fallback` if the key is unknown.
+int ledFeelGet(const LedFeel& f, const char* key, int fallback);
+
+// Write a value, clamped to the field's range exactly as the parser
+// would. False if the key is unknown, or if `f` is null. *clamped, when
+// given, reports whether the value had to be moved -- so a caller can
+// say so rather than silently disagreeing with the file.
+bool ledFeelSet(LedFeel* f, const char* key, int value, bool* clamped);
+
+// The parsed `menu` array, with its own storage.
+//
+// The strings are held here and the MenuItem array is built over them
+// last, because a MenuItem holds `const char*` and a vector reallocating
+// underneath it would leave those dangling. Building once at the end is
+// the only ordering that cannot get that wrong.
+struct ParsedMenu {
+    std::vector<std::string> labels;
+    std::vector<std::string> keys;
+    std::vector<MenuItem> items;
+    // The core's non-owning view of the same data. Valid as long as
+    // this struct is not assigned to.
+    retroroom_core::Menu view() const {
+        retroroom_core::Menu m;
+        m.items = items.empty() ? nullptr : &items[0];
+        m.count = static_cast<int>(items.size());
+        return m;
+    }
+};
+
 struct LoadResult {
 	bool ok = false;
 	std::string error;
@@ -214,6 +276,11 @@ struct LoadResult {
 	// (validation shouldn't be a hard error -- operators with weird
 	// configs shouldn't have their devices bricked).
 	std::uint32_t lcdBacklightOffAfterMs = 30000;
+	// The operator-editable menu, from a top-level `menu` array. Empty
+	// when the config declares none, which is a menu with only "Go Back"
+	// in it -- see todo/open/2026-09-30_menu-lock-down-mode.md for why
+	// that is a feature rather than an absence.
+	ParsedMenu menu;
 };
 
 LoadResult loadFromJson(const char* json, std::size_t len);

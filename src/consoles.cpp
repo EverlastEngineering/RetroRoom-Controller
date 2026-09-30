@@ -94,6 +94,34 @@ std::vector<Shelf> shelfBounds;
 // loaded gets the same numbers the config would have given it.
 retroroom_core::LedFeel ledFeel = retroroom_core::defaultLedFeel();
 
+// The operator's menu, parsed from the config's `menu` array. Owns its
+// strings; CabinetMenu() hands out a non-owning view of them, which is
+// why the view must be fetched fresh rather than cached -- the strings
+// move if this is ever re-assigned.
+static retroroom_core::ParsedMenu menuDef;
+
+const retroroom_core::Menu CabinetMenu() {
+	return menuDef.view();
+}
+
+bool setLedFeelValue(const char* key, int value) {
+	bool clamped = false;
+	if (!retroroom_core::ledFeelSet(&ledFeel, key, value, &clamped)) {
+		return false;
+	}
+	if (clamped) {
+		// The core already clamped, and the table is the same one the
+		// parser used, so a clamp here means the *menu* asked for
+		// something outside the setting's range. Worth saying: a menu
+		// that silently did not do what it displayed is the kind of
+		// thing that makes an operator stop trusting the menu.
+		Serial.print("menu: ");
+		Serial.print(key);
+		Serial.println(" clamped to the setting's range");
+	}
+	return true;
+}
+
 void addConsole(const Console& console) {
 	consoles.push_back(console);
 }
@@ -211,6 +239,9 @@ void consoleDefinitions() {
 	// that is exactly how a console sat clamped to a third of its
 	// declared width without anybody noticing.
 	ledFeel = result.feel;
+	menuDef = result.menu;
+	Serial.print("Menu items: ");
+	Serial.println(menuDef.items.size());
 	for (const std::string& w : result.warnings) {
 		Serial.print("console config: ");
 		Serial.println(w.c_str());

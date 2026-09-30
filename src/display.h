@@ -143,6 +143,20 @@ void display_show_console(const char* name, const char* tagline);
 // detected at boot.
 void display_show_status(const char* line1, const char* line2);
 
+// Paint two rows of the config menu, from lib/CabinetMenu. The caller
+// owns the decision of what they say; this only puts them on the glass.
+//
+// Its own entry point rather than a mode on the live display, because
+// the menu replaces the normal view wholesale and the live view's
+// scroll state is not something to be half-resuming. The first paint
+// after the menu closes is the live view redrawing itself.
+void display_showMenu(const char* top, const char* bottom);
+
+// The menu has closed: drop the backlight hold and restart the auto-off
+// from now, so that repeatedly opening and closing the menu does not
+// keep the panel lit by resetting the count each time.
+void display_menuClosed();
+
 // Reset the backlight-off timer without changing what's on the
 // screen. Called from selectConsole() right after
 // display_show_console(). Cheap (just resets a uint32_t timestamp).
@@ -162,6 +176,8 @@ void display_loop();
 inline void display_init() {}
 inline void display_show_console(const char* /*name*/, const char* /*tagline*/) {}
 inline void display_show_status(const char* /*line1*/, const char* /*line2*/) {}
+inline void display_showMenu(const char* /*top*/, const char* /*bottom*/) {}
+inline void display_menuClosed() {}
 inline void display_wake() {}
 inline void display_loop() {}
 #endif

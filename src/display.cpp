@@ -437,6 +437,38 @@ void display_wake() {
 	backlightOffAtMs = millis() + lcdBacklightOffAfterMs;
 }
 
+void display_showMenu(const char* top, const char* bottom) {
+	if (!lcdPresent) {
+		return;
+	}
+	// The backlight on, whatever the auto-off timer says. A menu is the
+	// definition of using the cabinet, and a screen that dims halfway
+	// through reading a value reads as a freeze rather than as the
+	// display tidying up after itself.
+	if (!backlightOn) {
+		lcd.backlight();
+		backlightOn = true;
+	}
+	// Zero is the "held" sentinel for the auto-off, the same trick the
+	// ring uses for its strike deadline. Zero is not a reachable
+	// deadline from a real duration, so held and never-armed cannot be
+	// confused. A separate boolean would be a second thing to keep in
+	// step with this one.
+	backlightOffAtMs = 0;
+	lcd_print_fitted(top, 0);
+	lcd_print_fitted(bottom, 1);
+}
+
+void display_menuClosed() {
+	if (!lcdPresent) {
+		return;
+	}
+	// Drop the hold and restart the auto-off from *now*, so that opening
+	// and closing a menu repeatedly does not keep the panel lit
+	// indefinitely by resetting the count each time.
+	backlightOffAtMs = millis() + lcdBacklightOffAfterMs;
+}
+
 static void tick_scroll(LineScroll& scroll, int row) {
 	if (!scroll.needsScroll()) {
 		return;  // short line; nothing to scroll
@@ -494,8 +526,13 @@ void display_loop() {
 			break;
 	}
 
-	// Backlight off when the deadline expires. 0 = never off.
-	if (backlightOn && lcdBacklightOffAfterMs > 0 && now >= backlightOffAtMs) {
+	// Backlight off when the deadline expires. 0 means either "held"
+	// (the config menu is open -- see display_showMenu()) or "the timer
+	// has not been armed yet", and both mean the same thing here: not
+	// yet. The original comment said "0 = never off", which was true
+	// before the menu borrowed the sentinel and stopped being true.
+	if (backlightOn && lcdBacklightOffAfterMs > 0 && backlightOffAtMs != 0 &&
+		now >= backlightOffAtMs) {
 		lcd.noBacklight();
 		backlightOn = false;
 	}

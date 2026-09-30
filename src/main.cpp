@@ -161,6 +161,11 @@ void loop() {
 	// the ring light off the state edges itself.
 	controls_touchTick();
 
+	// The config menu, if it is open. Painted here rather than on input
+	// because the just-saved value has to revert to its label on a
+	// timer, and with no detent and no click nothing else would move.
+	controls_menuLoop();
+
 	// Pump the network stack (currently the captive-portal DNS server).
 	// No-op when WiFi is not active.
 #if defined(HAS_WIFI)

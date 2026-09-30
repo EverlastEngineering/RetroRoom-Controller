@@ -65,6 +65,12 @@ extern int currentConsoleIndex;
 void rotarySelectorPressed();
 void sequenceElapsed();
 void rotarySelectorISR();
+// The config menu, opened by a long press on the rotary. It takes the
+// knob from the browse while open: these are how a turn and a click get
+// handed over, and controls_menuLoop() paints it and runs its clock.
+extern void controls_menuDetent(int direction);
+extern void controls_menuClick();
+extern void controls_menuLoop();
 void nextConsolePressed();
 void prevConsolePressed();
 void nextConsoleISR();

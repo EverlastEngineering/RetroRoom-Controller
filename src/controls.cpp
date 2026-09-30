@@ -8,6 +8,10 @@
 #include "lighting.h"
 #include "ledstring.h"
 #include <LedStringPaint.h>  // retroroom_core::DetentGate
+#include <CabinetMenu.h>      // retroroom_core::MenuState: the config menu
+#include "display.h"          // display_showMenu / display_menuClosed
+#include <CabinetMenu.h>      // retroroom_core::MenuState: the config menu
+#include "display.h"
 
 // No IRAM_ATTR shim needed anymore -- ESP8266 is gone. RP2040 / Pico does
 // not require a special attribute for ISR handlers (the vector system
@@ -57,6 +61,12 @@ static bool proximityActive = false;
 // since boot, so the first detent seeds it.
 static retroroom_core::DetentGate browseGate;
 static int browseAnchorIndex = -1;
+
+// The config menu's state. Owned here rather than in display.cpp,
+// because the thing that decides what the menu is doing is the knob --
+// which is this file's business -- and display.cpp only puts the answer
+// on the glass.
+static retroroom_core::MenuState menuState;
 
 // When a step commits, rotary detents are ignored until this. 0 means
 // not armed, and a deadline of 0 is not reachable from a lockout
@@ -137,7 +147,18 @@ void controls_init() {
 	// rotary clicker
 	rotarySelector.begin();
 	rotarySelector.onPressed(rotarySelectorPressed);
-	// rotary_selector.onSequence(2, 1500, sequenceElapsed); // double click
+	// Long press opens the config menu. onPressedFor() fires once the
+	// button has been *held* for the duration, so it cannot be confused
+	// with a click -- which matters, because a click is already "commit
+	// the console" and a menu that ate commits would make the browse
+	// unusable.
+	//
+	// 900 ms is a guess and should be set by feel. It has to be long
+	// enough that a deliberate press-and-turn is never mistaken for a
+	// hold, and short enough that opening the menu does not feel like
+	// waiting. The dead double-click registration that used to sit here
+	// is gone; see sequenceElapsed(), which now does the menu.
+	rotarySelector.onPressedFor(900, sequenceElapsed);
 	if (rotarySelector.supportsInterrupt()) {
 		rotarySelector.enableInterrupt(rotarySelectorISR);
 		Serial.println("Button will be used through interrupts");
@@ -196,6 +217,15 @@ void controls_init() {
 
 
 void rotarySelectorPressed() {
+	// The config menu owns the click while it is open -- it opens the
+	// editor, or commits the one being edited, or leaves on "Go Back".
+	// Returning here is the whole point: a click that reached
+	// selectConsole() underneath an open menu would commit a console the
+	// operator is in the middle of reconfiguring.
+	if (menuIsOpen(menuState)) {
+		controls_menuClick();
+		return;
+	}
 	// sendSonyPower();
 	// Serial.println(SNES);
 	// selectConsole() is now a free function in src/consoles.cpp; previously
@@ -260,7 +290,39 @@ void controls_ringFadedOut() {
 	controls_browseReset();
 }
 
-void sequenceElapsed() { Serial.println("Double click"); }
+// Long press: open the config menu. Reached from
+// rotarySelector.onPressedFor(), see controls_init() for the duration.
+void sequenceElapsed() {
+	// A long press while the menu is already open closes it, so the
+	// gesture is its own inverse. A second way out would be a way to
+	// get stuck if the two ever disagreed about whether it was open.
+	if (menuIsOpen(menuState)) {
+		menuClose(menuState);
+		Serial.println("Menu closed");
+		display_menuClosed();
+		controls_browseReset();
+		return;
+	}
+	menuOpen(menuState);
+	Serial.println("Menu open");
+	controls_browseReset();
+}
+
+// Paint the menu and let its clock run. Called from main.cpp loop().
+//
+// menuTick() exists to expire the just-saved value back to a label, so
+// this cannot be called only on input: with no detent and no click the
+// value would sit on screen forever.
+void controls_menuLoop() {
+	if (!menuIsOpen(menuState)) {
+		return;
+	}
+	menuTick(menuState, millis());
+	const retroroom_core::MenuView v =
+		menuView(menuState, CabinetMenu(), millis(), 2, LCD_COLS);
+	display_showMenu(v.row[0], v.row[1]);
+}
+
 
 void rotarySelectorISR() {
 	// Defer: only set the flag. The .read() pump in loop()
@@ -269,6 +331,54 @@ void rotarySelectorISR() {
 	// block the CYW43 driver and any other time-critical
 	// interrupt for the duration of selectConsole().
 	hasRotarySelectorInterruptFired = true;
+}
+
+// The config menu takes the knob away from the browse while it is open.
+// A detent scrolls the list rather than moving the console cursor, and a
+// click opens the editor rather than committing.
+//
+// Routed here rather than inside rotaryEncoderTick() so there is one
+// place that decides who owns the knob, instead of the browse quietly
+// carrying on underneath the menu and both reacting to the same turn.
+void controls_menuDetent(int direction) {
+	menuDetent(menuState, CabinetMenu(), direction);
+}
+
+void controls_menuClick() {
+	const retroroom_core::Menu m = CabinetMenu();
+	// In the editor, a click commits -- that is what the "New" row has
+	// been waiting for. Everywhere else it opens the item, or closes
+	// the menu on "Go Back".
+	int value = 0;
+	if (menuState.mode == retroroom_core::MenuMode::EDIT) {
+		if (menuCommit(menuState, millis(), &value) && m.count > 0 &&
+			menuState.selected >= 0 && menuState.selected < m.count) {
+			const bool ok = setLedFeelValue(m.items[menuState.selected].key,
+											value);
+			Serial.print("Menu set ");
+			Serial.print(m.items[menuState.selected].key);
+			Serial.print(" = ");
+			Serial.print(value);
+			Serial.println(ok ? "" : " (unknown setting)");
+		}
+		return;
+	}
+	// The value the editor starts from is the live one, not the default
+	// and not a copy: a menu that opened onto a stale number would let
+	// the operator save their way back to a value they had already
+	// changed.
+	int current = 0;
+	if (m.count > 0 && menuState.selected >= 0 && menuState.selected < m.count) {
+		current = retroroom_core::ledFeelGet(ledFeel,
+											 m.items[menuState.selected].key, 0);
+	}
+	const bool wasOpen = menuIsOpen(menuState);
+	menuSelect(menuState, m, current);
+	if (wasOpen && !menuIsOpen(menuState)) {
+		// "Go Back" -- the menu has just closed.
+		Serial.println("Menu closed");
+		display_menuClosed();
+	}
 }
 
 
@@ -375,6 +485,18 @@ void rotaryEncoderTick() {
 		// Serial.println(num_consoles);
 
 		if (direction != -1 && direction != 1) {
+			return;
+		}
+
+		// The config menu owns the knob while it is open: a turn scrolls
+		// it, and nothing below runs. Returning here rather than merely
+		// skipping the paint matters -- the gate's position, the blob
+		// and the settle lockout would otherwise keep advancing
+		// underneath a menu that is plainly not listening, and the first
+		// turn after closing it would land the browse somewhere the
+		// operator never went.
+		if (menuIsOpen(menuState)) {
+			controls_menuDetent(direction);
 			return;
 		}
 

@@ -520,6 +520,101 @@ void test_the_new_ring_timings_default(void) {
         TEST_ASSERT_EQUAL(d.ringFadeMs, r.feel.ringFadeMs);
 }
 
+// The `menu` array parses into items that name real `led` keys, so
+// adding an adjustable setting is a line of JSON rather than a
+// firmware change.
+void test_the_menu_array_parses(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Detents", "set": "led.detentsPerStep",
+                 "min": 1, "max": 30},
+                {"label": "Ring idle", "set": "led.ringIdleMs"}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(2, static_cast<int>(r.menu.items.size()));
+        TEST_ASSERT_EQUAL_STRING("detentsPerStep", r.menu.keys[0].c_str());
+        TEST_ASSERT_FALSE(r.menu.items[0].isBool);
+        // The menu's own narrower range, which is allowed.
+        TEST_ASSERT_EQUAL(1, r.menu.items[0].lo);
+        TEST_ASSERT_EQUAL(30, r.menu.items[0].hi);
+        // With no min/max, the field's own range from the shared table.
+        TEST_ASSERT_EQUAL(0, r.menu.items[1].lo);
+        TEST_ASSERT_EQUAL(600000, r.menu.items[1].hi);
+        // The view points at the same items.
+        const retroroom_core::Menu v = r.menu.view();
+        TEST_ASSERT_EQUAL(2, v.count);
+        TEST_ASSERT_EQUAL_STRING("Detents", v.items[0].label);
+}
+
+// A menu entry naming something that is not a `led` key is dropped with
+// a warning rather than taking the whole menu with it. A menu is the
+// thing an operator edits by hand, so a typo in it is likely.
+void test_a_menu_entry_naming_nothing_real_is_skipped(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Good", "set": "led.detentsPerStep"},
+                {"label": "Bad", "set": "led.noSuchSetting"},
+                {"label": "Missing set"}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL_MESSAGE(1, static_cast<int>(r.menu.items.size()),
+                                  "only the legal entry should survive");
+        TEST_ASSERT_TRUE(r.warnings.size() >= 2);
+}
+
+// A menu may not offer a wider range than the setting allows. One that
+// did would be a menu that lets the operator pick a value the file
+// would refuse, which is worse than not offering it.
+void test_a_menu_cannot_offer_more_than_the_setting_allows(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Too wide", "set": "led.detentsPerStep",
+                 "min": 0, "max": 5000}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        // The field's own range is 1..64.
+        TEST_ASSERT_EQUAL(1, r.menu.items[0].lo);
+        TEST_ASSERT_EQUAL(64, r.menu.items[0].hi);
+}
+
+// A config with no `menu` is a menu with nothing in it, not a failure.
+// That is the lock-down case: no long-press target at all.
+void test_a_config_with_no_menu_has_an_empty_one(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(0, static_cast<int>(r.menu.items.size()));
+        const retroroom_core::Menu v = r.menu.view();
+        TEST_ASSERT_EQUAL(0, v.count);
+        TEST_ASSERT_TRUE(v.items == nullptr);
+}
+
 // Out of range is clamped *and reported*. Clamping quietly is the same
 // as being wrong, from the operator's side of the glass.
 void test_out_of_range_is_clamped_and_reported(void) {
@@ -646,6 +741,10 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_fast_detents_cannot_exceed_detents_per_step);
 	RUN_TEST(test_the_ring_timings_all_parse);
 	RUN_TEST(test_the_new_ring_timings_default);
+	RUN_TEST(test_the_menu_array_parses);
+	RUN_TEST(test_a_menu_entry_naming_nothing_real_is_skipped);
+	RUN_TEST(test_a_menu_cannot_offer_more_than_the_setting_allows);
+	RUN_TEST(test_a_config_with_no_menu_has_an_empty_one);
 	RUN_TEST(test_out_of_range_is_clamped_and_reported);
 	RUN_TEST(test_a_partial_led_block_leaves_everything_else_alone);
 	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);
