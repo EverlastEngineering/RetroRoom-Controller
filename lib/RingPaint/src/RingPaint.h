@@ -168,6 +168,21 @@ struct RingState {
 	// genuine approach after they lift and return still works.
 	bool proximityNear = false;
 	bool proximityEngaged = false;
+	// The fade reached black while the strip was still unwinding an
+	// abandoned run, so the "the browse is over" signal is being held
+	// back until the retreat finishes.
+	//
+	// This exists because the ring and the strip clean up on different
+	// clocks and this flag is the link between them. The old fade took
+	// as long as the main loop did -- seconds -- which meant it happened
+	// to outlast the strip's retreat every time, and nothing had to say
+	// so. Giving the fade its configured 300ms took that accident away,
+	// and the browse was then cleared before the strip had finished
+	// taking it apart: the progress indicators vanished in one step
+	// instead of being peeled off one at a time. The ring now goes dark
+	// on its own schedule and this carries the signal across the gap, so
+	// the retreat gets its full run whichever of the two is quicker.
+	bool fadeDonePending = false;
 };
 
 // The result of advancing the ring one tick.

@@ -302,6 +302,83 @@ static void test_a_detent_during_a_strike_is_ignored(void) {
 								  "a detent under a strike must not start a hold");
 }
 
+// The regression, and the reason `fadeDonePending` exists.
+//
+// The strip unwinds an abandoned browse one LED at a time -- the
+// retreat. Reporting a completed fade makes the caller clear the browse,
+// and clearing the browse takes the retreat with it, so the indicators
+// vanish in one step instead of being peeled off.
+//
+// The ring's fade used to take as long as the main loop did, which
+// happened to be longer than the retreat, so the ordering came out
+// right by accident and nothing had to say so. At 300ms the ring
+// finishes long before the retreat, and the browse was cleared
+// underneath it: after a couple of seconds the strip snapped back to
+// the selected console with no one-at-a-time removal at all.
+//
+// The ring still goes dark on its own clock. Only the signal waits.
+static void test_a_retreat_holds_the_browse_cleared_signal(void) {
+	const RingConfig c = cfg();
+	RingState s;
+
+	// Turn the knob, then stop. The ring is holding.
+	ringDetent(s, 0, c, 1);
+	ringTick(s, 100, c, false);
+
+	// The hand leaves and the ring runs grace + fade to black.
+	ringProximity(s, 0, true);
+	ringProximity(s, 200, false);
+
+	// The retreat is running throughout. The signal must never arrive
+	// inside it, whether the ring is still in its grace, mid-fade, or
+	// already dark.
+	for (uint32_t t = 200; t < 1000; t += 20) {
+		const RingUpdate u = ringTick(s, t, c, true);
+		TEST_ASSERT_FALSE_MESSAGE(
+		    u.fadeCompleted,
+		    "the browse must NOT be cleared while the retreat is unwinding");
+	}
+	// Grace 200..500, fade 500..800, so the ring is dark from 800 on --
+	// and it is dark *during* the retreat, which is the part that
+	// regressed.
+	TEST_ASSERT_EQUAL_INT_MESSAGE(0, ringTick(s, 900, c, true).paint.highlightLevel,
+								  "the ring must still go dark during a retreat");
+	TEST_ASSERT_EQUAL_INT(static_cast<int>(RingMode::DARK),
+						  static_cast<int>(s.mode));
+
+	// ...and the signal lands the moment the retreat is over.
+	const RingUpdate after = ringTick(s, 1020, c, false);
+	TEST_ASSERT_TRUE_MESSAGE(after.fadeCompleted,
+							 "the signal must be delivered once the retreat "
+							 "finishes");
+	// Exactly once. A second report would revert the cursor twice.
+	TEST_ASSERT_FALSE(ringTick(s, 1040, c, false).fadeCompleted);
+}
+
+// Turning the knob again makes a held signal moot -- there is a browse
+// in progress now, so there is nothing to close out. Delivering the
+// stale signal later would snap the cursor back mid-spin.
+static void test_a_detent_cancels_a_held_signal(void) {
+	const RingConfig c = cfg();
+	RingState s;
+	ringDetent(s, 0, c, 1);
+	ringProximity(s, 0, true);
+	ringProximity(s, 200, false);
+	for (uint32_t t = 200; t < 1000; t += 20) {
+		ringTick(s, t, c, true);
+	}
+	TEST_ASSERT_EQUAL_INT(static_cast<int>(RingMode::DARK),
+						  static_cast<int>(s.mode));
+
+	// The operator picks the knob back up before the retreat finishes.
+	ringDetent(s, 1000, c, 1);
+	ringTick(s, 1010, c, true);
+	ringTick(s, 2000, c, false);
+	TEST_ASSERT_FALSE_MESSAGE(ringTick(s, 2010, c, false).fadeCompleted,
+							  "a new browse must not inherit the old "
+							  "browse's held signal");
+}
+
 // ---------------------------------------------------------------------------
 // Proximity. The third shipped bug lived in the seam between this and
 // src/controls.cpp.
@@ -685,6 +762,9 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_idle_ms_zero_disables_the_timeout_but_not_a_commit);
 	RUN_TEST(test_a_detent_re_arms_the_idle_hold);
 	RUN_TEST(test_the_retreat_holds_the_timeout);
+	// The regression: the ring's fade must not cut the strip's retreat short.
+	RUN_TEST(test_a_retreat_holds_the_browse_cleared_signal);
+	RUN_TEST(test_a_detent_cancels_a_held_signal);
 	// The spinner.
 	RUN_TEST(test_the_spinner_wraps_at_both_ends);
 	// Clock.

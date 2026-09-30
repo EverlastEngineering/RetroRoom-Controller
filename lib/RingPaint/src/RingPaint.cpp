@@ -77,6 +77,10 @@ void ringDetent(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 	// the old behaviour and it is right: the operator is turning the
 	// knob, so the ring should answer immediately, and the fade is
 	// simply abandoned for a new hold.
+	//
+	// It also makes any held "the browse is over" signal moot -- there is
+	// a browse again, so there is nothing to close out.
+	s.fadeDonePending = false;
 	s.mode = RingMode::IDLE;
 	s.modeStartMs = nowMs;
 	s.holdUntilMs = nowMs + cfg.idleMs;
@@ -90,6 +94,7 @@ void ringCommit(RingState& s, uint32_t nowMs, const RingConfig& cfg) {
 	// while the reading is unchanged, the ring stays dark until they
 	// actually lift and come back.
 	s.proximityEngaged = false;
+	s.fadeDonePending = false;
 	if (cfg.flashMs > 0) {
 		s.mode = RingMode::FLASH;
 		s.modeStartMs = nowMs;
@@ -204,7 +209,25 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 		const uint32_t t = fadeElapsed(nowMs, s.modeStartMs, cfg.fadeMs);
 		if (t >= cfg.fadeMs) {
 			s.mode = RingMode::DARK;
-			u.fadeCompleted = true;
+			// Held back if the strip is still unwinding the abandoned
+			// run. The caller acts on this signal by clearing the
+			// browse, and that takes the retreat with it -- so reporting
+			// it here would empty the strip in one step instead of
+			// letting it peel itself apart, which is the entire reason
+			// the retreat exists. The ring is dark either way; only the
+			// signal waits.
+			//
+			// Report on this tick in the ordinary case. Setting the flag
+			// unconditionally and delivering it at the bottom of the
+			// function would work too, but only if the flag survives
+			// being cleared by the next event -- and the difference
+			// between "deliver now" and "remember, then deliver" is
+			// exactly the kind of subtlety that loses a signal.
+			if (retreatInProgress) {
+				s.fadeDonePending = true;
+			} else {
+				u.fadeCompleted = true;
+			}
 			break;  // DARK's all-off paint
 		}
 		// 255 at the start of the fade, 0 at the end. fadeMs = 0 means
@@ -225,6 +248,14 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 	}
 
 	s.lastPaint = u.paint;
+
+	// A fade that finished during a retreat reports now that the retreat
+	// is over, and only then -- the shell clears the browse in response,
+	// and doing it during the retreat is the bug this exists to stop.
+	if (s.fadeDonePending && !retreatInProgress) {
+		s.fadeDonePending = false;
+		u.fadeCompleted = true;
+	}
 	return u;
 }
 
