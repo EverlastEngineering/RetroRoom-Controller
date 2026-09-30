@@ -87,6 +87,9 @@ int pendingSaveIndex = 0;
 uint32_t currentConsoleSelectedAtMs = 0;
 uint32_t lcdBacklightOffAfterMs = 30000;  // default; overwritten by consoleDefinitions()
 std::vector<Console> consoles;
+// The shelf extents from the config's optional `shelves` block. Empty
+// is the normal case and is not an error.
+std::vector<Shelf> shelfBounds;
 
 void addConsole(const Console& console) {
 	consoles.push_back(console);
@@ -203,6 +206,18 @@ void consoleDefinitions() {
 	for (const auto& c : result.consoles) {
 		addConsole(c);
 	}
+	// The declared shelf extents, if the config has any. Empty is
+	// normal and means "derive them from the consoles", so nothing has
+	// to branch on it here.
+	shelfBounds = result.shelves;
+	for (const auto& s : shelfBounds) {
+		Serial.print("Shelf ");
+		Serial.print(s.id);
+		Serial.print(" occupies LED ");
+		Serial.print(s.fromLed);
+		Serial.print("..");
+		Serial.println(s.toLed);
+	}
 	Serial.print("Loaded ");
 	Serial.print(result.consoles.size());
 	Serial.print(" consoles from ");
@@ -221,7 +236,21 @@ void consoleDefinitions() {
 		Serial.print(" led=");
 		Serial.print(c.led_position);
 		Serial.print("..");
-		Serial.print(c.led_position + c.led_width - 1);
+		// The *clamped* end, not led_position + led_width - 1. A console
+		// whose declared window runs off the end of the strip is a
+		// config error, and printing the declared end hides it -- the
+		// log would say 55..93 on a 64-LED strip and read as though
+		// the console really were that wide.
+		const int clampedWidth = (c.led_position + c.led_width >
+								 NUM_SELECTED_CONSOLE_LED_STRING_LEDS)
+									? (NUM_SELECTED_CONSOLE_LED_STRING_LEDS - c.led_position)
+									: c.led_width;
+		Serial.print(c.led_position + clampedWidth - 1);
+		if (clampedWidth != c.led_width) {
+			Serial.print(" (declared width ");
+			Serial.print(c.led_width);
+			Serial.print(" runs off the strip)");
+		}
 		Serial.print("]");
 	}
 	Serial.println();

@@ -1,0 +1,49 @@
+{
+    "irCodes": {
+        "SVideo": "0x030",
+        "Front": "0x830",
+        "Video": "0x430",
+        "YUV": "0xE30"
+    },
+    "consoleNames": {
+        "NES": "Nintendo Entertainment System",
+        "SMS": "Sega Master System",
+        "XBOX": "Microsoft Xbox"
+    },
+    "consoles": [
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 4,
+            "ledWidth": 8,
+            "shelf": 0
+        },
+        {
+            "id": "SMS",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 21,
+            "ledWidth": 12,
+            "shelf": 0
+        },
+        {
+            "id": "XBOX",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 55,
+            "ledWidth": 9,
+            "shelf": 0
+        }
+    ],
+    "shelves": [
+        {
+            "id": 0,
+            "fromLed": 0,
+            "toLed": 63
+        }
+    ],
+    "lcd": {
+        "backlightOffAfterMs": 2000
+    }
+}

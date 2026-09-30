@@ -49,11 +49,34 @@ struct Console {
 	std::string tagline;
 };
 
+struct Shelf {
+	// Matches the `shelf` value on the consoles that sit here. The join
+	// key: a console names a shelf, a shelf names the LEDs it occupies.
+	int id = 0;
+	// Inclusive LED indices of the shelf's physical extent. The shelf
+	// runs wider than the consoles on it -- there is bare string at
+	// either end -- and that bare space is where a console's commit
+	// animation is allowed to expand into.
+	//
+	// Inclusive rather than half-open because these are positions on a
+	// physical object ("LED 0 through LED 24 are on the top shelf"), not
+	// a slice of a buffer.
+	int fromLed = 0;
+	int toLed = 0;
+};
+
 struct LoadResult {
 	bool ok = false;
 	std::string error;
 	std::vector<IrCode> irCodes;
 	std::vector<Console> consoles;
+	// Optional top-level `shelves` block: the physical extent of each
+	// shelf, keyed by the `shelf` value its consoles carry. Empty when
+	// the config does not declare one, and the shell then derives the
+	// extents from the consoles' own windows -- which is a shelf that
+	// is exactly as wide as the consoles on it, and loses the bare
+	// string at either end.
+	std::vector<Shelf> shelves;
 	// Top-level LCD config. Default 30000 ms (30 s) when the `lcd` block
 	// is absent or when the field is missing. The shell exposes this to
 	// the LCD driver via retroroom_store::getLcdBacklightOffAfterMs().

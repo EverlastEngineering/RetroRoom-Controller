@@ -61,18 +61,12 @@ enum class StripMode {
 // src/configuration.h for what each one is for and what it trades off.
 retroroom_core::SelectionEffectConfig effectConfig() {
 	retroroom_core::SelectionEffectConfig c;
-	c.totalMs = LEDSTRING_SELECT_EFFECT_MS;
-	// A twinkle longer than the whole effect would leave no room to
-	// settle, which is how you end up with a permanently twinkling
-	// strip. Clamp rather than trust the two values to agree.
-	c.twinkleMs = (LEDSTRING_SELECT_TWINKLE_MS < LEDSTRING_SELECT_EFFECT_MS)
-					 ? LEDSTRING_SELECT_TWINKLE_MS
-					 : LEDSTRING_SELECT_EFFECT_MS;
-	c.twinkleTickMs = LEDSTRING_SELECT_TWINKLE_TICK_MS;
-	c.twinkleOnPct = LEDSTRING_SELECT_TWINKLE_ON_PCT;
-	c.staggerMs = LEDSTRING_SELECT_STAGGER_MS;
-	c.twinkleMin = LEDSTRING_SELECT_TWINKLE_MIN_PCT;
-	c.twinkleMax = LEDSTRING_SELECT_TWINKLE_MAX_PCT;
+	// The total is the sum, not a third number. Two phases that each
+	// think they own the end of the effect is how the loop and the
+	// config drift apart.
+	c.explodeMs = LEDSTRING_SELECT_EXPLODE_MS;
+	c.igniteMs = LEDSTRING_SELECT_IGNITE_MS;
+	c.totalMs = c.explodeMs + c.igniteMs;
 	c.abovePct = LEDSTRING_ABOVE_PCT;
 	c.selfPct = LEDSTRING_SELF_PCT;
 	return c;
@@ -194,6 +188,46 @@ int collectAboveFor(int idx, retroroom_core::LedRange* out) {
 	}
 	return retroroom_core::collectAboveWindows(all, count, windowFor(idx).start,
 											   out, kMaxAboveWindows);
+}
+
+// LEDs a console's commit animation is allowed to touch: the shelf it
+// sits on, as a half-open window.
+//
+// Declared per shelf rather than per console because it is a property of
+// the furniture, not of a console: the string runs wider than the
+// consoles on it, and that bare space at either end is where the commit
+// animation expands into. A config that says nothing about shelf extents
+// gets the span of the consoles on the shelf, which never leaves the
+// shelf but does not use the bare space either.
+retroroom_core::LedRange shelfBoundsFor(int idx) {
+	const int n = HowManyConsoles();
+	if (idx < 0 || idx >= n) {
+		return {0, 0};
+	}
+	const int shelf = consoles[idx].shelf;
+	for (const Shelf& s : shelfBounds) {
+		if (s.id == shelf) {
+			return {s.fromLed, (s.toLed - s.fromLed) + 1};
+		}
+	}
+	int lo = -1;
+	int hi = -1;
+	for (int i = 0; i < n; ++i) {
+		if (consoles[i].shelf != shelf) {
+			continue;
+		}
+		const retroroom_core::LedRange w = windowFor(i);
+		if (lo < 0 || w.start < lo) {
+			lo = w.start;
+		}
+		if (hi < 0 || w.start + w.width > hi) {
+			hi = w.start + w.width;
+		}
+	}
+	if (lo < 0) {
+		return {0, 0};
+	}
+	return {lo, hi - lo};
 }
 
 // Turn a resolved frame into pixels and push it to the wire. This is
@@ -475,6 +509,11 @@ void paintSelecting(uint32_t elapsedMs) {
 	// not per frame. A config reload mid-animation would otherwise
 	// repaint the twinkle against a different console list.
 	f.from = windowFor(selectIdx);
+	// The shelf bound on the explosion. This is resolved once, when the
+	// effect starts, for the same reason the above-list is: a config
+	// reload mid-animation must not re-shape a frame that is already
+	// under way.
+	f.selectBounds = shelfBoundsFor(selectIdx);
 	f.aboveCount = collectAboveFor(selectIdx, aboveBuffer);
 	f.aboveWindows = aboveBuffer;
 	f.elapsedMs = elapsedMs;

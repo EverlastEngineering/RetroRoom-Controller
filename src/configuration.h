@@ -61,8 +61,9 @@
 //   2. PREVIEW. The console about to be selected pulses in its
 //      JSON-defined window (ledPosition / ledWidth).
 //
-//   3. SELECT. On commit the whole strip twinkles and collapses in
-//      under a second to just the consoles above the selected one.
+//   3. SELECT. On commit the selected console explodes outward and
+//      fades to nothing, then comes back at full size and full
+//      brightness -- 400ms, ending exactly on the resting paint.
 
 // Duration of the scripted travel that plays when a browse step
 // completes -- the block of light moving off the current console and
@@ -234,68 +235,44 @@
 #define LEDSTRING_PREVIEW_PULSE_MAX_PCT 100
 #endif
 
-// Total length of the selection effect. The requirement is that it
-// finishes in under a second; the per-pixel stagger is subtracted from
-// the ramp rather than added to the total, so raising it cannot push
-// the effect past this budget.
-#ifndef LEDSTRING_SELECT_EFFECT_MS
-#define LEDSTRING_SELECT_EFFECT_MS 900
-#endif
-
-// Portion of the selection effect spent twinkling the whole strip
-// before it starts collapsing. Clamped to LEDSTRING_SELECT_EFFECT_MS.
+// The commit, in two halves. Together they are the whole effect, and
+// the driver derives the total as their sum rather than taking a third
+// number -- so the two phases cannot disagree about where the end is.
 //
-// **0 is the twinkle's off switch** and is meant to be compiled with:
-// the effect then goes straight from the commit to the collapse, and
-// the twinkle costs nothing in flash, RAM or code.
-#ifndef LEDSTRING_SELECT_TWINKLE_MS
-#define LEDSTRING_SELECT_TWINKLE_MS 850
-#endif
-
-// How often the twinkle re-rolls which pixels are lit, in ms.
+// Replaces a twinkle across the whole strip. That read as a fault: a
+// random scatter has no shape, it was spread evenly over LEDs that
+// mostly sit dark at rest, and it never faded -- every pixel was either
+// fully lit or fully out, so it looked digital rather than luminous.
+// These halves are about *this* console, both sweep an edge across
+// pixels rather than jumping between states, and the second ends
+// exactly on the resting picture.
 //
-// This is the cadence of the flicker, not its length. At 15ms a lit
-// pixel is on for about a frame at 60Hz and off for one, which is the
-// fastest the eye resolves as *flashing* rather than as a single
-// brightness. Much longer and the twinkle reads as a shimmer; much
-// shorter and it aliases into noise. Ignored when the twinkle is off.
-#ifndef LEDSTRING_SELECT_TWINKLE_TICK_MS
-#define LEDSTRING_SELECT_TWINKLE_TICK_MS 15
-#endif
-
-// What fraction of the strip is lit on any one twinkle tick, as a
-// percentage. 0 is off, 100 is a solid block.
+//   EXPLODE -- the window that was pulsing widens to twice its width,
+//              symmetrically, while the whole thing dims to nothing. By
+//              the time it is widest it is invisible, so the widest
+//              frame is the one nobody sees and the edge never has to
+//              be exact to look right. Clamped to the console's own
+//              shelf, and to the *narrower* of the two sides, so a
+//              console near a shelf end grows evenly rather than
+//              lopsided.
 //
-// A fraction, not a brightness: see the note on twinkleOnPct in
-// lib/LedStringPaint. Roughly a fifth lit is enough to read as a strike
-// across a dark strip without turning the whole thing into a strobe,
-// and the gap between lit pixels is what makes it look like sparks
-// rather than a lit bar.
-#ifndef LEDSTRING_SELECT_TWINKLE_ON_PCT
-#define LEDSTRING_SELECT_TWINKLE_ON_PCT 20
-#endif
-
-// Per-pixel delay on the collapse ramp, so the strip settles as a
-// ripple rather than snapping in one frame. The cost is taken out of
-// the ramp length, so the total stays inside LEDSTRING_SELECT_EFFECT_MS.
-#ifndef LEDSTRING_SELECT_STAGGER_MS
-#define LEDSTRING_SELECT_STAGGER_MS 6
-#endif
-
-// The two brightness levels the twinkle switches between: a lit pixel
-// gets MAX, a dark one gets MIN. So these are the *on* and *off*
-// levels, not the ends of a brightness ramp.
+//   IGNITE  -- from nothing, the console comes back: width from zero to
+//              its true window, brightness from zero to the resting
+//              level, together. Ends on exactly the resting paint, so
+//              the strip arrives at rest rather than being cut to it.
 //
-// MIN wants to be genuinely 0. It used to be 10 to give the sparkle
-// "contrast", which was written when the twinkle scaled a random
-// brightness; with a thresholded twinkle a non-zero floor means the
-// 80% that are meant to be dark are actually faintly lit, and the
-// strike turns into a wash again.
-#ifndef LEDSTRING_SELECT_TWINKLE_MIN_PCT
-#define LEDSTRING_SELECT_TWINKLE_MIN_PCT 0
+// 200 ms each. Long enough for the eye to follow an edge moving, short
+// enough that the commit still feels like a confirmation rather than
+// something to wait out. The two meet at zero brightness, so there is a
+// beat of darkness at the junction -- that is the gap between the old
+// console going and the new one arriving, and it is the one thing here
+// worth changing your mind about if it reads as a blink rather than a
+// pause.
+#ifndef LEDSTRING_SELECT_EXPLODE_MS
+#define LEDSTRING_SELECT_EXPLODE_MS 200
 #endif
-#ifndef LEDSTRING_SELECT_TWINKLE_MAX_PCT
-#define LEDSTRING_SELECT_TWINKLE_MAX_PCT 100
+#ifndef LEDSTRING_SELECT_IGNITE_MS
+#define LEDSTRING_SELECT_IGNITE_MS 200
 #endif
 
 // What the strip settles to once everything is over.

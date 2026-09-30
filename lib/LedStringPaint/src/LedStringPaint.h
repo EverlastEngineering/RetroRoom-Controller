@@ -285,52 +285,23 @@ int computePulseScale(std::uint32_t elapsedMs, std::uint32_t periodMs,
 // Every field is surfaced so the "feel" can be tuned from
 // src/configuration.h without touching this core.
 struct SelectionEffectConfig {
-	SelectionEffectConfig()
-		: totalMs(900), twinkleMs(350), staggerMs(6), twinkleMin(12),
-		  twinkleMax(100), abovePct(22), selfPct(100) {}
-	SelectionEffectConfig(std::uint32_t total, std::uint32_t twinkle,
-	                      std::uint32_t stagger, int tmin, int tmax,
-	                      int above, int self)
-		: totalMs(total), twinkleMs(twinkle), staggerMs(stagger),
-		  twinkleMin(tmin), twinkleMax(tmax), abovePct(above),
-		  selfPct(self) {}
+	SelectionEffectConfig() : totalMs(400), explodeMs(200), igniteMs(200),
+		abovePct(22), selfPct(100) {}
+	SelectionEffectConfig(std::uint32_t total, std::uint32_t explode,
+	                      std::uint32_t ignite, int above, int self)
+		: totalMs(total), explodeMs(explode), igniteMs(ignite),
+		  abovePct(above), selfPct(self) {}
 
-	// Whole effect. The user-visible contract is that it finishes in
-	// under a second.
+	// Whole effect, and the requirement is that it finishes in under a
+	// second. The shell derives it as explodeMs + igniteMs rather than
+	// taking a third number, so the two phases cannot disagree about
+	// where the end is.
 	std::uint32_t totalMs;
-	// Portion of the effect spent twinkling the entire strip before it
-	// starts settling. Clamped to totalMs. **0 is the twinkle's off
-	// switch** and compiles no twinkle behaviour into the sequence at
-	// all -- the effect goes straight to the settle.
-	std::uint32_t twinkleMs;
-	// How often the twinkle re-rolls *which* pixels are lit, in ms.
-	// Small enough to read as a flicker, large enough that the eye
-	// resolves individual lit pixels rather than a wash. Ignored when
-	// twinkleMs is 0.
-	std::uint32_t twinkleTickMs = 15;
-	// Roughly what fraction of the strip is lit on any one tick, as a
-	// percentage. The twinkle is a threshold on the pseudo-random
-	// sample rather than a brightness scale, so this is a count of lit
-	// pixels and not a dimming.
-	//
-	// This is the difference between a twinkle and a shimmer. Ramping a
-	// random *brightness* across the strip lights every pixel a bit, and
-	// that reads as noise -- it looks like the strip is broken rather
-	// than flickering. Choosing a few pixels to be fully on and leaving
-	// the rest dark reads as a strike.
-	//
-	// 0 is off and 100 is a solid block, which is not a twinkle.
-	int twinkleOnPct = 20;
-	// Per-pixel delay added to the settle ramp, so the collapse ripples
-	// down the strip instead of snapping in one frame. The whole
-	// stagger is subtracted from the ramp length, so raising this too
-	// far shortens the ramp rather than stretching the effect.
-	std::uint32_t staggerMs;
-	// The two levels the twinkle switches between: a lit pixel gets
-	// twinkleMax, a dark one twinkleMin. Defaults read as fully on and
-	// fully off, but a dimmer "on" is a legitimate softer strike.
-	int twinkleMin;
-	int twinkleMax;
+	// The two halves of the commit. See computeExplodeWindow() and
+	// computeIgniteWindow() for what each one is; together they are the
+	// whole effect, so either being 0 leaves just the other.
+	std::uint32_t explodeMs;
+	std::uint32_t igniteMs;
 	// Brightness percentages the strip settles to. The split is not
 	// cosmetic: the effect has to land on *exactly* the resting paint,
 	// which is the stack above the console dim and the console's own
@@ -341,6 +312,62 @@ struct SelectionEffectConfig {
 	int selfPct;
 };
 
+// A window at a point in time, in permille of a LED so its edges can sit
+// between pixels, plus the brightness to paint it at.
+//
+// Permille is not gold-plating: both halves of the commit sweep their
+// edges across pixels, and an edge that can only land on a boundary
+// means a new LED either appears at full brightness or not at all. With
+// a fractional edge, coveragePercent() dims it as the edge passes, which
+// is the difference between a smooth sweep and a staircase.
+struct StrikeWindow {
+	int leftPermille = 0;
+	int rightPermille = 0;
+	int levelPct = 0;
+	// False when there is nothing to paint: zero width, or zero
+	// brightness. Checked rather than left to the caller, because both
+	// halves of the effect end on exactly that, and a caller that forgets
+	// to test for it paints an empty range as something.
+	bool lit() const {
+		return rightPermille > leftPermille && levelPct > 0;
+	}
+};
+
+// The commit's first half: the window that was pulsing widens to twice
+// its width while the whole thing dims to nothing, so the console
+// dissolves outward and is gone by the time it has doubled.
+//
+// Symmetric about the window's centre, because an explosion has no
+// leading edge. Both sides get the same allowance, and where `bounds`
+// stops one side sooner the *other* is cut back to match -- otherwise a
+// console near a shelf end would visibly grow lopsided.
+//
+// The target is twice the window's width rounded down to an even number,
+// so the added LEDs split into equal halves. Rounding the *target*
+// rather than the start is deliberate: the start is the window that was
+// pulsing a frame ago, and narrowing it by one LED to make the
+// arithmetic come out even would be a visible step at the exact moment
+// of the commit. The half-LED edges that result are exact in permille,
+// and the brightness has reached zero by the time they are arrived at.
+//
+// `bounds` is the shelf the console sits on, as a half-open window.
+// Pass the whole strip to say "no shelf limit".
+StrikeWindow computeExplodeWindow(const LedRange& win, const LedRange& bounds,
+                                  int progressPermille, int peakPct);
+
+// The commit's second half: from nothing at all, a window grows to
+// exactly `win` while fading *in*, finishing at full brightness.
+//
+// Growth is symmetric about the window's true centre, which may be a
+// half-LED, and at full progress the range is exactly `win` -- so the
+// effect arrives at the resting picture rather than cutting to it.
+//
+// No bounds: this phase only ever reaches the console it is drawing, so
+// it cannot leave the strip. The argument order mirrors
+// computeExplodeWindow() anyway so the pair reads together.
+StrikeWindow computeIgniteWindow(const LedRange& win, int progressPermille,
+                                 int peakPct);
+
 // The exclusive pixel index the strip settles to: the lit prefix is
 // [0, result). Superseded by the per-window `aboveWindows` list on
 // StripFrame -- the consoles do not tile the strip, so "above" is a set
@@ -348,50 +375,6 @@ struct SelectionEffectConfig {
 // degenerate single-window case for callers that want one.
 int computeKeepEnd(int ledPosition, int ledWidth, int totalLeds,
                    bool includeSelf);
-
-// Deterministic per-pixel pseudo-random brightness sample in [0, 1023].
-// Integer-only so host tests can assert exact frames. `tick` is a frame
-// counter, not milliseconds -- the caller divides by whatever cadence
-// the twinkle should visibly run at.
-int twinkleSample(int pixel, std::uint32_t tick);
-
-// One twinkle sample resolved to a brightness: the pixel's pseudo-random
-// sample is thresholded against `twinkleOnPct`, so a lit pixel gets
-// `twinkleMax` and a dark one `twinkleMin`.
-//
-// Thresholded rather than scaled, and that is the whole character of
-// the effect -- see twinkleOnPct. Deterministic, so the host tests can
-// assert exact frames.
-int twinkleLevel(int pixel, std::uint32_t tick,
-                 const SelectionEffectConfig& cfg);
-
-// Brightness percentage (0..100) for one pixel at `elapsedMs` into the
-// selection effect. `pixel` must be < totalLeds.
-//
-// `finalPct[pixel]` is what the pixel settles to, and is expected to be
-// the same array computeStripFrame() would produce for the RESTING
-// picture. Taking the target as an input rather than deriving it from
-// split points is what makes the handoff from the effect back to the
-// resting paint exact by construction: there is only one resting
-// picture, and both paths use it. (It also means the lit set can be an
-// arbitrary set of windows rather than two contiguous bands, which the
-// consoles-above list needs.)
-//
-// Twinkles with the rest of the strip for the first `twinkleMs`, then
-// ramps to its final value over a ramp that starts `pixel *
-// staggerMs` late. Returns the settled value once the effect is over.
-int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
-                       std::uint32_t elapsedMs,
-                       const SelectionEffectConfig& cfg);
-
-// The same, but keeping the role the pixel settles into rather than
-// flattening it to a level. The settle target is a rendered frame, so
-// it already knows whether a pixel ends up as the selection or as the
-// stack above it -- flattening that to a level first would throw away
-// the distinction the colours are for.
-StripPixel computeSelectPixel(int pixel, const StripPixel* finalPixels,
-                              int totalLeds, std::uint32_t elapsedMs,
-                              const SelectionEffectConfig& cfg);
 
 // ---------------------------------------------------------------------------
 // Whole-strip frames
@@ -589,6 +572,18 @@ struct StripFrame {
 
 	// PREVIEW and SELECTING: how far into the animation we are.
 	std::uint32_t elapsedMs = 0;
+
+	// SELECTING: the shelf the committing console sits on, as a
+	// half-open window, and the bound on the commit's explosion. A
+	// console may not light LEDs beyond the shelf it is on -- the string
+	// is a physical object, and light that ran off the end of a shelf
+	// would be light on the wall.
+	//
+	// Zero width means "no bound", which is what a config with no
+	// shelf data resolves to: the whole strip is then the bound. Derived
+	// from the console list in src/ledstring.cpp, which is the only
+	// place that knows the shelf layout.
+	LedRange selectBounds = {0, 0};
 
 	// SELECTING only.
 	SelectionEffectConfig select;

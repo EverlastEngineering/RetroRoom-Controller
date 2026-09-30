@@ -7,6 +7,16 @@
 #include <vector>
 
 extern std::vector<Console> consoles;
+// The physical extent of each shelf, from the config's optional
+// `shelves` block, keyed by the `shelf` value its consoles carry.
+// Empty when the config declares none, which is normal -- the LED
+// animations then derive each shelf's extent from the consoles on it.
+//
+// A shelf is a piece of furniture, so its extent is not derivable from
+// the console list: the string runs past the last console on a shelf,
+// and that bare space at either end is what the commit animation
+// expands into.
+extern std::vector<Shelf> shelfBounds;
 // The *selected* console. Written only by a commit: the rotary click
 // (which moves it to browsedConsoleIndex first), selectConsole(),
 // advanceConsole(), rewindConsole() and the post-boot restore. Every

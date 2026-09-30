@@ -28,15 +28,14 @@
 using retroroom_core::computeBlobWindow;
 using retroroom_core::computeKeepEnd;
 using retroroom_core::computePulseScale;
-using retroroom_core::computeSelectScale;
 using retroroom_core::DetentGate;
 using retroroom_core::DetentGateConfig;
 using retroroom_core::easeInOutPermille;
 using retroroom_core::LedRange;
 using retroroom_core::SelectionEffectConfig;
-using retroroom_core::twinkleLevel;
-using retroroom_core::twinkleSample;
-using retroroom_core::resolvePixel;
+using retroroom_core::StrikeWindow;
+using retroroom_core::computeExplodeWindow;
+using retroroom_core::computeIgniteWindow;
 using retroroom_core::LedColor;
 using retroroom_core::StripPixel;
 using retroroom_core::travelEdges;
@@ -435,6 +434,22 @@ static void test_pulse_with_zero_period_is_fully_on(void) {
 	TEST_ASSERT_EQUAL(100, computePulseScale(5000, 0, 20, 100));
 }
 
+// A select config with the commit's two phases, for the tests that check
+// the effect as a whole rather than the geometry on its own.
+//
+// Built with named fields rather than the positional constructor: the
+// phase durations are the values most likely to be retuned, and a
+// positional list makes changing one of them a counting exercise.
+static SelectionEffectConfig strikeConfig() {
+	SelectionEffectConfig cfg;
+	cfg.explodeMs = 200;
+	cfg.igniteMs = 200;
+	cfg.totalMs = 400;
+	cfg.abovePct = 22;
+	cfg.selfPct = 100;
+	return cfg;
+}
+
 // ---------------------------------------------------------------------------
 // Selection effect
 // ---------------------------------------------------------------------------
@@ -463,131 +478,131 @@ static const int kSettleTarget[8] = {0, 22, 0, 0, 0, 0, 0, 0};
 static const int kSettleTargetWithSelection[8] = {0, 22, 0, 0, 0, 100, 100, 0};
 
 static void test_select_effect_is_finished_inside_its_budget(void) {
-	// The user-visible contract: under a second, every pixel settled.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	for (int p = 0; p < 8; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(kSettleTargetWithSelection[p],
-			computeSelectScale(p, kSettleTargetWithSelection, 8, cfg.totalMs, cfg),
-			"pixel must be at its final value by totalMs");
-	}
+	// The contract the whole effect has to keep: a commit is a
+	// confirmation, and nothing the operator is waiting on should outlast
+	// their attention.
+	SelectionEffectConfig cfg = strikeConfig();
+	TEST_ASSERT_TRUE_MESSAGE(cfg.totalMs < 1000,
+							  "the commit effect must finish in under a second");
+	TEST_ASSERT_EQUAL_MESSAGE(cfg.explodeMs + cfg.igniteMs, cfg.totalMs,
+							  "the total is the two halves, not a third number");
 }
 
-static void test_select_lands_exactly_on_its_target(void) {
-	// The handoff between the selection effect and the resting paint
-	// has to be invisible, and it is now invisible by construction:
-	// the target is an input, so "ends on the target" cannot be a
-	// separate expression that disagrees.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	for (int p = 0; p < 8; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(kSettleTargetWithSelection[p],
-			computeSelectScale(p, kSettleTargetWithSelection, 8, cfg.totalMs, cfg),
-			"effect must end on the target it was given");
-	}
-	// And well past the end, in case the shell samples a late frame.
-	for (std::uint32_t t = 900; t < 3000; t += 50) {
-		for (int p = 0; p < 8; ++p) {
-			TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
-				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg));
-		}
-	}
+static void test_the_explode_starts_on_exactly_the_pulsing_window(void) {
+	// The handover. A frame ago this window was the proposal, pulsing at
+	// some level the pulse chose; the explosion's first frame has to be
+	// the same window at full brightness, or the commit opens with a
+	// step. This is the pulse-phase bug again in a different costume.
+	const LedRange win = computeConsoleWindow(19, 6, 64);
+	const StrikeWindow at0 = computeExplodeWindow(win, {0, 64}, 0, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(win.start * 1000, at0.leftPermille,
+							  "the explosion must open on the window's first LED");
+	TEST_ASSERT_EQUAL_MESSAGE((win.start + win.width) * 1000, at0.rightPermille,
+							  "and close on its last");
+	TEST_ASSERT_EQUAL_MESSAGE(100, at0.levelPct, "at full brightness");
 }
 
-static void test_select_effect_is_over_a_second_is_unreachable(void) {
-	// Guards the headline requirement rather than the config: whatever
-	// the shell passes, nothing is still ramping past a second.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	for (std::uint32_t t = 1000; t < 2000; t += 50) {
-		for (int p = 0; p < 8; ++p) {
-			TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
-				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg));
-		}
-	}
+static void test_the_explode_grows_symmetrically_and_dies(void) {
+	// Doubles the width, and both sides get the same allowance, because
+	// an explosion has no leading edge. Ends at zero brightness, which is
+	// what makes it a dissolve rather than a growth.
+	const LedRange win = computeConsoleWindow(10, 8, 64);
+	const StrikeWindow mid = computeExplodeWindow(win, {0, 64}, 500, 100);
+	const int grown = (mid.rightPermille - mid.leftPermille) / 1000;
+	const int left = win.start * 1000 - mid.leftPermille;
+	const int right = mid.rightPermille - (win.start + win.width) * 1000;
+	TEST_ASSERT_EQUAL_MESSAGE(left, right,
+							  "the two sides must grow by exactly the same amount");
+	TEST_ASSERT_TRUE_MESSAGE(grown > win.width && grown < win.width * 2 + 1,
+							  "half way, the window is wider than it was and not yet double");
+	TEST_ASSERT_EQUAL_MESSAGE(50, mid.levelPct, "half way, half the brightness");
+	const StrikeWindow done = computeExplodeWindow(win, {0, 64}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(0, done.levelPct,
+							  "the explosion must end invisible, not as a wide dim band");
+	TEST_ASSERT_FALSE(done.lit());
 }
 
-static void test_select_starts_by_twinkling_the_whole_strip(void) {
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	// A pixel that is destined to be dark is still lit during the
-	// twinkle -- that is the "entire LED string twinkles" moment.
-	// kSettleTarget has lit pixels only at index 1, so every other pixel
-	// is one of those.
-	int litDark = 0;
-	for (int p = 0; p < 8; ++p) {
-		if (kSettleTarget[p] == 0 &&
-			computeSelectScale(p, kSettleTarget, 8, 0, cfg) > 0) {
-			litDark++;
-		}
-	}
-	TEST_ASSERT_TRUE_MESSAGE(litDark >= 6, "whole strip twinkles, not just the prefix");
-}
-
-static void test_select_surviving_pixels_never_go_dark(void) {
-	// A lit pixel must not flicker to black on the way to settling or
-	// the collapse reads as a dropout.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 100, 22, 100);
-	for (int p = 0; p < 8; ++p) {
-		if (kSettleTargetWithSelection[p] == 0) {
-			continue;
-		}
-		for (std::uint32_t t = 0; t < 900; t += 5) {
-			TEST_ASSERT_TRUE_MESSAGE(
-				computeSelectScale(p, kSettleTargetWithSelection, 8, t, cfg) > 0,
-				"a surviving pixel must stay lit for the whole effect");
-		}
-	}
-}
-
-static void test_select_expires_early_for_the_top_of_the_strip(void) {
-	// The stagger is per pixel index, so pixel 0 starts settling first
-	// and is done before the bottom of the strip. That ripple is the
-	// whole point of the stagger.
+static void test_the_explode_is_capped_by_the_shelf_and_stays_even(void) {
+	// Two things at once, and they pull in opposite directions: the
+	// shelf is a hard boundary, but cutting one side only would leave a
+	// console near a shelf end visibly lopsided. So the *narrower* side
+	// sets the allowance for both.
 	//
-	// Uses a 64-pixel strip because the ramp length depends on it: the
-	// stagger span is (totalLeds - 1) * staggerMs and it is subtracted
-	// from the settle window, so a short strip gets a much longer ramp
-	// and the ripple never completes inside the effect.
-	//
-	// 77 is deliberately outside the twinkle range (12..60) so "is this
-	// pixel settled yet?" is unambiguous -- a twinkle sample can never
-	// be mistaken for a final value of 77 or 0.
-	const SelectionEffectConfig cfg(900, 350, 6, 12, 60, 77, 77);
-	int target[64];
-	for (int p = 0; p < 64; ++p) {
-		target[p] = (p < 42) ? 77 : 0;
-	}
-	int firstSettled = -1;
-	int lastUnsettled = -1;
-	for (int p = 0; p < 64; ++p) {
-		if (computeSelectScale(p, target, 64, cfg.twinkleMs + 200, cfg) ==
-			target[p]) {
-			if (firstSettled < 0) firstSettled = p;
-		} else if (lastUnsettled < 0 || p > lastUnsettled) {
-			lastUnsettled = p;
-		}
-	}
-	TEST_ASSERT_EQUAL_MESSAGE(0, firstSettled,
-		"the top of the strip must be settled well before the effect ends");
-	TEST_ASSERT_EQUAL_MESSAGE(63, lastUnsettled,
-		"the bottom of the strip must still be settling at the same moment");
+	// 20..29 on a shelf running 16..61: four LEDs of room on the left and
+	// thirty-two on the right. Left decides, so the window grows four
+	// each way and stops, rather than four left and eight right.
+	const LedRange win = computeConsoleWindow(20, 10, 64);
+	const StrikeWindow s = computeExplodeWindow(win, {16, 46}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(16 * 1000, s.leftPermille,
+							  "the window may not pass the shelf's near edge");
+	TEST_ASSERT_EQUAL_MESSAGE(34 * 1000, s.rightPermille, "and stops there");
+	TEST_ASSERT_EQUAL_MESSAGE((win.start * 1000) - s.leftPermille,
+							  s.rightPermille - (win.start + win.width) * 1000,
+							  "and the far side grew by the same amount, not further");
+	// A bound wider than the strip is still a bound, not permission to
+	// light LEDs that do not exist.
+	const LedRange edge = computeConsoleWindow(60, 4, 64);
+	const StrikeWindow atEdge = computeExplodeWindow(edge, {0, 64}, 1000, 100);
+	TEST_ASSERT_TRUE_MESSAGE(atEdge.leftPermille >= 0,
+							  "nothing may be lit off the front of the strip");
 }
 
-static void test_zero_length_effect_settles_immediately(void) {
-	const SelectionEffectConfig cfg(0, 0, 6, 12, 100, 22, 100);
-	for (int p = 0; p < 8; ++p) {
-		TEST_ASSERT_EQUAL(kSettleTargetWithSelection[p],
-			computeSelectScale(p, kSettleTargetWithSelection, 8, 0, cfg));
-	}
-	// A null target means "nothing survives", rather than a crash.
-	TEST_ASSERT_EQUAL(0, computeSelectScale(3, 0, 8, 0, cfg));
+static void test_a_console_outside_its_own_shelf_does_not_grow(void) {
+	// A malformed config: the console's window starts before its shelf
+	// does. There is no sensible direction to grow in, and the right
+	// answer is to not grow at all -- *not* to expand out to the shelf
+	// edge, which would move the window somewhere the operator never
+	// asked for.
+	const LedRange win = computeConsoleWindow(20, 10, 64);
+	const StrikeWindow s = computeExplodeWindow(win, {22, 41}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(win.start * 1000, s.leftPermille,
+							  "a console already outside its shelf must not move");
+	TEST_ASSERT_EQUAL_MESSAGE((win.start + win.width) * 1000, s.rightPermille,
+							  "on either side");
 }
 
-static void test_twinkle_is_deterministic_and_varies_per_pixel(void) {
-	TEST_ASSERT_EQUAL(twinkleSample(7, 3), twinkleSample(7, 3));
-	TEST_ASSERT_NOT_EQUAL(twinkleSample(7, 3), twinkleSample(8, 3));
-	TEST_ASSERT_NOT_EQUAL(twinkleSample(7, 3), twinkleSample(7, 4));
-	for (int i = 0; i < 64; ++i) {
-		const int s = twinkleSample(i, 0);
-		TEST_ASSERT_TRUE(s >= 0 && s <= 1023);
+static void test_the_ignite_ends_exactly_on_the_window(void) {
+	// The other half of the arrival. It has to finish on exactly the
+	// console's own window, because that is what the resting paint is --
+	// the strip should arrive at rest rather than be cut to it.
+	for (int width = 1; width <= 12; ++width) {
+		const LedRange win = computeConsoleWindow(20, width, 64);
+		const StrikeWindow done = computeIgniteWindow(win, 1000, 100);
+		TEST_ASSERT_EQUAL_MESSAGE(win.start * 1000, done.leftPermille,
+								  "the ignite must finish on the window's first LED");
+		TEST_ASSERT_EQUAL_MESSAGE((win.start + win.width) * 1000,
+								  done.rightPermille,
+								  "and on its last");
+		TEST_ASSERT_EQUAL_MESSAGE(100, done.levelPct,
+								  "at the resting brightness");
 	}
+}
+
+static void test_the_ignite_starts_from_nothing_and_grows_evenly(void) {
+	const LedRange win = computeConsoleWindow(20, 8, 64);
+	const StrikeWindow at0 = computeIgniteWindow(win, 0, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(0, at0.levelPct, "nothing lit to begin with");
+	TEST_ASSERT_FALSE(at0.lit());
+	const StrikeWindow mid = computeIgniteWindow(win, 500, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(
+		(win.start * 1000) - mid.leftPermille,
+		mid.rightPermille - ((win.start + win.width) * 1000),
+		"it grows from the centre, so both sides match");
+	TEST_ASSERT_EQUAL_MESSAGE(50, mid.levelPct, "and fades in as it grows");
+}
+
+static void test_a_console_wider_than_its_shelf_still_ends_even(void) {
+	// A console cannot be exploded wider than the shelf it is on, so the
+	// target is the shelf's room rather than twice the width. Every
+	// console then dissolves with the same visible effort instead of the
+	// wide ones barely moving.
+	const LedRange win = computeConsoleWindow(30, 20, 64);
+	const StrikeWindow s = computeExplodeWindow(win, {30, 64}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(30 * 1000, s.leftPermille,
+							  "no room on the left, so no growth on either side");
+	TEST_ASSERT_EQUAL_MESSAGE((win.start * 1000) - s.leftPermille,
+							  s.rightPermille - (win.start + win.width) * 1000,
+							  "the two sides stay matched even when the answer is zero");
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +625,7 @@ static StripFrame configuredFrame(StripEffect effect) {
 	f.pulseMinPct = 30;
 	f.pulseMaxPct = 100;
 	f.pulsePeriodMs = 1100;
-	f.select = SelectionEffectConfig(900, 350, 6, 12, 100, 22, 100);
+	f.select = strikeConfig();
 	return f;
 }
 
@@ -1557,243 +1572,6 @@ static void test_a_console_wider_than_the_peak_still_gets_the_whole_block(void) 
 	TEST_ASSERT_EQUAL(23 * 1000, narrow.rightPermille);
 }
 
-// A select config set up the way the twinkle tests want it: a
-// thresholded twinkle, a fifth of the strip lit, re-rolling every 15ms.
-//
-// Built with the default constructor and named fields rather than the
-// positional one -- that has seven arguments and a reader cannot hold
-// them, and the new twinkle values are exactly the ones most likely to
-// be retuned.
-static SelectionEffectConfig twinkleConfig() {
-	SelectionEffectConfig cfg;
-	cfg.totalMs = 900;
-	cfg.twinkleMs = 150;
-	cfg.twinkleTickMs = 15;
-	cfg.twinkleOnPct = 20;
-	cfg.staggerMs = 6;
-	cfg.twinkleMin = 0;
-	cfg.twinkleMax = 100;
-	cfg.abovePct = 22;
-	cfg.selfPct = 100;
-	return cfg;
-}
-
-static void test_the_twinkle_lights_a_few_pixels_rather_than_all_of_them(void) {
-	// The difference between a twinkle and a shimmer. Scaling a random
-	// brightness lit every pixel *a bit*, which reads as a broken strip;
-	// thresholding it lights a fraction fully and leaves the rest
-	// genuinely dark, which is what the eye reads as a strike.
-	SelectionEffectConfig cfg = twinkleConfig();
-	int lit = 0;
-	for (int p = 0; p < 64; ++p) {
-		const int level = twinkleLevel(p, 0, cfg);
-		if (level == cfg.twinkleMax) {
-			++lit;
-		} else {
-			TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMin, level,
-									 "a dark pixel must be dark, not dim");
-		}
-	}
-	TEST_ASSERT_TRUE_MESSAGE(lit > 0 && lit < 64,
-		"a twinkle must light some of the strip and not all of it");
-	// Roughly the configured fraction, not merely "some".
-	TEST_ASSERT_TRUE_MESSAGE(lit >= 8 && lit <= 20,
-		"about 20% of a 64-LED strip should be lit on a tick");
-}
-
-static void test_the_twinkle_off_fraction_means_off(void) {
-	// 0% and 100% have to be exactly that. The cut is over 1024 rather
-	// than 1023 so neither end can fall through to the other branch --
-	// a "0% on" twinkle that lights a pixel or two reads as a fault.
-	SelectionEffectConfig cfg = twinkleConfig();
-	cfg.twinkleOnPct = 0;
-	for (int p = 0; p < 64; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMin, twinkleLevel(p, 0, cfg),
-								  "0% must light nothing at all");
-	}
-	cfg.twinkleOnPct = 100;
-	for (int p = 0; p < 64; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(cfg.twinkleMax, twinkleLevel(p, 0, cfg),
-								  "100% must light everything");
-	}
-}
-
-static void test_the_twinkle_re_rolls_on_its_own_cadence(void) {
-	// The flicker rate is the effect. Held constant between ticks and
-	// changing between them, at the configured interval -- otherwise the
-	// tick is just a frame counter and the twinkle is a shimmer again.
-	SelectionEffectConfig cfg = twinkleConfig();
-	int changed = 0;
-	for (int p = 0; p < 64; ++p) {
-		const int first = twinkleLevel(p, 0, cfg);
-		// Same tick, same answer: deterministic, or the host tests
-		// could not assert exact frames.
-		TEST_ASSERT_EQUAL(first, twinkleLevel(p, 0, cfg));
-		// A tick's worth of time later, no change yet.
-		TEST_ASSERT_EQUAL_MESSAGE(first, twinkleLevel(p, 0, cfg),
-								  "a pixel must hold its state within a tick");
-		// Several ticks on, something must have moved.
-		for (int tick = 1; tick < 4; ++tick) {
-			if (twinkleLevel(p, tick, cfg) != first) {
-				++changed;
-				break;
-			}
-		}
-	}
-	TEST_ASSERT_TRUE_MESSAGE(changed > 32,
-		"most of the strip must re-roll within a few ticks");
-}
-
-static void test_the_twinkle_is_visible_where_the_strip_rests_dark(void) {
-	// The twinkle was invisible, and the reason is worth stating because
-	// it is not where you would look: the brightness was computed
-	// correctly and then discarded by the *colour*.
-	//
-	// The role decides the colour and OFF is black whatever the level
-	// says, and the twinkle took its role from the resting picture. With
-	// the stack no longer lit at rest, that is most of the strip -- gaps
-	// included. So the twinkle had only ever been visible on top of the
-	// lit stack, and turning the stack off at rest took the twinkle with
-	// it.
-	StripFrame f = configuredFrame(StripEffect::SELECTING);
-	f.abovePct = LEDSTRING_ABOVE_PCT;   // 0: only the selection is lit
-	f.selfPct = LEDSTRING_SELF_PCT;
-	f.from = kSms;                       // the console being committed
-	f.aboveCount = 0;
-	f.select.totalMs = 900;
-	f.select.twinkleMs = 150;
-	f.select.twinkleTickMs = 15;
-	f.select.twinkleOnPct = 20;
-	f.select.twinkleMin = 0;
-	f.select.twinkleMax = 100;
-	f.elapsedMs = 0;
-
-	StripPixel px[64];
-	// configuredFrame() leaves the palette zeroed, which resolves every
-	// role to black -- fine for level assertions, useless for "is this
-	// pixel actually visible". Fill it in here rather than in the shared
-	// fixture, so this test can prove visibility without changing what
-	// every other test is asserting.
-	for (int r = 0; r <= static_cast<int>(retroroom_core::LedRole::SELECTED); ++r) {
-		const int v = 10 * (r + 1);
-		f.palette.colors[r] = LedColor{v, v, v};
-	}
-	computeStripFrame(f, px);
-
-	// Nothing outside SMS's window is lit at rest, so a twinkle pixel out
-	// there is exactly the case that was being painted black.
-	int litOutside = 0;
-	for (int p = 0; p < 64; ++p) {
-		if (p >= kSms.start && p < kSms.start + kSms.width) {
-			continue;
-		}
-		if (px[p].level <= 0) {
-			continue;
-		}
-		++litOutside;
-		TEST_ASSERT_TRUE_MESSAGE(px[p].role != retroroom_core::LedRole::OFF,
-			"a twinkle pixel outside every console must still carry a colour");
-		const LedColor c = resolvePixel(f, px[p]);
-		TEST_ASSERT_TRUE_MESSAGE(c.r + c.g + c.b > 0,
-								  "and must resolve to something other than black");
-	}
-	TEST_ASSERT_TRUE_MESSAGE(litOutside > 8,
-		"the twinkle is supposed to be reaching across the whole strip");
-}
-
-static void test_the_strike_gives_the_colour_back_as_it_settles(void) {
-	// The rule that fixes the twinkle also has to hand the pixels back,
-	// or the effect would not land on the resting paint: a gap pixel
-	// would sit in the strike colour instead of going out.
-	//
-	// So the same pixel has to be the strike part way through and dark at
-	// the end. That pair is the whole rule, and it is the thing worth
-	// pinning -- asserting the *end* alone would pass even if the strike
-	// colour simply never came back, because the end is unaffected.
-	StripFrame f = configuredFrame(StripEffect::SELECTING);
-	f.abovePct = LEDSTRING_ABOVE_PCT;
-	f.selfPct = LEDSTRING_SELF_PCT;
-	f.from = kSms;
-	f.aboveCount = 0;
-	f.select.totalMs = 900;
-	f.select.twinkleMs = 150;
-	f.select.twinkleTickMs = 15;
-	f.select.twinkleOnPct = 20;
-	f.select.twinkleMin = 0;
-	f.select.twinkleMax = 100;
-
-	// Half way through the effect, once the collapse is well under way.
-	StripPixel mid[64];
-	f.elapsedMs = 400;
-	computeStripFrame(f, mid);
-	int striking = 0;
-	for (int p = 0; p < 64; ++p) {
-		if (p >= kSms.start && p < kSms.start + kSms.width) {
-			continue;
-		}
-		if (mid[p].role == retroroom_core::LedRole::SELECTED) {
-			++striking;
-		}
-	}
-	TEST_ASSERT_TRUE_MESSAGE(striking > 0,
-		"the strike should have reached beyond the console being committed");
-
-	// And the end of the effect is the resting paint, with every one of
-	// those pixels back to dark and holding their resting role. Scoped to
-	// the pixels outside the committed console, because that one rests
-	// lit at selfPct and asserting it is dark would be asserting the
-	// resting picture is wrong.
-	StripPixel end[64];
-	f.elapsedMs = f.select.totalMs;
-	computeStripFrame(f, end);
-	for (int p = 0; p < 64; ++p) {
-		if (p >= kSms.start && p < kSms.start + kSms.width) {
-			continue;
-		}
-		TEST_ASSERT_EQUAL_MESSAGE(0, end[p].level,
-								  "the effect must end on the resting paint");
-		TEST_ASSERT_TRUE_MESSAGE(
-			end[p].role != retroroom_core::LedRole::SELECTED,
-			"no gap pixel may still be holding the strike colour");
-	}
-	// And the committed console is left lit, at its resting brightness.
-	TEST_ASSERT_EQUAL_MESSAGE(LEDSTRING_SELF_PCT,
-							  end[kSms.start].level,
-							  "the committed console rests at the selection level");
-}
-
-static void test_a_twinkle_of_zero_is_just_the_collapse(void) {
-	// The off switch, and the reason it needs a test of its own rather
-	// than just a zero: with the twinkle off the effect must be a plain
-	// collapse. It used to threshold a fresh sample as the collapse's
-	// start, which lit a random fifth of the strip for one frame -- so
-	// twinkleMs = 0 still twinked, exactly once, at the moment it was
-	// supposed to be off.
-	SelectionEffectConfig cfg = twinkleConfig();
-	cfg.twinkleMs = 0;
-	const int finalPct[8] = {0, 22, 100, 0, 0, 0, 0, 0};
-
-	// Nothing ever gets brighter. That is the whole difference between a
-	// twinkle and its absence, and the same check on a twinkling config
-	// fails on the first re-roll.
-	for (int p = 0; p < 8; ++p) {
-		int prev = computeSelectScale(p, finalPct, 8, 0, cfg);
-		for (std::uint32_t t = 1; t <= cfg.totalMs; t += 5) {
-			const int now = computeSelectScale(p, finalPct, 8, t, cfg);
-			TEST_ASSERT_TRUE_MESSAGE(now <= prev,
-									  "with no twinkle a pixel must only ever dim");
-			prev = now;
-		}
-	}
-	// It still ends on the resting paint, so turning the twinkle off does
-	// not turn the selection off.
-	for (int p = 0; p < 8; ++p) {
-		TEST_ASSERT_EQUAL_MESSAGE(finalPct[p],
-								  computeSelectScale(p, finalPct, 8, cfg.totalMs, cfg),
-								  "the collapse must still land on the resting paint");
-	}
-}
-
 static void test_the_travel_is_the_colour_it_hands_over_to(void) {
 	// The travel's last frame is the target window, and the frame after
 	// it is that window pulsing as a proposal. A difference between the
@@ -2139,13 +1917,13 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_keep_end_exclusive_stops_above);
 	RUN_TEST(test_keep_end_clamps_to_the_strip);
 	RUN_TEST(test_select_effect_is_finished_inside_its_budget);
-	RUN_TEST(test_select_lands_exactly_on_its_target);
-	RUN_TEST(test_select_effect_is_over_a_second_is_unreachable);
-	RUN_TEST(test_select_starts_by_twinkling_the_whole_strip);
-	RUN_TEST(test_select_surviving_pixels_never_go_dark);
-	RUN_TEST(test_select_expires_early_for_the_top_of_the_strip);
-	RUN_TEST(test_zero_length_effect_settles_immediately);
-	RUN_TEST(test_twinkle_is_deterministic_and_varies_per_pixel);
+	RUN_TEST(test_the_explode_starts_on_exactly_the_pulsing_window);
+	RUN_TEST(test_the_explode_grows_symmetrically_and_dies);
+	RUN_TEST(test_the_explode_is_capped_by_the_shelf_and_stays_even);
+	RUN_TEST(test_a_console_outside_its_own_shelf_does_not_grow);
+	RUN_TEST(test_a_console_wider_than_its_shelf_still_ends_even);
+	RUN_TEST(test_the_ignite_ends_exactly_on_the_window);
+	RUN_TEST(test_the_ignite_starts_from_nothing_and_grows_evenly);
 
 	// Whole-strip frames.
 	RUN_TEST(test_frame_clears_every_pixel_first);
@@ -2183,12 +1961,6 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_retreat_fades_rather_than_snapping);
 	RUN_TEST(test_a_retreat_longer_than_the_run_empties_it);
 	RUN_TEST(test_the_retreat_applies_at_the_low_end_going_back);
-	RUN_TEST(test_the_twinkle_lights_a_few_pixels_rather_than_all_of_them);
-	RUN_TEST(test_the_twinkle_off_fraction_means_off);
-	RUN_TEST(test_the_twinkle_re_rolls_on_its_own_cadence);
-	RUN_TEST(test_the_twinkle_is_visible_where_the_strip_rests_dark);
-	RUN_TEST(test_the_strike_gives_the_colour_back_as_it_settles);
-	RUN_TEST(test_a_twinkle_of_zero_is_just_the_collapse);
 	RUN_TEST(test_the_travel_is_the_colour_it_hands_over_to);
 	RUN_TEST(test_a_console_wider_than_the_peak_still_gets_the_whole_block);
 	RUN_TEST(test_a_step_within_a_shelf_still_measures_the_gap);

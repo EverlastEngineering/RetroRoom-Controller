@@ -108,6 +108,35 @@ const SimConsole kConsoles[] = {
 };
 const int kConsoleCount = static_cast<int>(sizeof(kConsoles) / sizeof(kConsoles[0]));
 
+// The shelf extents, as a config with a `shelves` block would give them.
+// The top shelf is bounded by the gap the string bridges to reach the
+// lower one, and that gap is invisible in index space -- so the bound is
+// a config fact, never something the geometry implies.
+struct SimShelf {
+	int id;
+	int fromLed;
+	int toLed;
+};
+const SimShelf kShelves[] = {
+	{0, 0, 25},
+	{1, 26, 63},
+};
+const int kShelfCount = 2;
+
+// Half-open, as the shell builds it from the inclusive config values.
+LedRange shelfBoundsFor(int idx) {
+	if (idx < 0 || idx >= kConsoleCount) {
+		return {0, 0};
+	}
+	for (int i = 0; i < kShelfCount; ++i) {
+		if (kShelves[i].id == kConsoles[idx].shelf) {
+			return {kShelves[i].fromLed,
+					 kShelves[i].toLed - kShelves[i].fromLed + 1};
+		}
+	}
+	return {0, 0};
+}
+
 // The console the operator is currently playing, set per scenario.
 // It is what stays dim through every browse state.
 int scenarioActive = 0;
@@ -263,16 +292,9 @@ StripFrame baseFrame() {
 	f.pulseMinPct = LEDSTRING_PREVIEW_PULSE_MIN_PCT;
 	f.pulseMaxPct = LEDSTRING_PREVIEW_PULSE_MAX_PCT;
 	f.pulsePeriodMs = LEDSTRING_PREVIEW_PULSE_MS;
-	f.select.totalMs = LEDSTRING_SELECT_EFFECT_MS;
-	f.select.twinkleMs =
-		(LEDSTRING_SELECT_TWINKLE_MS < LEDSTRING_SELECT_EFFECT_MS)
-			? LEDSTRING_SELECT_TWINKLE_MS
-			: LEDSTRING_SELECT_EFFECT_MS;
-	f.select.twinkleTickMs = LEDSTRING_SELECT_TWINKLE_TICK_MS;
-	f.select.twinkleOnPct = LEDSTRING_SELECT_TWINKLE_ON_PCT;
-	f.select.staggerMs = LEDSTRING_SELECT_STAGGER_MS;
-	f.select.twinkleMin = LEDSTRING_SELECT_TWINKLE_MIN_PCT;
-	f.select.twinkleMax = LEDSTRING_SELECT_TWINKLE_MAX_PCT;
+	f.select.explodeMs = LEDSTRING_SELECT_EXPLODE_MS;
+	f.select.igniteMs = LEDSTRING_SELECT_IGNITE_MS;
+	f.select.totalMs = f.select.explodeMs + f.select.igniteMs;
 	f.select.abovePct = LEDSTRING_ABOVE_PCT;
 	f.select.selfPct = LEDSTRING_SELF_PCT;
 	return f;
@@ -344,7 +366,8 @@ void banner() {
 		   "pulse %dms, select %dms\n\n",
 		   LEDSTRING_DETENTS_PER_STEP, LEDSTRING_FAST_DETENTS_PER_STEP,
 		   LEDSTRING_FAST_SPIN_WINDOW_MS, LEDSTRING_BLOB_WIDTH,
-		   LEDSTRING_PREVIEW_PULSE_MS, LEDSTRING_SELECT_EFFECT_MS);
+		   LEDSTRING_PREVIEW_PULSE_MS,
+		   LEDSTRING_SELECT_EXPLODE_MS + LEDSTRING_SELECT_IGNITE_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -422,31 +445,46 @@ void scenarioBrowse() {
 // The commit: whole strip twinkles, then settles on the pixels above
 // the selection. Sampled densely enough to see both phases.
 void scenarioSelect(int consoleIdx) {
-	rule("SELECT -- commit and settle");
-	printf("selecting %s (led %d..%d, keepEnd %d)\n\n", kConsoles[consoleIdx].name,
-		   kConsoles[consoleIdx].ledPosition,
-		   kConsoles[consoleIdx].ledPosition + kConsoles[consoleIdx].ledWidth - 1,
-		   keepEndFor(consoleIdx));
+	rule("SELECT -- the commit, in two halves");
+	printf("The console that was pulsing dissolves outward while dimming to\n"
+		   "nothing, then comes back from zero width at full brightness.\n"
+		   "%dms explode + %dms ignite, and the second ends on exactly the\n"
+		   "resting paint.\n\n",
+		   LEDSTRING_SELECT_EXPLODE_MS, LEDSTRING_SELECT_IGNITE_MS);
+
+	const LedRange w = windowFor(consoleIdx);
+	const LedRange shelf = shelfBoundsFor(consoleIdx);
+	printf("  %s occupies LED %d..%d, on shelf %d (LED %d..%d)\n",
+		   kConsoles[consoleIdx].name, w.start, w.start + w.width - 1,
+		   kConsoles[consoleIdx].shelf, shelf.start, shelf.start + shelf.width - 1);
+	if (w.width * 2 > shelf.width) {
+		printf("  doubled width %d will not fit on a %d-LED shelf, so the\n"
+			   "  expansion is capped at what does\n",
+			   w.width * 2, shelf.width);
+	}
+	printf("\n");
 
 	StripFrame f = baseFrame();
 	f.effect = StripEffect::SELECTING;
 	applyResting(f, consoleIdx);
+	f.selectBounds = shelf;
 
-	// Sample in a few passes: coarse through the twinkle, finer through
-	// the settle, where the interesting ramp is.
-	for (int pass = 0; pass < 2; ++pass) {
-		const int steps = (pass == 0) ? 6 : 8;
-		for (int i = 0; i <= steps; ++i) {
-			f.elapsedMs = static_cast<std::uint32_t>(
-				(pass == 0)
-					? (static_cast<long>(LEDSTRING_SELECT_EFFECT_MS) * i) / (steps * 3)
-					: LEDSTRING_SELECT_EFFECT_MS / 3 +
-						  static_cast<long>(LEDSTRING_SELECT_EFFECT_MS - LEDSTRING_SELECT_EFFECT_MS / 3) * i / steps);
-			char caption[64];
-			snprintf(caption, sizeof(caption), "%s t=%4ums",
-					 (pass == 0) ? "twinkle" : "settle ", f.elapsedMs);
-			render(f, caption);
-		}
+	for (int i = 0; i <= 4; ++i) {
+		f.elapsedMs = static_cast<std::uint32_t>(
+			(static_cast<long>(LEDSTRING_SELECT_EXPLODE_MS) * i) / 4);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "explode  t=%3ums", f.elapsedMs);
+		render(f, caption);
+		renderRoles(f, caption);
+	}
+	for (int i = 1; i <= 4; ++i) {
+		f.elapsedMs = static_cast<std::uint32_t>(
+			LEDSTRING_SELECT_EXPLODE_MS +
+			(static_cast<long>(LEDSTRING_SELECT_IGNITE_MS) * i) / 4);
+		char caption[64];
+		snprintf(caption, sizeof(caption), "ignite   t=%3ums", f.elapsedMs);
+		render(f, caption);
+		renderRoles(f, caption);
 	}
 
 	StripFrame rest = baseFrame();
@@ -455,8 +493,6 @@ void scenarioSelect(int consoleIdx) {
 	render(rest, "resting");
 }
 
-// The resting stack for every console, so the "above the selection"
-// prefix can be eyeballed against the whole list at once.
 void scenarioFrames() {
 	rule("RESTING STACK -- every console in turn");
 	for (int i = 0; i < kConsoleCount; ++i) {

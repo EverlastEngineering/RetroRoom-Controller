@@ -138,6 +138,32 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 		}
 	}
 
+	// Top-level shelves block (optional). The physical extent of each
+	// shelf, so a console's commit animation knows where its own shelf
+	// ends rather than where the next console happens to begin.
+	//
+	// Optional: absent means "derive from the consoles", which is what
+	// every config written before this block did.
+	//
+	// A shelf with toLed < fromLed is a typo, and the entry is dropped
+	// rather than inverted -- an inverted extent would be a *wider*
+	// bound than the operator asked for, and a commit animation that
+	// expands further than the shelf is worse than one that expands
+	// slightly less.
+	JsonArrayConst shelvesArr = doc["shelves"];
+	if (!shelvesArr.isNull()) {
+		for (JsonObjectConst s : shelvesArr) {
+			Shelf shelf;
+			shelf.id = s["id"] | 0;
+			shelf.fromLed = s["fromLed"] | 0;
+			shelf.toLed = s["toLed"] | 0;
+			if (shelf.fromLed < 0 || shelf.toLed < shelf.fromLed) {
+				continue;
+			}
+			result.shelves.push_back(shelf);
+		}
+	}
+
 	result.ok = true;
 	return result;
 }

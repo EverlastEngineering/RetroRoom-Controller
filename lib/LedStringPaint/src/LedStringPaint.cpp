@@ -320,23 +320,6 @@ int computeKeepEnd(int ledPosition, int ledWidth, int totalLeds,
 
 namespace {
 
-// Avalanche-style 32-bit mix. Cheap, no state, and the same input always
-// gives the same output -- which is what lets the host tests assert an
-// exact twinkle frame.
-std::uint32_t mix32(std::uint32_t x) {
-	x ^= x >> 16;
-	x *= 0x7feb352du;
-	x ^= x >> 15;
-	x *= 0x846ca68bu;
-	x ^= x >> 16;
-	return x;
-}
-
-int lerpPercent(int from, int to, int progressPermille) {
-	return from + (to - from) * progressPermille / 1000;
-}
-
-
 // Is this pixel inside a console window? Used for the dim/context roles,
 // where "which console" matters and a raw range test would be a second
 // copy of the same condition to keep in step.
@@ -346,94 +329,85 @@ bool inWindow(int pixel, const LedRange& w) {
 
 }  // namespace
 
-int twinkleSample(int pixel, std::uint32_t tick) {
-	const std::uint32_t a = mix32(static_cast<std::uint32_t>(pixel + 1) * 0x9e3779b1u);
-	const std::uint32_t b = mix32(tick + 0x51u);
-	return static_cast<int>((a ^ b) & 0x3ffu);  // 0..1023
+// The commit, first half: the console that was pulsing dissolves outward.
+StrikeWindow computeExplodeWindow(const LedRange& win, const LedRange& bounds,
+                                  int progressPermille, int peakPct) {
+	StrikeWindow out;
+	if (progressPermille < 0) {
+		progressPermille = 0;
+	}
+	if (progressPermille > 1000) {
+		progressPermille = 1000;
+	}
+	if (win.width <= 0) {
+		return out;
+	}
+
+	// Twice the width, rounded down to an even number, so the LEDs added
+	// either side are equal. Rounding the target and not the start is
+	// what keeps the first frame exactly the window that was pulsing a
+	// frame ago -- see the header.
+	const int evenWidth = win.width & ~1;
+	const int targetWidth = evenWidth * 2;
+	// Per-side allowance. Half-integer for an odd width, which is why the
+	// whole geometry is in permille.
+	long long extra = ((static_cast<long long>(targetWidth) - win.width) * 500);
+
+	// The bound, cut to whatever *both* sides can afford. Taking the
+	// minimum rather than clamping each side independently is the whole
+	// point: a console near a shelf end would otherwise grow lopsided,
+	// which reads as the explosion being clipped rather than finished.
+	if (bounds.width > 0) {
+		const int boundsEnd = bounds.start + bounds.width;
+		const int availableLeft = win.start - bounds.start;
+		const int availableRight = boundsEnd - (win.start + win.width);
+		const int available = (availableLeft < availableRight) ? availableLeft
+															 : availableRight;
+		const long long availablePermille = static_cast<long long>(
+			(available > 0 ? available : 0)) * 1000;
+		if (extra > availablePermille) {
+			extra = availablePermille;
+		}
+	}
+	if (extra < 0) {
+		extra = 0;
+	}
+
+	const long long half = extra * progressPermille / 1000;
+	out.leftPermille = static_cast<int>(static_cast<long long>(win.start) * 1000 - half);
+	out.rightPermille = static_cast<int>(
+		(static_cast<long long>(win.start + win.width) * 1000) + half);
+	// Dimming to nothing is what makes it a dissolve rather than a
+	// growth, and it lands on zero exactly when the window is widest, so
+	// the widest frame is the invisible one and the edge never has to be
+	// visible to be exact.
+	out.levelPct = peakPct * (1000 - progressPermille) / 1000;
+	return out;
 }
 
-int twinkleLevel(int pixel, std::uint32_t tick,
-                 const SelectionEffectConfig& cfg) {
-	// The sample is *thresholded*, not scaled. Scaling it lit every
-	// pixel a bit and read as a shimmer -- a broken strip rather than a
-	// flicker. Cutting it at a fraction gives a few pixels fully on and
-	// the rest genuinely dark, which is what the eye reads as a strike.
-	//
-	// The threshold is over 1024 rather than 1023 so that 0% really is
-	// nothing lit and 100% really is everything: at 100 the cut is
-	// 1023 and sample == 1023 would fall through to the dark branch.
-	int cut = (cfg.twinkleOnPct * 1024) / 100;
-	if (cut <= 0) {
-		return cfg.twinkleMin;
+// The commit, second half: from nothing, the console comes back.
+StrikeWindow computeIgniteWindow(const LedRange& win, int progressPermille,
+                                 int peakPct) {
+	StrikeWindow out;
+	if (progressPermille < 0) {
+		progressPermille = 0;
 	}
-	if (cut >= 1024) {
-		return cfg.twinkleMax;
+	if (progressPermille > 1000) {
+		progressPermille = 1000;
 	}
-	return (twinkleSample(pixel, tick) < cut) ? cfg.twinkleMax
-											  : cfg.twinkleMin;
-}
-
-int computeSelectScale(int pixel, const int* finalPct, int totalLeds,
-                       std::uint32_t elapsedMs,
-                       const SelectionEffectConfig& cfg) {
-	const int finalScale = (finalPct != 0) ? finalPct[pixel] : 0;
-	if (cfg.totalMs == 0 || elapsedMs >= cfg.totalMs) {
-		return finalScale;
+	if (win.width <= 0) {
+		return out;
 	}
-
-	// The twinkle is sampled on a fixed tick rather than per millisecond
-	// so it reads as a flicker instead of a smooth wash. A zero tick
-	// falls back to an eighth of the twinkle rather than dividing by
-	// zero -- the twinkle's own off switch is twinkleMs == 0, which never
-	// reaches here.
-	const std::uint32_t twinkleTickMs =
-		(cfg.twinkleTickMs > 0) ? cfg.twinkleTickMs
-								: ((cfg.twinkleMs / 8) > 0 ? (cfg.twinkleMs / 8) : 1);
-
-	if (elapsedMs < cfg.twinkleMs) {
-		return twinkleLevel(pixel, elapsedMs / twinkleTickMs, cfg);
-	}
-
-	// Settle. The whole stagger span is subtracted from the ramp so the
-	// effect still finishes inside totalMs no matter how large
-	// staggerMs is -- raising the stagger trades ripple length for
-	// ramp length rather than stretching past the budget.
-	const std::uint32_t settleSpan = cfg.totalMs - cfg.twinkleMs;
-	const std::uint32_t staggerSpan =
-		(totalLeds > 0)
-			? static_cast<std::uint32_t>(totalLeds - 1) * cfg.staggerMs
-			: 0;
-	const std::uint32_t rampMs = (settleSpan > staggerSpan)
-		? (settleSpan - staggerSpan)
-		: 1;
-	const std::uint32_t delay =
-		(totalLeds > 0) ? static_cast<std::uint32_t>(pixel) * cfg.staggerMs : 0;
-	const std::uint32_t t = elapsedMs - cfg.twinkleMs;
-
-	// What the collapse starts from: the twinkle's last look for this
-	// pixel, sampled at the moment the ramp would have started so the
-	// hand-off is continuous.
-	//
-	// With no twinkle there is no look to hand off from, so the collapse
-	// starts from the bright end and is a plain dim-down with the same
-	// stagger. It matters that it does not start from a *pattern*:
-	// thresholding a fresh sample here would light a random fifth of the
-	// strip for exactly one frame, so twinkleMs = 0 would still twinkle
-	// -- once, at the moment the twinkle was supposed to be off.
-	const int startLevel = (cfg.twinkleMs > 0)
-		? twinkleLevel(pixel, cfg.twinkleMs / twinkleTickMs, cfg)
-		: cfg.twinkleMax;
-
-	if (t <= delay) {
-		// Still holding the start for this pixel.
-		return startLevel;
-	}
-	if (t >= delay + rampMs) {
-		return finalScale;
-	}
-	const std::uint32_t into = t - delay;
-	return lerpPercent(startLevel, finalScale,
-					   static_cast<int>(into) * 1000 / static_cast<int>(rampMs));
+	// Half the window's width, as a *fraction*: the centre of an odd-width
+	// window is a half-LED, and pretending otherwise is what would stop
+	// the finished range from being exactly the window.
+	const long long halfWidth = static_cast<long long>(win.width) * 500;
+	const long long centre = static_cast<long long>(win.start) * 1000 + halfWidth;
+	const long long half = halfWidth * progressPermille / 1000;
+	out.leftPermille = static_cast<int>(centre - half);
+	out.rightPermille = static_cast<int>(centre + half);
+	out.levelPct = peakPct * progressPermille / 1000;
+	return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -820,47 +794,6 @@ int computeTravelScale(int pixel, const StripFrame& frame, int leftPermille,
 	return 0;
 }
 
-StripPixel computeSelectPixel(int pixel, const StripPixel* finalPixels,
-                              int totalLeds, std::uint32_t elapsedMs,
-                              const SelectionEffectConfig& cfg) {
-	// computeSelectScale() wants the settle target as bare levels, so
-	// flatten a copy rather than change its signature -- it is also
-	// called directly by the tests, and keeping it level-only keeps
-	// that honest.
-	int levels[64];
-	for (int i = 0; i < totalLeds && i < 64; ++i) {
-		levels[i] = (finalPixels != 0) ? finalPixels[i].level : 0;
-	}
-	StripPixel p;
-	const int finalLevel = (finalPixels != 0) ? finalPixels[pixel].level : 0;
-	p.level = computeSelectScale(pixel, levels, totalLeds, elapsedMs, cfg);
-	if (p.level <= 0) {
-		p.role = LedRole::OFF;
-		return p;
-	}
-	// The role decides the *colour*, and resolvePixel() answers black for
-	// OFF whatever the level says. Taking the role from the resting
-	// picture therefore painted the twinkle black on every pixel the
-	// resting paint leaves dark -- and with the stack no longer lit at
-	// rest that is most of the strip, gaps included. The twinkle was
-	// being computed correctly and then thrown away by the colour, which
-	// is why it disappeared when the resting paint stopped lighting the
-	// stack: it had only ever been visible on top of it.
-	//
-	// So the role belongs to the resting paint, and anything *brighter*
-	// than the resting paint is the strike, which is the selection's own
-	// colour. One rule, no phase boundary in it, so the hand-off into the
-	// collapse cannot be missed: a pixel gives the strike colour back
-	// exactly as it reaches its final level, which is the moment its real
-	// role is the right answer anyway. A gap pixel therefore sparks amber
-	// and fades to nothing.
-	p.role = (p.level > finalLevel)
-				 ? LedRole::SELECTED
-				 : ((finalPixels != 0) ? finalPixels[pixel].role
-									   : LedRole::OFF);
-	return p;
-}
-
 // ---------------------------------------------------------------------------
 // Whole-strip frames
 // ---------------------------------------------------------------------------
@@ -1034,19 +967,79 @@ void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 		break;
 	}
 	case StripEffect::SELECTING: {
-		// Build the resting picture and animate toward it. Resolving the
-		// target through the same helper RESTING uses is what guarantees
-		// the last frame of the effect equals the resting paint; when
-		// this was two independent band-splitting expressions they
-		// agreed only by hand, and a mismatch showed up as the whole
-		// strip dimming at the handoff.
-		StripPixel target[64];
-		paintRestingInto(frame, target);
-		for (int i = 0; i < total; ++i) {
-			out[i] = computeSelectPixel(i, target, total, frame.elapsedMs,
-										 frame.select);
+		// The commit, in two halves, and then the strip is at rest.
+		//
+		// It replaces a twinkle across the whole strip, which read as a
+		// fault: a random scatter has no shape, it was spread uniformly
+		// over LEDs that mostly sit dark at rest, and it never faded --
+		// every pixel was either fully lit or fully out. Both halves here
+		// are about *this* console, both sweep an edge across pixels
+		// rather than jumping between states, and the second ends exactly
+		// on the resting picture, so the strip arrives at rest rather
+		// than being cut to it.
+		//
+		// The two roles are not decoration either: the first half is the
+		// proposal dissolving, the second is the selection arriving, so
+		// the hue changes *because* the state changed.
+		paintRestingInto(frame, out);
+		if (frame.elapsedMs >= frame.select.totalMs) {
+			break;  // done: the resting paint above is the frame
 		}
-		break;
+		StrikeWindow strike;
+		LedRole role;
+		if (frame.elapsedMs < frame.select.explodeMs) {
+			const int progress = (frame.select.explodeMs > 0)
+				? static_cast<int>((static_cast<long long>(frame.elapsedMs) * 1000) /
+								  frame.select.explodeMs)
+				: 1000;
+			strike = computeExplodeWindow(frame.from, frame.selectBounds, progress,
+									frame.select.selfPct);
+			role = LedRole::PROPOSAL;
+		} else {
+			const int sinceIgnite =
+				static_cast<int>(frame.elapsedMs - frame.select.explodeMs);
+			const int progress = (frame.select.igniteMs > 0)
+				? (sinceIgnite * 1000) / static_cast<int>(frame.select.igniteMs)
+				: 1000;
+			strike = computeIgniteWindow(frame.from, progress,
+									frame.select.selfPct);
+			role = LedRole::SELECTED;
+		}
+		// The effect *owns* the committing console's window for its whole
+		// duration, and paints into the rest of its range too.
+		//
+		// Owning rather than blending is what makes the ignite work. The
+		// resting paint lights the console at full brightness, so an
+		// effect that only writes where the strike reaches leaves a
+		// bright block with a dim patch growing inside it -- the exact
+		// inverse of the effect.
+		//
+		// This is the inverse of the bug the twinkle had, and worth
+		// keeping both in mind. That one painted black because the role
+		// came from a resting picture that had the pixel dark; this one
+		// would paint over a resting picture that has the pixel lit. The
+		// lesson is not "guard dark pixels" or "guard lit pixels" -- it is
+		// that an effect which *is* the console's window has to own that
+		// window outright rather than negotiate with whatever was there.
+		//
+		// Everything outside the window *and* the strike is left alone, so
+		// the consoles above stay at whatever ABOVE_PCT says. And because
+		// the ignite's final range and level are the resting paint's, the
+		// effect arrives at rest rather than being cut to it -- that is
+		// structural here, not a coincidence of two code paths agreeing.
+		for (int i = 0; i < total; ++i) {
+			const bool ownWindow = inWindow(i, frame.from);
+			int covered = 0;
+			if (strike.lit()) {
+				covered = coveragePercent(strike.leftPermille, strike.rightPermille, i);
+			}
+			if (!ownWindow && covered <= 0) {
+				continue;
+			}
+			const int level = (strike.levelPct * covered) / 100;
+			out[i].level = level;
+			out[i].role = (level > 0) ? role : LedRole::OFF;
+		}
 	}
 	}
 }

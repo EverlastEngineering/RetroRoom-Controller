@@ -7,5 +7,8 @@
 // console".
 #include <ConsoleConfig.h>
 using Console = retroroom_core::Console;
+// Same re-export, for the shelf-extent record. See the note above for
+// why the shell types these without the namespace.
+using Shelf = retroroom_core::Shelf;
 
 #endif
