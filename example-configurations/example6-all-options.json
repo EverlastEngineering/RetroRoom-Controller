@@ -1,0 +1,110 @@
+{
+    "irCodes": {
+        "SVideo": "0x030",
+        "Front": "0x830",
+        "Video": "0x430",
+        "YUV": "0xE30"
+    },
+    "consoleNames": {
+        "NES": "Nintendo Entertainment System",
+        "SMS": "Sega Master System",
+        "XBOX": "Microsoft Xbox"
+    },
+    "consoles": [
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 4,
+            "ledWidth": 8,
+            "shelf": 0
+        },
+        {
+            "id": "SMS",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 21,
+            "ledWidth": 12,
+            "shelf": 0
+        },
+        {
+            "id": "XBOX",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 55,
+            "ledWidth": 39,
+            "shelf": 0
+        }
+    ],
+    "shelves": [
+        {
+            "id": 0,
+            "fromLed": 0,
+            "toLed": 117
+        }
+    ],
+    "led": {
+        "totalLeds": 118,
+        "travelMs": 420,
+        "travelPeakWidth": 6,
+        "travelSparkLeds": 2,
+        "detentsPerStep": 5,
+        "fastDetentsPerStep": 2,
+        "fastSpinWindowMs": 0,
+        "settleLockoutMs": 250,
+        "fillMinLeds": 3,
+        "fillRetreatDelayMs": 3000,
+        "fillRetreatStepMs": 250,
+        "blobWidth": 3,
+        "pulseMs": 1100,
+        "pulseMinPct": 30,
+        "pulseMaxPct": 100,
+        "abovePct": 0,
+        "selfPct": 100,
+        "dimPct": 22,
+        "fillPct": 45,
+        "blobPct": 100,
+        "browseFromPct": 25,
+        "browseToPct": 45,
+        "explodeMs": 400,
+        "igniteMs": 200,
+        "ringIdleMs": 5000,
+        "ringFlashMs": 120,
+        "frameIntervalMs": 8,
+        "colors": {
+            "stack": [
+                12,
+                28,
+                40
+            ],
+            "leaving": [
+                20,
+                34,
+                48
+            ],
+            "fill": [
+                16,
+                40,
+                56
+            ],
+            "travel": [
+                64,
+                40,
+                8
+            ],
+            "proposal": [
+                64,
+                40,
+                8
+            ],
+            "selected": [
+                48,
+                36,
+                24
+            ]
+        }
+    },
+    "lcd": {
+        "backlightOffAfterMs": 2000
+    }
+}
