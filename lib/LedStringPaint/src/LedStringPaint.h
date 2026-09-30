@@ -745,4 +745,29 @@ int computeFillScale(int pixel, const StripFrame& frame);
 int computeTravelScale(int pixel, const StripFrame& frame,
                        int leftPermille, int rightPermille);
 
+// Does the strip still OWE the operator the overshoot retreat?
+//
+// The retreat is two things, and conflating them is what broke this
+// three times before it was written down:
+//
+//   1. a *delay* after the last detent, during which nothing moves, and
+//   2. the run giving itself back, one LED at a time.
+//
+// The debt starts at (1), not at (2). A strip that is sitting in its
+// delay has not yet begun the retreat, but it unquestionably still owes
+// one -- and anything that treats "not started" as "not owed" will
+// cancel the browse during the delay and the run will vanish in one
+// step instead of unwinding.
+//
+// So the answer is true from the last detent until the retreat has
+// given every LED back, and false only once there is nothing left to
+// give. Callers gate on this to hold their own give-up, because
+// clearing the browse is what takes the retreat with it.
+//
+// `enabled` is false when fillRetreatDelayMs or fillRetreatStepMs is
+// zero, which disables the retreat outright (see paintFilling()). With
+// it off there is no debt to owe and the answer is simply false.
+bool retreatStillOwed(bool filling, bool enabled, std::uint32_t quietMs,
+                      int delayMs, bool running);
+
 }  // namespace retroroom_core

@@ -55,6 +55,65 @@ using retroroom_core::StripFrame;
 void setUp(void) {}
 void tearDown(void) {}
 
+// The overshoot retreat is owed from the last detent, not from the
+// moment its first LED moves.
+//
+// This is the fourth attempt at the abandoned-browse snap, and each of
+// the first three failed the same way: a caller asked "is the retreat
+// running yet" and cancelled the browse during the delay, where the
+// retreat has been promised but has not begun. With ringIdleMs below
+// fillRetreatDelayMs that is every time, deterministically.
+//
+// The predicate was in src/ledstring.cpp for all three, where no test
+// could reach it. It is in lib/LedStringPaint now.
+static void test_the_retreat_is_owed_from_the_last_detent(void) {
+	// Inside the delay. Nothing has moved, and the run is very much
+	// still owed. This is the case that kept being dropped.
+	TEST_ASSERT_TRUE_MESSAGE(
+		retroroom_core::retreatStillOwed(true, true, 0, 3000, false),
+		"the retreat is owed the instant the operator stops");
+	TEST_ASSERT_TRUE(retroroom_core::retreatStillOwed(true, true, 2999, 3000,
+													   false));
+	TEST_ASSERT_TRUE(retroroom_core::retreatStillOwed(true, true, 3000, 3000,
+													   false));
+	// Past the delay, unwinding.
+	TEST_ASSERT_TRUE(retroroom_core::retreatStillOwed(true, true, 3001, 3000,
+													   true));
+	// Past the delay, finished. Nothing left to give back.
+	TEST_ASSERT_FALSE_MESSAGE(
+		retroroom_core::retreatStillOwed(true, true, 5000, 3000, false),
+		"the debt ends only when the retreat has finished");
+	// Once past the delay the answer is exactly `running`, with no grace
+	// left over: the 3000 case above is the last tick the delay covers,
+	// matching paintFilling()'s own `quietMs > delayMs` test so the debt
+	// and the retreat begin and end on the same tick rather than one
+	// apart.
+	TEST_ASSERT_FALSE(
+		retroroom_core::retreatStillOwed(true, true, 3001, 3000, false));
+	TEST_ASSERT_TRUE(
+		retroroom_core::retreatStillOwed(true, true, 3001, 3000, true));
+	// A retreat with nothing to give back finishes inside a single
+	// frame, so `running` is false on the very first tick past the
+	// delay and the debt ends there. That is the case that used to
+	// look like a snap, because it is the same tick the ring gives up.
+	TEST_ASSERT_FALSE(
+		retroroom_core::retreatStillOwed(true, true, 3001, 3000, false));
+}
+
+static void test_no_retreat_is_owed_when_there_is_nothing_to_retreat(void) {
+	// Not filling: the browse ended some other way, so no run survives.
+	TEST_ASSERT_FALSE(
+		retroroom_core::retreatStillOwed(false, true, 0, 3000, false));
+	TEST_ASSERT_FALSE(
+		retroroom_core::retreatStillOwed(false, true, 5000, 3000, true));
+	// Retreat disabled at runtime (either fillRetreat* being zero).
+	TEST_ASSERT_FALSE_MESSAGE(
+		retroroom_core::retreatStillOwed(true, false, 0, 3000, false),
+		"a disabled retreat owes nothing, however long the quiet period");
+	TEST_ASSERT_FALSE(
+		retroroom_core::retreatStillOwed(true, false, 99999, 3000, true));
+}
+
 // Role per pixel, for the tests that care what a pixel is *for* rather
 // than how bright. Defined further down with the colour tests, so
 // declared here for the tests that need a role and a level together.
@@ -1876,8 +1935,11 @@ int main(int argc, char** argv) {
 	UNITY_BEGIN();
 
 	// Detent gating.
-	RUN_TEST(test_gate_needs_five_detents_for_a_deliberate_step);
-	RUN_TEST(test_gate_snaps_back_to_the_anchor_after_advancing);
+	// The abandoned-browse retreat, and specifically that its delay is
+	// part of what is owed. Three fixes failed before this had a test.
+	RUN_TEST(test_the_retreat_is_owed_from_the_last_detent);
+	RUN_TEST(test_no_retreat_is_owed_when_there_is_nothing_to_retreat);
+	RUN_TEST(test_gate_needs_five_detents_for_a_deliberate_step);	RUN_TEST(test_gate_snaps_back_to_the_anchor_after_advancing);
 	RUN_TEST(test_gate_escalates_to_two_detents_when_spinning);
 	RUN_TEST(test_fast_spin_completes_a_step_in_two_detents);
 	RUN_TEST(test_slowing_back_down_returns_to_the_deliberate_cadence);

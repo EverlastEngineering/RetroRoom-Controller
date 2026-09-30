@@ -81,6 +81,16 @@ with current ones. Per-file gives:
 ## Current inventory
 
 ### open/
+- `2026-09-30_long-press-menu` — hold the knob for an on-screen menu whose **contents are defined in `/consoles.json`**, each item naming a path into the `led` block so a menu entry and the key it edits cannot drift. The parent for the five items below. Needs a `lib/CabinetMenu` state machine and a generic dotted-path config setter, both testable.
+- `2026-09-30_led-brightness-config` — `led.brightnessPct`, one number scaling the string and the ring together. **Build this first** — it is the `int` menu item the menu needs to be worth opening. Also the job of unifying the string's role-percentage scaling with the ring's compile-time `LED_BRIGHTNESS`.
+- `2026-09-30_night-mode` — double-click the knob while a console is selected; the selected window stays dark afterwards, every time, while the mode is on. `led.nightMode`.
+- `2026-09-30_menu-attract-mode` — cycle randomly through consoles when idle, cancelled by any real interaction. Suppressing IR during it is an open question, not a detail.
+- `2026-09-30_menu-light-show-mode` — whole-strip animation behind a secret knob sequence, deliberately *not* a menu item. Belongs in `lib/LedStringPaint` as another `StripEffect` so `ledstring-sim.sh` can replay it without hardware.
+- `2026-09-30_menu-lock-down-mode` — probably "an empty `menu` array means no long-press target at all", which is the pay-off for a data-driven menu. Covers the HTTP upload door too, or it is a lock on one of two doors.
+- `2026-09-30_menu-lcd-backlight-override` — backlight stays fully lit while the menu is open, ignoring `lcd.backlightOffAfterMs`, and is *released* on exit. Needs its own timeout so a walked-away cabinet does not become a new glow-in-the-dark problem.
+- `2026-09-30_reload-config-without-reboot` — decide whether `POST /consoles.json` applies live. Answer of record: doable, but only once the values bound into FastLED at init are explicitly immutable rather than accidentally so, and a rejected file must leave the running cabinet untouched.
+- `2026-09-30_stack-selector-cycle-speed` — the selector's inter-pulse timing as a config value. Open question whether it is a free parameter or a ceiling the firmware will not exceed; `pin-map-chart.md` is the standing answer to that.
+- `2026-09-29_feature-ideas` — the original notes these nine came from. Committed verbatim before any of them were planned; kept so the plans can be checked against what was actually asked for.
 - `2026-09-29_console-browse-stops-at-ends` — reaching the end of the console list should do nothing, not wrap to the far end. Touches `wraparoundNext` and its three call sites; also needs a decision on what a detent *at* the end does.
 - `2026-09-25_led-string-wiring-diagram` — S3 of the old DRAFT: the 6-segment serpentine wiring diagram and the per-segment LED count at 30/60 LED/m. Document only, no code. Note the cabinet has the TV between the console columns, so the chain runs top shelf L→R, around the TV, then the next shelf L→R.
 - `2026-09-25_led-string-e2e-readback` — S4 of the old DRAFT: `/leds.json` snapshot endpoint so the browse/selection frames can be asserted from the host. Blocked on deciding whether the endpoint is worth it now the animations are in.

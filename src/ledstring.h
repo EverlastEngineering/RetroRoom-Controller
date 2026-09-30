@@ -116,24 +116,19 @@ extern void ledstring_browseClear();
 // without the caller having to know which modes exist.
 extern bool ledstring_fillRetreatInProgress();
 
-// Does the strip still OWE the operator a retreat? True from the moment
-// the quiet period passes fillRetreatDelayMs until the retreat has
-// finished giving every LED back.
+// Does the strip still OWE the operator a retreat?
 //
-// Wider than ledstring_fillRetreatInProgress() on purpose, and the
-// difference is the whole bug this fixes. The retreat has a *delay*
-// before its first LED moves, and that delay is part of the same
-// gesture -- the operator stopped, the run sits there, and only then
-// does it start peeling itself back. Asking only "is it running" leaves
-// the delay uncovered, so anything that ends the ring's hold inside
-// those fillRetreatDelayMs milliseconds clears the browse while the
-// retreat is still only a plan, and the run vanishes in one step.
-//
-// That is not a hypothetical: with ringIdleMs below fillRetreatDelayMs,
-// the ring gives up first *every time*, deterministically, for any
-// value of either setting. The defaults (5000 and 3000) happen to clear
-// it, which is why it looked fine until the timings were tuned.
+// True from the last detent until the retreat has given every LED back
+// -- the delay counts, not just the unwinding. See
+// retroroom_core::retreatStillOwed() in lib/LedStringPaint for why that
+// distinction is the whole ballgame; the decision lives there because it
+// got this wrong three times while it was in this file.
 extern bool ledstring_browseRetreatPending();
+
+// The strip's current mode, for logging. Diagnostic only -- nothing
+// should branch on this, because the mode names are the shell's business
+// and branching on them in a second place is how they drift.
+const char* ledstring_modeName();
 
 // ---- selection ---------------------------------------------------------
 

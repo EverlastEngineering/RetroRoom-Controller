@@ -1058,4 +1058,30 @@ void computeStripFrame(const StripFrame& frame, StripPixel* out) {
 	}
 }
 
+bool retreatStillOwed(bool filling, bool enabled, std::uint32_t quietMs,
+                      int delayMs, bool running) {
+	// Not filling means the browse is over by some other route -- a
+	// commit, a snap -- and there is no run left to give back.
+	if (!filling) {
+		return false;
+	}
+	// Retreat compiled out at runtime: nothing was ever promised.
+	if (!enabled) {
+		return false;
+	}
+	// Still inside the delay. This is the case that was getting lost:
+	// nothing has moved yet, but the retreat is owed, and a caller that
+	// waits for `running` will have cancelled the browse long before the
+	// first LED comes back.
+	//
+	// Strictly greater to finish, matching paintFilling()'s own
+	// `quietMs > delayMs` test, so the debt ends on the same tick the
+	// retreat is judged to have begun rather than one tick early.
+	if (quietMs <= static_cast<std::uint32_t>(delayMs)) {
+		return true;
+	}
+	// Past the delay: owed until it has given every LED back.
+	return running;
+}
+
 }  // namespace retroroom_core

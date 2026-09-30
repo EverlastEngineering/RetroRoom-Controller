@@ -250,7 +250,13 @@ void controls_ringFadedOut() {
 		return;
 	}
 	Serial.print("Ring faded; browse cursor reverted to index ");
-	Serial.println(currentConsoleIndex);
+	Serial.print(currentConsoleIndex);
+	Serial.print(" | strip=");
+	Serial.print(ledstring_modeName());
+	Serial.print(" retreatPending=");
+	Serial.print(ledstring_browseRetreatPending() ? 1 : 0);
+	Serial.print(" retreating=");
+	Serial.println(ledstring_fillRetreatInProgress() ? 1 : 0);
 	controls_browseReset();
 }
 
@@ -278,6 +284,20 @@ void controls_touchTick() {
 	touchSensor.read();
 
 	const bool near = touchSensor.isPressed();
+#if defined(HAS_LEDS)
+	// The pad's *reading*, every tick -- not an edge. The ring core does
+	// its own edge detection, and it has to: a commit clears the hold
+	// without the reading changing, so the two notions of "the hand
+	// just arrived" are not the same question. Filtering here as well
+	// left two detectors for one fact, which is the shape of the
+	// abandoned-browse bug and of the commit/proximity bug before it.
+	// Two detectors that currently agree are two detectors that can
+	// stop agreeing.
+	lightRingSetProximityHold(near);
+#endif
+	// The serial line is the operator-facing report of the pad, and it
+	// only has anything to say when the reading changes -- so this is
+	// the one place an edge is still the right thing to detect.
 	if (near == proximityActive) {
 		return;
 	}
