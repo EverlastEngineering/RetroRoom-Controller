@@ -700,6 +700,193 @@ void test_travel_and_proposal_keep_the_same_colour(void) {
                                   "by default the travel is the proposal in flight");
 }
 
+// ---- the writer ---------------------------------------------------------
+//
+// applyConfigEdits() is what "save" is, so the properties that make it
+// safe to point at the live config file are the properties worth
+// testing. The important ones are the negative space: what it must NOT
+// lose, and what it must refuse.
+
+// A key the parser does not model must survive a round trip. This is the
+// reason the document is round-tripped rather than rebuilt from
+// LedFeel: a config the firmware does not fully understand yet still
+// has to come back out of a save intact.
+void test_saving_keeps_a_key_the_parser_never_heard_of(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "somethingNewer": {"nested": [1, 2, 3]},
+            "led": {"detentsPerStep": 5}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"led.detentsPerStep", 9},
+        };
+        std::string out;
+        std::string error;
+        TEST_ASSERT_TRUE(retroroom_core::applyConfigEdits(
+            json, edits, 1, &out, &error));
+        TEST_ASSERT_TRUE_MESSAGE(error.empty(), error.c_str());
+
+        // And the result is still a config the parser accepts, with the
+        // new value and the unknown block both present.
+        retroroom_core::LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(9, r.feel.detentsPerStep);
+        TEST_ASSERT_TRUE_MESSAGE(out.find("somethingNewer") != std::string::npos,
+                                 "an unknown block must survive a save");
+}
+
+// A save changes what it was asked to change and nothing else.
+void test_saving_changes_only_what_it_was_told_to(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"detentsPerStep": 5, "travelMs": 420, "totalLeds": 118}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"led.detentsPerStep", 17},
+        };
+        std::string out, error;
+        TEST_ASSERT_TRUE(retroroom_core::applyConfigEdits(
+            json, edits, 1, &out, &error));
+        retroroom_core::LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(17, r.feel.detentsPerStep);
+        TEST_ASSERT_EQUAL(420, r.feel.travelMs);
+        TEST_ASSERT_EQUAL(118, r.feel.totalLeds);
+}
+
+// A key the file never mentioned, and a block the file never mentioned,
+// are both created. An operator who adds a menu item for a new setting
+// is doing something the file has to grow into.
+void test_saving_creates_a_setting_and_a_block_that_were_absent(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"detentsPerStep": 5}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"led.ringFadeMs", 450},
+            {"lcd.backlightOffAfterMs", 12000},
+        };
+        std::string out, error;
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::applyConfigEdits(json, edits, 2, &out, &error),
+            error.c_str());
+        retroroom_core::LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(450, r.feel.ringFadeMs);
+        TEST_ASSERT_EQUAL(12000u, r.lcdBacklightOffAfterMs);
+}
+
+// A value outside the field's range is clamped on the way out, not left
+// for the next boot to discover. A file that says 999999 and a running
+// cabinet at 600000 is exactly the quiet disagreement this is all about.
+void test_saving_clamps_to_the_field_range(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"led.detentsPerStep", 9999},
+            {"lcd.backlightOffAfterMs", -5},
+        };
+        std::string out, error;
+        TEST_ASSERT_TRUE(retroroom_core::applyConfigEdits(
+            json, edits, 2, &out, &error));
+        retroroom_core::LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_EQUAL(64, r.feel.detentsPerStep);
+        TEST_ASSERT_EQUAL(0u, r.lcdBacklightOffAfterMs);
+        TEST_ASSERT_TRUE_MESSAGE(r.warnings.empty(),
+                                 "a value we clamped on write must not need "
+                                 "clamping again on the way in");
+}
+
+// A bad save must not happen. An unparseable document and an unknown
+// path are both refused, and the caller is told why.
+void test_saving_refuses_what_it_cannot_do(void) {
+        std::string out, error;
+
+        TEST_ASSERT_FALSE(retroroom_core::applyConfigEdits(
+            "{ this is not json", nullptr, 0, &out, &error));
+        TEST_ASSERT_TRUE_MESSAGE(!error.empty(), "a refusal must say why");
+
+        const char* json = R"({"irCodes": {"Video": "0x430"},
+                               "consoles": [{"id": "NES", "tvInput": "Video",
+                               "selectorPosition": 1, "ledPosition": 1,
+                               "ledWidth": 1}]})";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"led.noSuchSetting", 1},
+        };
+        TEST_ASSERT_FALSE(retroroom_core::applyConfigEdits(
+            json, edits, 1, &out, &error));
+        TEST_ASSERT_TRUE_MESSAGE(!error.empty(), "a refusal must say why");
+}
+
+// The lcd clamp now reports itself, so a bad value in the file is
+// visible at boot rather than silently becoming a different number.
+void test_the_lcd_clamp_is_reported(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "lcd": {"backlightOffAfterMs": 999999999}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(600000u, r.lcdBacklightOffAfterMs);
+        TEST_ASSERT_TRUE_MESSAGE(!r.warnings.empty(),
+                                 "a clamp nobody hears about is the bug it "
+                                 "replaced");
+}
+
+// The block registry: a path resolves across blocks, and a bare key
+// means "led".
+void test_config_paths_resolve_across_blocks(void) {
+        const char* block = nullptr;
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("led.detentsPerStep", &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("led", block);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("lcd.backlightOffAfterMs", &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("lcd", block);
+        // Bare means the first block.
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("detentsPerStep", &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("led", block);
+        // And the negative cases, which are what the menu uses to drop
+        // an entry naming a setting nobody wrote.
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("led.nope", &block) == nullptr);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("nope.detentsPerStep", &block) == nullptr);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("", &block) == nullptr);
+}
+
+// Exactly one setting needs a restart, and the property lives with the
+// field so the menu prompt, the API response and the docs cannot
+// disagree about which.
+void test_only_the_strip_length_needs_a_reboot(void) {
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::configFieldNeedsReboot(
+                retroroom_core::findConfigField("led.totalLeds", nullptr)),
+            "totalLeds is bound into FastLED at init and must say so");
+        TEST_ASSERT_FALSE(retroroom_core::configFieldNeedsReboot(
+            retroroom_core::findConfigField("led.detentsPerStep", nullptr)));
+        TEST_ASSERT_FALSE(retroroom_core::configFieldNeedsReboot(
+            retroroom_core::findConfigField("lcd.backlightOffAfterMs", nullptr)));
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -745,6 +932,15 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_menu_entry_naming_nothing_real_is_skipped);
 	RUN_TEST(test_a_menu_cannot_offer_more_than_the_setting_allows);
 	RUN_TEST(test_a_config_with_no_menu_has_an_empty_one);
+	// The writer.
+	RUN_TEST(test_saving_keeps_a_key_the_parser_never_heard_of);
+	RUN_TEST(test_saving_changes_only_what_it_was_told_to);
+	RUN_TEST(test_saving_creates_a_setting_and_a_block_that_were_absent);
+	RUN_TEST(test_saving_clamps_to_the_field_range);
+	RUN_TEST(test_saving_refuses_what_it_cannot_do);
+	RUN_TEST(test_the_lcd_clamp_is_reported);
+	RUN_TEST(test_config_paths_resolve_across_blocks);
+	RUN_TEST(test_only_the_strip_length_needs_a_reboot);
 	RUN_TEST(test_out_of_range_is_clamped_and_reported);
 	RUN_TEST(test_a_partial_led_block_leaves_everything_else_alone);
 	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);

@@ -19,6 +19,8 @@
 
 #include "ConsoleConfig.h"
 
+#include <cstring>
+
 namespace retroroom_core {
 
 namespace {
@@ -77,6 +79,45 @@ const LedField kFields[] = {
 
 const int kFieldCount = static_cast<int>(sizeof(kFields) / sizeof(kFields[0]));
 
+// ---- the lcd block ------------------------------------------------------
+//
+// One field today, and that is not the point. What matters is that it
+// exists as a *block* in the same registry as `led`, so a menu item
+// naming "lcd.backlightOffAfterMs" resolves through exactly the path
+// "led.detentsPerStep" already takes, and a third block is a row here
+// rather than a new special case in the parser, the setter and the
+// writer.
+//
+// `member` is null and deliberately so: it is typed
+// `int LedFeel::*` and only the `led` block is bound to a LedFeel. The
+// shell resolves the others against whatever storage they actually
+// have. See ConfigBlock in ConsoleConfig.h.
+const LedField kLcdFields[] = {
+    {"backlightOffAfterMs", nullptr, 0, 600000},
+};
+
+const int kLcdFieldCount =
+    static_cast<int>(sizeof(kLcdFields) / sizeof(kLcdFields[0]));
+
+// "led" first, always: it is the block a bare key means, and it is the
+// one the parser's own readInt loop walks.
+const ConfigBlock kBlocks[] = {
+    {"led", kFields, kFieldCount},
+    {"lcd", kLcdFields, kLcdFieldCount},
+};
+
+const int kBlockCount = static_cast<int>(sizeof(kBlocks) / sizeof(kBlocks[0]));
+
+// The one field whose change cannot take effect without a restart.
+// totalLeds is handed to FastLED.addLeds() at init, so the strip
+// controller stays bound to the old length however many times the value
+// is written afterwards. Everything else is read per frame, per tick or
+// per call, which is the whole reason the other two "read the config
+// too early" bugs this session had to be fixed at all.
+bool isTotalLeds(const LedField* field) {
+    return field != nullptr && field->member == &LedFeel::totalLeds;
+}
+
 }  // namespace
 
 const LedField* ledFields(int* count) {
@@ -130,6 +171,83 @@ bool ledFeelSet(LedFeel* f, const char* key, int value, bool* clamped) {
     }
     f->*(field->member) = next;
     return true;
+}
+
+const ConfigBlock* configBlocks(int* count) {
+    if (count != nullptr) {
+        *count = kBlockCount;
+    }
+    return kBlocks;
+}
+
+const LedField* findConfigField(const char* path, const char** blockOut) {
+    if (path == nullptr || path[0] == '\0') {
+        return nullptr;
+    }
+    if (blockOut != nullptr) {
+        *blockOut = nullptr;
+    }
+
+    // Split on the first dot. No dot means the first block, which is
+    // "led" -- so a config can say "detentsPerStep" as well as
+    // "led.detentsPerStep", and the menu parser normalises to the
+    // long form so what gets written back is always unambiguous.
+    const char* dot = path;
+    while (*dot != '\0' && *dot != '.') {
+        ++dot;
+    }
+    const char* key = (*dot == '.') ? dot + 1 : path;
+    const std::size_t prefixLen =
+        (*dot == '.') ? static_cast<std::size_t>(dot - path) : 0;
+
+    for (int b = 0; b < kBlockCount; ++b) {
+        const ConfigBlock& block = kBlocks[b];
+        if (prefixLen == 0) {
+            // A bare key means the FIRST block, not "a block whose
+            // prefix is the empty string" -- there is no such block, so
+            // without this every bare key resolved to nothing and the
+            // test caught it immediately.
+            if (b != 0) {
+                continue;
+            }
+        } else {
+            const std::size_t n = std::strlen(block.prefix);
+            if (n != prefixLen) {
+                continue;
+            }
+            bool same = true;
+            for (std::size_t i = 0; i < n; ++i) {
+                if (block.prefix[i] != path[i]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (!same) {
+                continue;
+            }
+        }
+        for (int i = 0; i < block.count; ++i) {
+            const char* candidate = block.fields[i].key;
+            const char* a = candidate;
+            const char* c = key;
+            while (*a != '\0' && *a == *c) {
+                ++a;
+                ++c;
+            }
+            if (*a == '\0' && *c == '\0') {
+                if (blockOut != nullptr) {
+                    *blockOut = block.prefix;
+                }
+                return &block.fields[i];
+            }
+        }
+        return nullptr;  // right block, wrong key
+    }
+    return nullptr;  // no such block
+}
+
+bool configFieldNeedsReboot(const LedField* field) {
+    return isTotalLeds(field);
 }
 
 }  // namespace retroroom_core

@@ -269,8 +269,23 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 		JsonVariantConst v = lcdObj["backlightOffAfterMs"];
 		if (!v.isNull()) {
 			long long ms = v.as<long long>();
-			if (ms < 0) ms = 0;
-			if (ms > 600000) ms = 600000;
+			// Reported, not silent. Every other value in this file says
+			// so when it clamps, and this one did not -- which was fine
+			// while it was only readable from the file, and stops being
+			// fine the moment a menu or the API can also write it. A
+			// setting that can be written from two places and can
+			// disagree with itself is the failure this file has been
+			// fixing all session.
+			if (ms < 0) {
+				result.warnings.push_back(
+					"lcd.backlightOffAfterMs was negative; clamped to 0");
+				ms = 0;
+			}
+			if (ms > 600000) {
+				result.warnings.push_back(
+					"lcd.backlightOffAfterMs was above 600000; clamped");
+				ms = 600000;
+			}
 			result.lcdBacklightOffAfterMs = static_cast<std::uint32_t>(ms);
 		}
 	}

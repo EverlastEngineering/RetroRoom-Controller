@@ -203,6 +203,41 @@ struct LedField {
 // array is owned by the library; do not free it.
 const LedField* ledFields(int* count);
 
+// A top-level block of the config that a menu item or the API can
+// address by path -- "led.detentsPerStep", "lcd.backlightOffAfterMs".
+//
+// The point of a registry rather than a hardcoded `led` prefix: a menu
+// item names a path, and the path resolves through here, so a second
+// block is a row plus its field table rather than a new special case
+// threaded through the parser, the setter and the writer. "led" is
+// always first, so a path with no dot resolves there.
+struct ConfigBlock {
+	const char* prefix;
+	const LedField* fields;
+	int count;
+};
+
+const ConfigBlock* configBlocks(int* count);
+
+// Resolve a dotted path -- or a bare key, which means the first block --
+// to its field. Null if no such field exists, which is the answer the
+// menu uses to drop an entry naming a setting nobody wrote.
+//
+// *blockOut, when given, receives the owning block's prefix. The caller
+// needs it because the storage is per block: only `led` is bound to
+// LedFeel, so only the `led` block's LedField::member is meaningful and
+// everything else is resolved by the shell that owns it.
+const LedField* findConfigField(const char* path, const char** blockOut);
+
+// Does changing this field take effect only after a restart?
+//
+// True today for exactly one: led.totalLeds, which is handed to
+// FastLED.addLeds() at init, so a changed value does not re-bind the
+// strip. Kept as a property of the field rather than a list somewhere
+// in the shell, so "which settings need a reboot" has one answer and
+// the menu prompt, the API response and the docs cannot disagree.
+bool configFieldNeedsReboot(const LedField* field);
+
 // Look up one key. Null if the key is not a `led` option -- which is the
 // answer for the colours too, since they are not scalars.
 const LedField* findLedField(const char* key);
@@ -243,6 +278,30 @@ struct ParsedMenu {
         return m;
     }
 };
+
+// One change to apply to a config document on its way back to flash.
+struct ConfigEdit {
+	// A path the registry above resolves: "led.detentsPerStep",
+	// "lcd.backlightOffAfterMs". A bare key is accepted and means the
+	// first block, but callers should normalise to the long form so
+	// what is written is unambiguous.
+	const char* path;
+	int value;
+};
+
+// Apply `edits` to the document text and return the result.
+//
+// False on an unparseable document or an unknown path, with `error`
+// filled in. The caller must not write `out` when that happens -- the
+// whole point of checking first is that a bad save leaves the running
+// cabinet and the file on flash exactly as they were.
+//
+// Values are clamped to their field's range here rather than left for
+// the next boot to discover. See ConfigWrite.cpp for why the document
+// is round-tripped rather than text-patched, and why that makes an
+// unknown key safe.
+bool applyConfigEdits(const std::string& json, const ConfigEdit* edits,
+                      int count, std::string* out, std::string* error);
 
 struct LoadResult {
 	bool ok = false;
