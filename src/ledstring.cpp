@@ -210,24 +210,14 @@ retroroom_core::LedRange shelfBoundsFor(int idx) {
 			return {s.fromLed, (s.toLed - s.fromLed) + 1};
 		}
 	}
-	int lo = -1;
-	int hi = -1;
-	for (int i = 0; i < n; ++i) {
-		if (consoles[i].shelf != shelf) {
-			continue;
-		}
-		const retroroom_core::LedRange w = windowFor(i);
-		if (lo < 0 || w.start < lo) {
-			lo = w.start;
-		}
-		if (hi < 0 || w.start + w.width > hi) {
-			hi = w.start + w.width;
-		}
-	}
-	if (lo < 0) {
-		return {0, 0};
-	}
-	return {lo, hi - lo};
+	// No declared extent. The whole strip is then the bound, which is the
+	// only thing we actually know -- deriving the shelf from the consoles
+	// on it would say the shelf is exactly as wide as its contents, and
+	// the first and last console on a shelf would then have no room to
+	// expand into at all. That is not what a shelf is: there is bare
+	// string past the end console, and using it is the whole point of
+	// declaring extents.
+	return {0, NUM_SELECTED_CONSOLE_LED_STRING_LEDS};
 }
 
 // Turn a resolved frame into pixels and push it to the wire. This is

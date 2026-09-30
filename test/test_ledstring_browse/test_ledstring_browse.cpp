@@ -522,43 +522,56 @@ static void test_the_explode_grows_symmetrically_and_dies(void) {
 	TEST_ASSERT_FALSE(done.lit());
 }
 
-static void test_the_explode_is_capped_by_the_shelf_and_stays_even(void) {
-	// Two things at once, and they pull in opposite directions: the
-	// shelf is a hard boundary, but cutting one side only would leave a
-	// console near a shelf end visibly lopsided. So the *narrower* side
-	// sets the allowance for both.
-	//
-	// 20..29 on a shelf running 16..61: four LEDs of room on the left and
-	// thirty-two on the right. Left decides, so the window grows four
-	// each way and stops, rather than four left and eight right.
+static void test_the_explode_is_capped_by_the_shelf(void) {
+	// A shelf is a hard boundary: nothing may be lit past it. 20..29 on a
+	// shelf running 16..61, so four LEDs of room on the left and thirty-two
+	// on the right, against a wish for five each way.
 	const LedRange win = computeConsoleWindow(20, 10, 64);
 	const StrikeWindow s = computeExplodeWindow(win, {16, 46}, 1000, 100);
 	TEST_ASSERT_EQUAL_MESSAGE(16 * 1000, s.leftPermille,
 							  "the window may not pass the shelf's near edge");
-	TEST_ASSERT_EQUAL_MESSAGE(34 * 1000, s.rightPermille, "and stops there");
-	TEST_ASSERT_EQUAL_MESSAGE((win.start * 1000) - s.leftPermille,
-							  s.rightPermille - (win.start + win.width) * 1000,
-							  "and the far side grew by the same amount, not further");
-	// A bound wider than the strip is still a bound, not permission to
-	// light LEDs that do not exist.
-	const LedRange edge = computeConsoleWindow(60, 4, 64);
-	const StrikeWindow atEdge = computeExplodeWindow(edge, {0, 64}, 1000, 100);
-	TEST_ASSERT_TRUE_MESSAGE(atEdge.leftPermille >= 0,
-							  "nothing may be lit off the front of the strip");
+	TEST_ASSERT_EQUAL_MESSAGE(35 * 1000, s.rightPermille,
+							  "and the far side got the room it had, all five");
 }
 
-static void test_a_console_outside_its_own_shelf_does_not_grow(void) {
-	// A malformed config: the console's window starts before its shelf
-	// does. There is no sensible direction to grow in, and the right
-	// answer is to not grow at all -- *not* to expand out to the shelf
-	// edge, which would move the window somewhere the operator never
-	// asked for.
+static void test_a_console_at_the_end_of_a_shelf_still_explodes(void) {
+	// The first and last console on a shelf have no room on one side, and
+	// they used to not expand *at all*: the clamp took the narrower side
+	// and grew both sides by it, so a console with no room on one side had
+	// none on the other either, and the effect did nothing.
+	//
+	// That is the wrong trade. A visibly one-sided expansion is fine and a
+	// dead one is not -- it is the LEDs beside a console that pay for it.
+	// So each side is capped to the room it actually has.
+	//
+	// NES at LED 4 on a strip starting at 0: four LEDs of bare string to
+	// its left, and the shelf carries on to the right.
+	const LedRange nes = computeConsoleWindow(4, 8, 64);
+	const StrikeWindow s = computeExplodeWindow(nes, {0, 64}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(0, s.leftPermille / 1000,
+							  "it uses the bare string on its left, reaching LED 0");
+	TEST_ASSERT_TRUE_MESSAGE(s.rightPermille - ((nes.start + nes.width) * 1000) > 0,
+							  "and still grows on the other side");
+	// The last console on the strip: no room to the right at all, and it
+	// still grows leftwards.
+	const LedRange last = computeConsoleWindow(55, 9, 64);
+	const StrikeWindow e = computeExplodeWindow(last, {0, 64}, 1000, 100);
+	TEST_ASSERT_EQUAL_MESSAGE(64, e.rightPermille / 1000,
+							  "nothing past the end of the strip");
+	TEST_ASSERT_TRUE_MESSAGE((last.start * 1000) - e.leftPermille > 0,
+							  "but the other side is not held back by it");
+}
+
+static void test_a_console_with_no_room_grows_where_it_can(void) {
+	// A console flush against a shelf edge, with the shelf offering nothing
+	// on the left at all. It must still grow rightwards, and its left edge
+	// must not be dragged off its own window.
 	const LedRange win = computeConsoleWindow(20, 10, 64);
-	const StrikeWindow s = computeExplodeWindow(win, {22, 41}, 1000, 100);
+	const StrikeWindow s = computeExplodeWindow(win, {20, 41}, 1000, 100);
 	TEST_ASSERT_EQUAL_MESSAGE(win.start * 1000, s.leftPermille,
-							  "a console already outside its shelf must not move");
-	TEST_ASSERT_EQUAL_MESSAGE((win.start + win.width) * 1000, s.rightPermille,
-							  "on either side");
+							  "no room on the left, so that edge does not move");
+	TEST_ASSERT_TRUE_MESSAGE(s.rightPermille > (win.start + win.width) * 1000,
+							  "and the right side grows regardless");
 }
 
 static void test_the_ignite_ends_exactly_on_the_window(void) {
@@ -590,24 +603,6 @@ static void test_the_ignite_starts_from_nothing_and_grows_evenly(void) {
 		"it grows from the centre, so both sides match");
 	TEST_ASSERT_EQUAL_MESSAGE(50, mid.levelPct, "and fades in as it grows");
 }
-
-static void test_a_console_wider_than_its_shelf_still_ends_even(void) {
-	// A console cannot be exploded wider than the shelf it is on, so the
-	// target is the shelf's room rather than twice the width. Every
-	// console then dissolves with the same visible effort instead of the
-	// wide ones barely moving.
-	const LedRange win = computeConsoleWindow(30, 20, 64);
-	const StrikeWindow s = computeExplodeWindow(win, {30, 64}, 1000, 100);
-	TEST_ASSERT_EQUAL_MESSAGE(30 * 1000, s.leftPermille,
-							  "no room on the left, so no growth on either side");
-	TEST_ASSERT_EQUAL_MESSAGE((win.start * 1000) - s.leftPermille,
-							  s.rightPermille - (win.start + win.width) * 1000,
-							  "the two sides stay matched even when the answer is zero");
-}
-
-// ---------------------------------------------------------------------------
-// Whole-strip frames
-// ---------------------------------------------------------------------------
 
 // A frame configured the way src/configuration.h configures the
 // firmware today. Anything that renders a frame in the tests goes
@@ -1919,9 +1914,9 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_select_effect_is_finished_inside_its_budget);
 	RUN_TEST(test_the_explode_starts_on_exactly_the_pulsing_window);
 	RUN_TEST(test_the_explode_grows_symmetrically_and_dies);
-	RUN_TEST(test_the_explode_is_capped_by_the_shelf_and_stays_even);
-	RUN_TEST(test_a_console_outside_its_own_shelf_does_not_grow);
-	RUN_TEST(test_a_console_wider_than_its_shelf_still_ends_even);
+	RUN_TEST(test_the_explode_is_capped_by_the_shelf);
+	RUN_TEST(test_a_console_at_the_end_of_a_shelf_still_explodes);
+	RUN_TEST(test_a_console_with_no_room_grows_where_it_can);
 	RUN_TEST(test_the_ignite_ends_exactly_on_the_window);
 	RUN_TEST(test_the_ignite_starts_from_nothing_and_grows_evenly);
 

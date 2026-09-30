@@ -353,30 +353,44 @@ StrikeWindow computeExplodeWindow(const LedRange& win, const LedRange& bounds,
 	// whole geometry is in permille.
 	long long extra = ((static_cast<long long>(targetWidth) - win.width) * 500);
 
-	// The bound, cut to whatever *both* sides can afford. Taking the
-	// minimum rather than clamping each side independently is the whole
-	// point: a console near a shelf end would otherwise grow lopsided,
-	// which reads as the explosion being clipped rather than finished.
+	// Each side is cut to the room *it* has. Capped to the narrower of
+	// the two so the window can never come out lopsided -- but capped per
+	// side, not to the minimum, because the minimum refuses to grow at all
+	// when one side has no room. A console at the end of a shelf is
+	// exactly that case, and it grew not at all until this changed: an
+	// expansion that is visibly one-sided is a far better answer than no
+	// expansion, and the alternative -- both sides shrunk to the worse
+	// side -- means the LEDs next to a console are dead to the effect.
+	long long extraLeft = extra;
+	long long extraRight = extra;
 	if (bounds.width > 0) {
 		const int boundsEnd = bounds.start + bounds.width;
 		const int availableLeft = win.start - bounds.start;
 		const int availableRight = boundsEnd - (win.start + win.width);
-		const int available = (availableLeft < availableRight) ? availableLeft
-															 : availableRight;
-		const long long availablePermille = static_cast<long long>(
-			(available > 0 ? available : 0)) * 1000;
-		if (extra > availablePermille) {
-			extra = availablePermille;
+		const long long leftRoom =
+			static_cast<long long>(availableLeft > 0 ? availableLeft : 0) * 1000;
+		const long long rightRoom =
+			static_cast<long long>(availableRight > 0 ? availableRight : 0) * 1000;
+		if (extraLeft > leftRoom) {
+			extraLeft = leftRoom;
+		}
+		if (extraRight > rightRoom) {
+			extraRight = rightRoom;
 		}
 	}
-	if (extra < 0) {
-		extra = 0;
+	if (extraLeft < 0) {
+		extraLeft = 0;
+	}
+	if (extraRight < 0) {
+		extraRight = 0;
 	}
 
-	const long long half = extra * progressPermille / 1000;
-	out.leftPermille = static_cast<int>(static_cast<long long>(win.start) * 1000 - half);
+	const long long growL = extraLeft * progressPermille / 1000;
+	const long long growR = extraRight * progressPermille / 1000;
+	out.leftPermille =
+		static_cast<int>(static_cast<long long>(win.start) * 1000 - growL);
 	out.rightPermille = static_cast<int>(
-		(static_cast<long long>(win.start + win.width) * 1000) + half);
+		(static_cast<long long>(win.start + win.width) * 1000) + growR);
 	// Dimming to nothing is what makes it a dissolve rather than a
 	// growth, and it lands on zero exactly when the window is widest, so
 	// the widest frame is the invisible one and the edge never has to be
