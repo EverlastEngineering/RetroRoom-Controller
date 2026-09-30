@@ -197,6 +197,9 @@ MenuAction menuSelect(MenuState& s, const Menu& m, int currentValue) {
 	// data-driven menu.
 	s.current = item.isBool ? (currentValue != 0 ? 1 : 0) : currentValue;
 	s.draft = item.isBool ? s.current : clampInt(currentValue, item.lo, item.hi);
+	// Opening the editor is not a choice of action; the
+	// click that saves the draft returns through menuCommit().
+	return MenuAction::NONE;
 }
 
 bool menuCommit(MenuState& s, std::uint32_t nowMs, int* valueOut) {

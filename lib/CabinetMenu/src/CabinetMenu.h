@@ -23,7 +23,13 @@
 
 namespace retroroom_core {
 
-// The label of the implicit last item. Not a `led` key -- it edits
+// Upper bound on a menu's declared items, so the shell can size the
+// array it appends its action rows to. Not a limit the menu enforces --
+// the core takes whatever it is given -- but a ceiling on what a
+// hand-edited config should be able to ask for.
+constexpr int kMaxMenuItems = 32;
+
+// The label of the "Go Back" action row. Not a config key -- it edits
 // nothing, it leaves.
 extern const char* const kMenuGoBackLabel;
 

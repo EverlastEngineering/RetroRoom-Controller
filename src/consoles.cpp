@@ -2,6 +2,7 @@
 
 #include <ConsoleConfig.h>
 
+#include <cstring>
 #include <string>
 
 #include "lighting.h"
@@ -100,26 +101,220 @@ retroroom_core::LedFeel ledFeel = retroroom_core::defaultLedFeel();
 // move if this is ever re-assigned.
 static retroroom_core::ParsedMenu menuDef;
 
-const retroroom_core::Menu CabinetMenu() {
-	return menuDef.view();
+// The menu the shell actually shows: whatever the config declared,
+// then the actions. Built once, after the config lands, because the
+// action rows are fixed strings and the settings' labels and keys are
+// owned by menuDef -- which a later load can re-assign.
+//
+// The actions are not config items. Saving and restarting are not
+// things an operator should be able to delete from their own menu, and
+// appending them here is what means a config declaring no items still
+// yields a menu with a way out of it. That is also what makes an empty
+// `menu` array a lock-down rather than a trap; see
+// todo/open/2026-09-30_menu-lock-down-mode.md.
+//
+// Save and Reboot sit together because both are things the system does
+// rather than settings; Go Back is last because that is where a menu is
+// expected to put it.
+static retroroom_core::MenuItem shellMenuItems[retroroom_core::kMaxMenuItems + 3];
+static int shellMenuCount = 0;
+
+static void buildShellMenu() {
+        shellMenuCount = 0;
+        for (size_t i = 0; i < menuDef.items.size() &&
+                           shellMenuCount < retroroom_core::kMaxMenuItems; ++i) {
+                shellMenuItems[shellMenuCount++] = menuDef.items[i];
+        }
+        struct {
+                const char* label;
+                retroroom_core::MenuAction action;
+        } const actions[] = {
+                {"Save", retroroom_core::MenuAction::SAVE},
+                {"Reboot", retroroom_core::MenuAction::REBOOT},
+                {retroroom_core::kMenuGoBackLabel,
+                 retroroom_core::MenuAction::GO_BACK},
+        };
+        for (size_t i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
+                retroroom_core::MenuItem& item = shellMenuItems[shellMenuCount++];
+                item.label = actions[i].label;
+                item.key = nullptr;
+                item.action = actions[i].action;
+                item.isBool = false;
+                item.lo = 0;
+                item.hi = 0;
+                item.step = 1;
+        }
 }
 
-bool setLedFeelValue(const char* key, int value) {
-	bool clamped = false;
-	if (!retroroom_core::ledFeelSet(&ledFeel, key, value, &clamped)) {
-		return false;
-	}
-	if (clamped) {
-		// The core already clamped, and the table is the same one the
-		// parser used, so a clamp here means the *menu* asked for
-		// something outside the setting's range. Worth saying: a menu
-		// that silently did not do what it displayed is the kind of
-		// thing that makes an operator stop trusting the menu.
-		Serial.print("menu: ");
-		Serial.print(key);
-		Serial.println(" clamped to the setting's range");
-	}
-	return true;
+const retroroom_core::Menu CabinetMenu() {
+        retroroom_core::Menu m;
+        m.items = shellMenuItems;
+        m.count = shellMenuCount;
+        return m;
+}
+
+// ---- applying and saving settings at runtime -----------------------------
+//
+// Two operations, kept apart on purpose: apply() changes what the
+// cabinet is doing, save() changes what is on flash. The menu and the
+// API are both clients of these two and neither has its own idea of
+// what "save" means.
+
+namespace {
+
+// What has been changed since the last save.
+//
+// A list rather than a pair of flags, because the writer needs to know
+// *what* to write. The two questions the prompt asks -- is anything
+// unsaved, and does anything need a restart -- are derived from it, so
+// there is one structure and no way for the menu and the API to
+// disagree about the answer.
+//
+// Bounded, and reports a drop rather than silently forgetting: a set
+// that grew without limit would be a slow way to run out of RAM, and a
+// setting that quietly stopped saving is worse than one that says it
+// could not.
+constexpr int kMaxPending = 32;
+struct PendingChange {
+        const retroroom_core::LedField* field;
+        const char* block;
+        int value;
+};
+PendingChange pending[kMaxPending];
+int pendingCount = 0;
+bool pendingOverflow = false;
+
+}  // namespace
+
+bool applyConfigValue(const char* path, int value) {
+        if (path == nullptr) {
+                return false;
+        }
+        const char* block = nullptr;
+        const retroroom_core::LedField* field =
+                retroroom_core::findConfigField(path, &block);
+        if (field == nullptr) {
+                return false;
+        }
+        // Storage is per block: only `led` is bound to a LedFeel. A
+        // second block is a second `if` here and nothing anywhere else.
+        if (std::strcmp(block, "led") == 0) {
+                bool clamped = false;
+                if (!retroroom_core::ledFeelSet(&ledFeel, field->key, value, &clamped)) {
+                        return false;
+                }
+        } else if (std::strcmp(block, "lcd") == 0) {
+                int next = value;
+                if (next < field->lo) next = field->lo;
+                if (next > field->hi) next = field->hi;
+                lcdBacklightOffAfterMs = static_cast<uint32_t>(next);
+        } else {
+                return false;
+        }
+
+        // Record it for save. Matching on the field rather than the
+        // path means changing the same setting twice keeps one entry at
+        // the latest value, so a set of edits is a set of *final*
+        // values and never a replay.
+        for (int i = 0; i < pendingCount; ++i) {
+                if (pending[i].field == field) {
+                        pending[i].value = retroroom_core::ledFeelGet(ledFeel, field->key, value);
+                        if (block && std::strcmp(block, "lcd") == 0) {
+                                pending[i].value = static_cast<int>(lcdBacklightOffAfterMs);
+                        }
+                        return true;
+                }
+        }
+        if (pendingCount >= kMaxPending) {
+                pendingOverflow = true;
+                return true;  // it still applies; it just may not save
+        }
+        pending[pendingCount].field = field;
+        pending[pendingCount].block = block;
+        pending[pendingCount].value = value;
+        ++pendingCount;
+        return true;
+}
+
+int configValueOf(const char* path, int fallback) {
+        const char* block = nullptr;
+        const retroroom_core::LedField* field =
+                retroroom_core::findConfigField(path, &block);
+        if (field == nullptr) {
+                return fallback;
+        }
+        if (block != nullptr && std::strcmp(block, "lcd") == 0) {
+                return static_cast<int>(lcdBacklightOffAfterMs);
+        }
+        return retroroom_core::ledFeelGet(ledFeel, field->key, fallback);
+}
+
+bool configHasUnsavedChanges() {
+        return pendingCount > 0;
+}
+
+bool configNeedsReboot() {
+        for (int i = 0; i < pendingCount; ++i) {
+                if (retroroom_core::configFieldNeedsReboot(pending[i].field)) {
+                        return true;
+                }
+        }
+        return false;
+}
+
+int configPendingCount() {
+        return pendingCount;
+}
+
+const char* configPendingPath(int i) {
+        if (i < 0 || i >= pendingCount) {
+                return nullptr;
+        }
+        return pending[i].field->key;
+}
+
+int configPendingValue(int i) {
+        if (i < 0 || i >= pendingCount) {
+                return 0;
+        }
+        return pending[i].value;
+}
+
+retroroom_store::SaveResult configSave() {
+        if (pendingCount == 0) {
+                return retroroom_store::SaveResult::Ok;  // nothing to do is success
+        }
+        retroroom_core::ConfigEdit edits[kMaxPending];
+        for (int i = 0; i < pendingCount; ++i) {
+                edits[i].path = pending[i].field->key;
+                edits[i].value = pending[i].value;
+        }
+        // Whatever the cabinet is running from: the file if there is
+        // one, the embedded default otherwise. That is what makes Save
+        // work on a device that has never been configured, and it saves
+        // the exact document the cabinet booted from rather than a
+        // reconstruction of it.
+        std::string source;
+        if (!retroroom_store::loadLiveConsoleConfig(source) || source.empty()) {
+                source = std::string(CONFIG_JSON);
+        }
+        std::string result;
+        std::string error;
+        if (!retroroom_core::applyConfigEdits(source, edits, pendingCount, &result, &error)) {
+                // A refusal, not a write. Nothing on flash changed and
+                // the running cabinet is exactly as it was, which is the
+                // entire point of checking before writing.
+                Serial.print("save refused: ");
+                Serial.println(error.c_str());
+                return retroroom_store::SaveResult::WriteFailed;
+        }
+        const retroroom_store::SaveResult r =
+                retroroom_store::saveConsoleConfigWithBackups(result);
+        if (r == retroroom_store::SaveResult::Ok) {
+                pendingCount = 0;
+                pendingOverflow = false;
+        }
+        return r;
 }
 
 void addConsole(const Console& console) {
@@ -240,6 +435,7 @@ void consoleDefinitions() {
 	// declared width without anybody noticing.
 	ledFeel = result.feel;
 	menuDef = result.menu;
+	buildShellMenu();
 	Serial.print("Menu items: ");
 	Serial.println(menuDef.items.size());
 	for (const std::string& w : result.warnings) {

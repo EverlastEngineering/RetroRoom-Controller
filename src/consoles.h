@@ -2,6 +2,8 @@
 #define CONSOLES_H
 
 #include <Arduino.h>
+
+#include "consoleconfig_store.h"  // SaveResult
 #include "configuration.h"
 #include "Console.h"
 #include <vector>
@@ -65,17 +67,49 @@ const Console& BrowsedConsole();
 // todo/open/2026-09-30_menu-lock-down-mode.md.
 const retroroom_core::Menu CabinetMenu();
 
-// Change one `led` setting by name, as the config menu does. Routed
-// through the same table the parser used to read the file, so there is
-// no per-key plumbing and a key that works in one works in the other.
-// Returns false if the name is not a `led` setting.
+// ---- applying and saving settings at runtime -----------------------------
 //
-// NOT persisted: the value lives in RAM for the session. Writing it
-// back to /consoles.json needs the reload question in
-// todo/open/2026-09-30_reload-config-without-reboot.md answered first,
-// and a menu that appeared to save and did not would be worse than one
-// that does not claim to.
-bool setLedFeelValue(const char* key, int value);
+// Apply changes what the cabinet is doing; save changes what is on
+// flash. They are separate operations because the menu and the API are
+// both clients of them and neither should have its own idea of what
+// "save" means -- and because the whole point of the split is that an
+// operator can try a setting, live, and walk away from it.
+
+// Apply one value by path -- "led.detentsPerStep",
+// "lcd.backlightOffAfterMs". Takes effect immediately and is recorded
+// as pending. Returns false for a path that is not a known setting.
+//
+// NOT persisted. Walking away from an unsaved change loses it on the
+// next power cycle, which is the point: trying a setting must not be
+// able to break the cabinet.
+bool applyConfigValue(const char* path, int value);
+
+// The live value of a path, or `fallback` if the path is unknown.
+int configValueOf(const char* path, int fallback);
+
+// What the menu's prompt needs to know, both derived from one pending
+// set so the two can never disagree.
+bool configHasUnsavedChanges();
+// True when a *pending* change is one that only takes effect after a
+// restart -- today exactly led.totalLeds, which is bound into
+// FastLED.addLeds() at init.
+bool configNeedsReboot();
+
+// The pending set itself, for the API and for the "Saving..." report.
+// configPendingPath() gives the bare key; the block is implied by
+// whatever the field table says.
+int configPendingCount();
+const char* configPendingPath(int i);
+int configPendingValue(int i);
+
+// Write the pending changes to /consoles.json, rotating the backup
+// slots on the way exactly as an upload does. A save from the menu can
+// write a bad document just as an upload can, and the backups exist for
+// precisely that write.
+//
+// The empty case is a success, not a failure: there is nothing to do,
+// and a caller asking to save nothing should not be told it failed.
+retroroom_store::SaveResult configSave();
 
 void consoleDefinitions();
 

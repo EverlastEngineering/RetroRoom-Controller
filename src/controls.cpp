@@ -346,20 +346,11 @@ void controls_menuDetent(int direction) {
 
 void controls_menuClick() {
 	const retroroom_core::Menu m = CabinetMenu();
-	// In the editor, a click commits -- that is what the "New" row has
-	// been waiting for. Everywhere else it opens the item, or closes
-	// the menu on "Go Back".
-	int value = 0;
 	if (menuState.mode == retroroom_core::MenuMode::EDIT) {
+		int value = 0;
 		if (menuCommit(menuState, millis(), &value) && m.count > 0 &&
 			menuState.selected >= 0 && menuState.selected < m.count) {
-			const bool ok = setLedFeelValue(m.items[menuState.selected].key,
-											value);
-			Serial.print("Menu set ");
-			Serial.print(m.items[menuState.selected].key);
-			Serial.print(" = ");
-			Serial.print(value);
-			Serial.println(ok ? "" : " (unknown setting)");
+			applyConfigValue(m.items[menuState.selected].key, value);
 		}
 		return;
 	}
@@ -368,16 +359,47 @@ void controls_menuClick() {
 	// the operator save their way back to a value they had already
 	// changed.
 	int current = 0;
-	if (m.count > 0 && menuState.selected >= 0 && menuState.selected < m.count) {
-		current = retroroom_core::ledFeelGet(ledFeel,
-											 m.items[menuState.selected].key, 0);
+	if (m.count > 0 && menuState.selected >= 0 && menuState.selected < m.count &&
+		m.items[menuState.selected].key != nullptr) {
+		current = configValueOf(m.items[menuState.selected].key, 0);
 	}
+	// The prompt is about to ask whether to save, and whether that save
+	// needs a restart. Set the flag BEFORE the click, because the click
+	// is what opens the prompt and the two cannot be set in the other
+	// order.
+	menuState.pendingNeedsReboot = configNeedsReboot();
 	const bool wasOpen = menuIsOpen(menuState);
-	menuSelect(menuState, m, current);
+	const retroroom_core::MenuAction chosen = menuSelect(menuState, m, current);
 	if (wasOpen && !menuIsOpen(menuState)) {
-		// "Go Back" -- the menu has just closed.
 		Serial.println("Menu closed");
 		display_menuClosed();
+	}
+	switch (chosen) {
+	case retroroom_core::MenuAction::SAVE: {
+		Serial.println("Menu: save");
+		const retroroom_store::SaveResult r = configSave();
+		Serial.print("Menu: save ");
+		Serial.println(r == retroroom_store::SaveResult::Ok ? "ok" : "FAILED");
+		if (menuActionNeedsReboot(menuState)) {
+			// The change is on flash; the cabinet is not. Say so, and say
+			// it long enough to read: on sixteen columns a three-second
+			// notice is a blink, and the message exists to be read.
+			menuMessage(menuState, millis(), 5000);
+		}
+		return;
+	}
+	case retroroom_core::MenuAction::REBOOT: {
+		Serial.println("Menu: reboot");
+		// The strip has to be dark before the reset, or the operator
+		// watches it light up again on the way down.
+		ledstring_allOff();
+		delay(50);
+		Serial.flush();
+		rp2040.restart();
+		return;
+	}
+	default:
+		return;
 	}
 }
 

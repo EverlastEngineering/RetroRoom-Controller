@@ -41,6 +41,7 @@ namespace retroroom_store {
 // the wrapper in this header that does it for them).
 bool loadLiveConsoleConfig(std::string& out);
 
+
 // Read both backup slots into the provided buffers. Each buffer is
 // overwritten only if the corresponding file exists; if the file is
 // missing the buffer is set to an empty string. Returns true iff at
