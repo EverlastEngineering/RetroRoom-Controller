@@ -60,6 +60,17 @@ enum class RingMode : uint8_t {
 	// the idle deadline pushed out every tick -- an engaged operator
 	// should not have the ring expire under them.
 	PROXIMITY,
+	// The interaction has ended but the ring is still lit, waiting out
+	// offDelayMs before it starts to go. Reached only when a hand leaves
+	// the pad.
+	//
+	// A distinct mode rather than a delay bolted onto the fade, because
+	// "still lit and settling" and "going dark" are different things and
+	// the paint differs: this one is still at full, the one after it is
+	// not. The idle timeout does not come through here -- by the time it
+	// fires the interaction has already been over for ringIdleMs, so
+	// there is nothing left to add grace for.
+	OFF_DELAY,
 	// The commit strike: the whole ring at full brightness for flashMs.
 	// A flash *over* whatever the ring was doing, which is why it is
 	// checked before every other mode.
@@ -81,6 +92,15 @@ struct RingConfig {
 	// The commit strike. 0 disables the strike, so a commit is a
 	// force-off with no flash at all.
 	uint32_t flashMs = 120;
+	// Grace between a hand leaving the pad and the ring starting to
+	// fade. Without it the ring snaps off the instant the hand is
+	// withdrawn, which reads as the ring reacting to the withdrawal
+	// rather than settling after the interaction. 0 goes out at once.
+	//
+	// The idle timeout deliberately does NOT get this grace: it is
+	// already a delay, and a second one on top of it would be
+	// indistinguishable from a longer ringIdleMs.
+	uint32_t offDelayMs = 300;
 	// How long a fade takes, in wall-clock time. Not 255 loop
 	// iterations: the whole reason this moved.
 	uint32_t fadeMs = 300;

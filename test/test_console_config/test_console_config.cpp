@@ -482,6 +482,44 @@ void test_a_partial_led_block_leaves_everything_else_alone(void) {
                          r.feel.colorR[retroroom_core::kRoleSelected]);
 }
 
+// The ring's four timings all parse. They were split across three
+// places -- two in the config, the fade hardcoded in the shell, and the
+// grace after a hand left not existing at all -- so they are pinned
+// together here rather than one at a time.
+void test_the_ring_timings_all_parse(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"ringIdleMs": 4000, "ringFlashMs": 250,
+                    "ringOffDelayMs": 750, "ringFadeMs": 500}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(4000, r.feel.ringIdleMs);
+        TEST_ASSERT_EQUAL(250, r.feel.ringFlashMs);
+        TEST_ASSERT_EQUAL(750, r.feel.ringOffDelayMs);
+        TEST_ASSERT_EQUAL(500, r.feel.ringFadeMs);
+}
+
+// Both new ring timings default, so a config written before they existed
+// behaves exactly as it did.
+void test_the_new_ring_timings_default(void) {
+        const retroroom_core::LedFeel d = retroroom_core::defaultLedFeel();
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_EQUAL(d.ringOffDelayMs, r.feel.ringOffDelayMs);
+        TEST_ASSERT_EQUAL(d.ringFadeMs, r.feel.ringFadeMs);
+}
+
 // Out of range is clamped *and reported*. Clamping quietly is the same
 // as being wrong, from the operator's side of the glass.
 void test_out_of_range_is_clamped_and_reported(void) {
@@ -606,6 +644,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_travel_and_proposal_keep_the_same_colour);
 	RUN_TEST(test_colours_parse_and_malformed_ones_keep_the_default);
 	RUN_TEST(test_fast_detents_cannot_exceed_detents_per_step);
+	RUN_TEST(test_the_ring_timings_all_parse);
+	RUN_TEST(test_the_new_ring_timings_default);
 	RUN_TEST(test_out_of_range_is_clamped_and_reported);
 	RUN_TEST(test_a_partial_led_block_leaves_everything_else_alone);
 	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);

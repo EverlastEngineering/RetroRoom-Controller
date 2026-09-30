@@ -49,6 +49,7 @@ static RingConfig cfg() {
 	RingConfig c;
 	c.idleMs = 1000;
 	c.flashMs = 120;
+	c.offDelayMs = 300;
 	c.fadeMs = 300;
 	c.pixelCount = 8;
 	return c;
@@ -383,20 +384,140 @@ static void test_leaving_and_returning_re_arms_the_hold(void) {
 	TEST_ASSERT_TRUE(ringTick(s, 720, c, false).paint.highlightLevel > 0);
 }
 
-// Leaving fades immediately rather than waiting out the idle timeout --
-// making the operator wait after they have already taken their hand away
-// is a delay on a decision that has been made.
-static void test_leaving_the_pad_fades_rather_than_waiting(void) {
+// Leaving the pad does not fade instantly. The hand being withdrawn is
+// the operator *deciding* the interaction is over, and a ring that
+// starts dimming on that same instant reads as flinching away from them
+// rather than settling. So: a grace at full brightness, then the fade.
+static void test_a_hand_leaving_waits_the_off_delay_before_fading(void) {
 	const RingConfig c = cfg();
 	RingState s;
 	ringProximity(s, 0, true);
 	ringTick(s, 100, c, false);
 	ringProximity(s, 200, false);
 
+	// Still lit through the grace, and at FULL -- a ring that dimmed at
+	// the start of the delay would make the delay invisible.
+	for (uint32_t t = 200; t < 500; t += 50) {
+		const RingUpdate u = ringTick(s, t, c, false);
+		TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::OFF_DELAY),
+									  static_cast<int>(s.mode),
+									  "the ring must linger after the hand leaves");
+		TEST_ASSERT_EQUAL_UINT8_MESSAGE(255, u.paint.highlightLevel,
+										"the ring must stay at full through the "
+										"grace");
+	}
+
+	// Grace over at 500, so the fade runs 500..800.
+	ringTick(s, 500, c, false);
 	TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::FADING),
 								  static_cast<int>(s.mode),
-								  "leaving the pad must start a fade at once");
+								  "the fade must start once the grace is over");
+	const int took = runUntilFadeDone(s, 500, c);
+	TEST_ASSERT_TRUE_MESSAGE(took >= 300 && took <= 310,
+							 "the fade must take fadeMs after the grace");
+}
+
+// offDelayMs = 0 is a way out for anyone who wants the old snap-off.
+static void test_an_off_delay_of_zero_goes_out_at_once(void) {
+	RingConfig c = cfg();
+	c.offDelayMs = 0;
+	RingState s;
+	ringProximity(s, 0, true);
+	ringTick(s, 100, c, false);
+	ringProximity(s, 200, false);
+
+	ringTick(s, 200, c, false);
+	TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::FADING),
+								  static_cast<int>(s.mode),
+								  "offDelayMs = 0 must skip the grace");
 	TEST_ASSERT_TRUE(runUntilFadeDone(s, 200, c) >= 0);
+}
+
+// The fade duration is a config value, not a property of the code. A
+// longer one must actually take longer -- the whole point of moving it
+// out of the shell was that the operator can now set it.
+static void test_the_fade_duration_comes_from_the_config(void) {
+	RingConfig quick = cfg();
+	quick.fadeMs = 100;
+	RingConfig slow = cfg();
+	slow.fadeMs = 800;
+
+	RingState a;
+	ringCommit(a, 0, quick);
+	const int quickTook = runUntilFadeDone(a, 0, quick);
+
+	RingState b;
+	ringCommit(b, 0, slow);
+	const int slowTook = runUntilFadeDone(b, 0, slow);
+
+	TEST_ASSERT_TRUE_MESSAGE(quickTook >= 0 && slowTook >= 0,
+							 "both fades must complete");
+	TEST_ASSERT_TRUE_MESSAGE(slowTook > quickTook + 500,
+							 "a longer ringFadeMs must take proportionally "
+							 "longer");
+}
+
+// The grace is anchored to the hand leaving, not to the tick that
+// noticed. A late tick must not extend the ring's life -- that is how
+// the duration quietly went back to depending on the loop rate last
+// time.
+static void test_a_late_tick_does_not_extend_the_off_delay(void) {
+	const RingConfig c = cfg();
+	RingState s;
+	ringProximity(s, 0, true);
+	ringProximity(s, 200, false);
+
+	// One tick, well past grace plus fade. It should be black, not
+	// restarting a 300 ms grace because we only just got here.
+	const RingUpdate late = ringTick(s, 5000, c, false);
+	TEST_ASSERT_EQUAL_INT_MESSAGE(0, late.paint.highlightLevel,
+								  "a late tick must not restart the grace");
+	TEST_ASSERT_TRUE_MESSAGE(late.fadeCompleted,
+							 "a late tick must not restart the grace");
+}
+
+// Two pad edges inside a single tick must still leave the ring coherent.
+// The pad chatters, and both the read and the tick live in loop(), so
+// this is an ordinary sequence rather than an exotic one. If only the
+// tick moved the mode, a rise and fall in the same tick would leave the
+// ring in whatever mode it happened to be in -- and this one would
+// silently start no grace at all.
+static void test_edges_with_no_tick_between_them_still_cohere(void) {
+	const RingConfig c = cfg();
+	RingState s;
+
+	// Approach and leave with no ringTick() in between, from a dark ring.
+	ringProximity(s, 0, true);
+	ringProximity(s, 50, false);
+	TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::OFF_DELAY),
+								  static_cast<int>(s.mode),
+								  "a rise and fall in one tick must still start "
+								  "the grace");
+
+	// And it must then run to completion like any other.
+	TEST_ASSERT_TRUE(runUntilFadeDone(s, 50, c) >= 0);
+	TEST_ASSERT_EQUAL_INT(static_cast<int>(RingMode::DARK),
+						  static_cast<int>(s.mode));
+}
+
+// The idle timeout does NOT get the grace. It is already a delay, and a
+// second one on top would be indistinguishable from a longer ringIdleMs.
+static void test_the_idle_timeout_does_not_get_the_off_delay(void) {
+	const RingConfig c = cfg();
+	RingState s;
+	ringDetent(s, 0, c, 1);
+
+	// idleMs is 1000 and offDelayMs is 300, so the fade must start at
+	// 1000, not at 1300.
+	ringTick(s, 999, c, false);
+	TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::IDLE),
+								  static_cast<int>(s.mode),
+								  "the ring must still be holding at 999 ms");
+	ringTick(s, 1000, c, false);
+	TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(RingMode::FADING),
+								  static_cast<int>(s.mode),
+								  "the idle timeout must not also wait out a "
+								  "grace period");
 }
 
 // Reading "near" repeatedly is not an edge and must not re-light or
@@ -553,7 +674,12 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_hand_on_the_pad_holds_the_ring_past_the_idle_timeout);
 	RUN_TEST(test_a_commit_ends_the_hold_with_a_hand_still_on_the_pad);
 	RUN_TEST(test_leaving_and_returning_re_arms_the_hold);
-	RUN_TEST(test_leaving_the_pad_fades_rather_than_waiting);
+	RUN_TEST(test_a_hand_leaving_waits_the_off_delay_before_fading);
+	RUN_TEST(test_an_off_delay_of_zero_goes_out_at_once);
+	RUN_TEST(test_the_fade_duration_comes_from_the_config);
+	RUN_TEST(test_a_late_tick_does_not_extend_the_off_delay);
+	RUN_TEST(test_edges_with_no_tick_between_them_still_cohere);
+	RUN_TEST(test_the_idle_timeout_does_not_get_the_off_delay);
 	RUN_TEST(test_a_steady_reading_is_not_an_edge);
 	// Idle.
 	RUN_TEST(test_idle_ms_zero_disables_the_timeout_but_not_a_commit);

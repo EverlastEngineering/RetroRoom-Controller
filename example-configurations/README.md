@@ -103,6 +103,8 @@ new one arriving.
 |---|---|---|---|
 | `ringIdleMs` | `5000` | 0..600000 | How long the ring stays lit before an abandoned browse reverts to the selected console. Suppressed while a hand is at the proximity pad, and **held** while the progression run is still unwinding, so it never cuts a retreat short. 0 disables. |
 | `ringFlashMs` | `120` | 0..60000 | One strike of the whole ring on a commit, before it fades. 0 disables. |
+| `ringOffDelayMs` | `300` | 0..60000 | Grace between a hand leaving the proximity pad and the ring starting to go out. Without it the ring snaps off as the hand is withdrawn, which reads as flinching away rather than settling. Does **not** apply to `ringIdleMs` — that path is already a delay, and a second one on top would just be a longer `ringIdleMs`. 0 goes out at once. |
+| `ringFadeMs` | `300` | 0..60000 | How long any fade to black takes. Applies everywhere the ring goes out: after a strike, after the idle timeout, and after `ringOffDelayMs`. 0 is an instant cut. |
 
 ### The strip as a whole
 

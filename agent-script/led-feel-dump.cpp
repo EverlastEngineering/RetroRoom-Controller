@@ -82,6 +82,8 @@ const Field kFields[] = {
 	// The ring.
 	{"ringIdleMs", 0, 0, 600000},
 	{"ringFlashMs", 0, 0, 60000},
+	{"ringOffDelayMs", 0, 0, 60000},
+	{"ringFadeMs", 0, 0, 60000},
 
 	// The strip as a whole.
 	{"frameIntervalMs", 0, 1, 100},
@@ -124,7 +126,9 @@ int main() {
 	v[23] = f.igniteMs;
 	v[24] = f.ringIdleMs;
 	v[25] = f.ringFlashMs;
-	v[26] = f.frameIntervalMs;
+	v[26] = f.ringOffDelayMs;
+	v[27] = f.ringFadeMs;
+	v[28] = f.frameIntervalMs;
 
 	printf("\"led\": {\n");
 	for (int i = 0; i < kFieldCount; ++i) {

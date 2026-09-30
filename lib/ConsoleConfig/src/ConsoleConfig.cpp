@@ -134,6 +134,8 @@ void loadLedFeel(JsonObjectConst led, std::vector<std::string>* warnings,
 	RR_FEEL("igniteMs", igniteMs, 200, 0, 60000);
 	RR_FEEL("ringIdleMs", ringIdleMs, 5000, 0, 600000);
 	RR_FEEL("ringFlashMs", ringFlashMs, 120, 0, 60000);
+	RR_FEEL("ringOffDelayMs", ringOffDelayMs, 300, 0, 60000);
+	RR_FEEL("ringFadeMs", ringFadeMs, 300, 0, 60000);
 	RR_FEEL("frameIntervalMs", frameIntervalMs, 8, 1, 100);
 
 #undef RR_FEEL

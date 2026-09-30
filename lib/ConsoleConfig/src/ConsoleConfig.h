@@ -148,8 +148,13 @@ struct LedFeel {
 	// summarises is how the loop and the config drift apart.
 
 	// ---- the ring ----------------------------------------------------------
-	int ringIdleMs;   // how long the ring stays lit before giving up
-	int ringFlashMs;  // the strike on a commit. 0 disables
+	int ringIdleMs;      // how long the ring stays lit before giving up
+	int ringFlashMs;     // the strike on a commit. 0 disables
+	int ringOffDelayMs;  // grace after a hand leaves the pad, before the
+	                     // ring starts going out. See the note in
+	                     // LedFeelDefaults.cpp for why this is not simply
+	                     // a longer ringIdleMs.
+	int ringFadeMs;      // how long any fade to black takes
 
 	// ---- the strip as a whole ----------------------------------------------
 	int frameIntervalMs;  // how often an in-flight frame is pushed

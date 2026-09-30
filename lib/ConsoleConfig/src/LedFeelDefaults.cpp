@@ -100,8 +100,25 @@ LedFeel defaultLedFeel() {
 	// The ring. The idle timeout is also what reverts an abandoned
 	// browse, and it is *held* while the progression run is still
 	// unwinding so it never cuts a retreat short.
+	//
+	// ringOffDelayMs is separate from ringIdleMs because the two answer
+	// different questions. ringIdleMs is "how long after the last turn
+	// does the ring give up", and it is also the only delay in the idle
+	// path -- by the time it fires the interaction has been over for
+	// five seconds. The hand leaving the pad is different: the operator
+	// has just *decided* the interaction is over, so a fade starting on
+	// that instant reads as the ring reacting to the withdrawal rather
+	// than settling. A short grace first, then the fade.
+	//
+	// ringFadeMs is wall clock, and it is here rather than derived from
+	// the main loop because that derivation was the bug: the fade used
+	// to be one decrement per loop() iteration, so it took as long as
+	// the loop happened to. 300ms is about the floor where a fade still
+	// reads as a fade rather than a switch.
 	f.ringIdleMs = 5000;
 	f.ringFlashMs = 120;  // the strike on a commit. 0 disables
+	f.ringOffDelayMs = 300;
+	f.ringFadeMs = 300;
 
 	// How often an in-flight frame goes to the wire. A sampling rate, not
 	// a step count: every frame is computed from elapsed time, so raising

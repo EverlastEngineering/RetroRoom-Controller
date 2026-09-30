@@ -41,13 +41,6 @@ CRGB leds[NUM_RING_LEDS];
 // stay out of the decision logic.
 static const uint8_t kBaseBlue = 128;
 
-// How long the ring takes to go out. A shell policy decision rather than
-// a capability of the core, so it lives here. Note what it is NOT: a
-// count of loop iterations. The core derives the level from elapsed
-// time, so this is wall clock and stays that way however busy the loop
-// gets.
-static const uint32_t kRingFadeMs = 300;
-
 // The ring's entire state, owned by the core. One object, one owner: the
 // thing that made the old version hard to reason about was the same
 // information spread across six booleans that any of five functions
@@ -73,7 +66,8 @@ RingConfig ringConfig() {
 	RingConfig c;
 	c.idleMs = static_cast<uint32_t>(ledFeel.ringIdleMs);
 	c.flashMs = static_cast<uint32_t>(ledFeel.ringFlashMs);
-	c.fadeMs = kRingFadeMs;
+	c.offDelayMs = static_cast<uint32_t>(ledFeel.ringOffDelayMs);
+	c.fadeMs = static_cast<uint32_t>(ledFeel.ringFadeMs);
 	c.pixelCount = NUM_RING_LEDS;
 	return c;
 }

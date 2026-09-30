@@ -89,10 +89,16 @@ bugs are in there. `lightSingle()`, `lightRingForceOff()` and the
 they were writing `leds[]` behind the core's back, and nothing outside
 `lighting.cpp` referenced any of them.
 
-Not recorded here: where the fade duration lives. `kRingFadeMs` is a
-constant in `lighting.cpp` rather than a `led` option, because it is a
-fixed visual detail of the ring rather than a feel the operator tunes.
-That is a judgement call and it is reversible.
+Not recorded here: where the two ring timings live. The fade duration
+started as `kRingFadeMs`, a constant in `lighting.cpp`, on the argument
+that it is a fixed visual detail rather than a feel the operator tunes.
+The user asked for it to be configurable, which was the right call — a
+timing nobody can change is a timing that gets worked around rather than
+set. It is now `led.ringFadeMs`, alongside `led.ringOffDelayMs` for the
+grace after a hand leaves the pad. The same reasoning does *not* extend
+to the grace applying to the idle timeout: that path is already a delay,
+and a second one on top would be indistinguishable from a longer
+`ringIdleMs`.
 
 
 **Context:** the rotary moved the browse cursor one console per

@@ -108,16 +108,28 @@ void ringProximity(RingState& s, uint32_t nowMs, bool near) {
 	s.proximityNear = near;
 	if (near) {
 		s.proximityEngaged = true;
+		// The mode is set here rather than left to the next tick. Two
+		// pad edges arriving between ticks is not exotic -- the pad
+		// chatters, and both the read and the tick live in loop() -- and
+		// if only the tick set the mode, a rise and fall inside one tick
+		// would leave the ring in whatever mode it was in, which is how
+		// "a state machine whose state depends on the order events
+		// happen to arrive" creeps back in. Every event leaves the state
+		// coherent on its own.
+		s.mode = RingMode::PROXIMITY;
+		s.modeStartMs = nowMs;
 		return;
 	}
-	// Departure. The interaction ended, so the ring goes -- the old
-	// shell set a fade request here rather than waiting out the idle
-	// timeout, and that is the better behaviour: making the operator
-	// wait after they have already taken their hand away is just a
-	// delay on a decision that has been made.
+	// Departure. The interaction ended, so the ring goes -- but not
+	// instantly. The old shell set a fade request here and started
+	// fading on the next tick, which read as the ring flinching away
+	// from the hand rather than settling after the interaction. A short
+	// grace at full brightness first, then the fade, is the difference
+	// between those two.
 	s.proximityEngaged = false;
 	if (s.mode == RingMode::PROXIMITY) {
-		beginFade(s, nowMs);
+		s.mode = RingMode::OFF_DELAY;
+		s.modeStartMs = nowMs;
 	}
 }
 
@@ -132,6 +144,14 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 	if (s.mode == RingMode::FLASH &&
 		fadeElapsed(nowMs, s.modeStartMs, cfg.flashMs) >= cfg.flashMs) {
 		beginFade(s, s.modeStartMs + cfg.flashMs);
+	}
+
+	// The grace after a hand leaves runs out. Anchored to the instant
+	// the hand left rather than to this tick, for the same reason the
+	// strike expiry is: a late tick must not extend the ring's life.
+	if (s.mode == RingMode::OFF_DELAY &&
+		fadeElapsed(nowMs, s.modeStartMs, cfg.offDelayMs) >= cfg.offDelayMs) {
+		beginFade(s, s.modeStartMs + cfg.offDelayMs);
 	}
 
 	// Two things hold the ring open. An engaged hand outranks a fade
@@ -159,6 +179,11 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 
 	case RingMode::IDLE:
 	case RingMode::PROXIMITY:
+	case RingMode::OFF_DELAY:
+		// OFF_DELAY paints the same as IDLE, and that is the point: it is
+		// the moment *after* the interaction ended but *before* the ring
+		// starts leaving, and a ring that dims at the start of the grace
+		// would make the delay invisible.
 		u.paint.baseLevel = kRingBaseLevel;
 		u.paint.highlightLevel = kRingHoldLevel;
 		u.paint.highlightIndex = s.pixel;
