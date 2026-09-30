@@ -54,7 +54,24 @@ static bool fadeStep() {
 	fadeToBlackBy(leds, NUM_RING_LEDS, 1);
 	ringFading = true;
 	FastLED.show();
-	if (leds[currentRingLED].r + leds[currentRingLED].b + leds[currentRingLED].g == 0) {
+	// Every pixel, not just the one the encoder happens to be parked on.
+	//
+	// Checking leds[currentRingLED] alone was only ever accidentally
+	// right: a strike fills the whole ring, so that pixel is the last to
+	// reach zero. lightSingle() does not -- it fills DarkBlue and lights
+	// one pixel white, and DarkBlue is not zero either, so a fade that
+	// started there declared itself finished while the rest of the ring
+	// was still lit. Nothing then calls fadeStep() again, because
+	// ringFading is cleared, so the ring would be left stuck mid-fade with
+	// no state able to finish it.
+	bool dark = true;
+	for (int i = 0; i < NUM_RING_LEDS; ++i) {
+		if (leds[i].r + leds[i].g + leds[i].b != 0) {
+			dark = false;
+			break;
+		}
+	}
+	if (dark) {
 		ringFading = ringLit = false;
 		return true;
 	}
