@@ -116,6 +116,25 @@ extern void ledstring_browseClear();
 // without the caller having to know which modes exist.
 extern bool ledstring_fillRetreatInProgress();
 
+// Does the strip still OWE the operator a retreat? True from the moment
+// the quiet period passes fillRetreatDelayMs until the retreat has
+// finished giving every LED back.
+//
+// Wider than ledstring_fillRetreatInProgress() on purpose, and the
+// difference is the whole bug this fixes. The retreat has a *delay*
+// before its first LED moves, and that delay is part of the same
+// gesture -- the operator stopped, the run sits there, and only then
+// does it start peeling itself back. Asking only "is it running" leaves
+// the delay uncovered, so anything that ends the ring's hold inside
+// those fillRetreatDelayMs milliseconds clears the browse while the
+// retreat is still only a plan, and the run vanishes in one step.
+//
+// That is not a hypothetical: with ringIdleMs below fillRetreatDelayMs,
+// the ring gives up first *every time*, deterministically, for any
+// value of either setting. The defaults (5000 and 3000) happen to clear
+// it, which is why it looked fine until the timings were tuned.
+extern bool ledstring_browseRetreatPending();
+
 // ---- selection ---------------------------------------------------------
 
 // Play the selection effect for `idx`: the whole strip twinkles, then

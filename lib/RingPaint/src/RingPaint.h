@@ -220,11 +220,22 @@ void ringProximity(RingState& s, uint32_t nowMs, bool near);
 
 // Advance to `nowMs` and say what the ring should look like.
 //
-// `retreatInProgress` is the strip still unwinding an abandoned browse
-// run; it holds the ring lit for as long as it lasts, for the same
-// reason the old shell did -- giving up there would clear the strip in
-// one step instead of letting it finish.
+// `retreatPending` is the strip still owing the operator an abandoned-
+// browse retreat -- which spans the quiet delay before the first LED
+// comes back as well as the retreat itself, because the delay is part of
+// the same gesture. While it is true the ring holds its timeout and
+// withholds the "the browse is over" signal: the caller acts on that
+// signal by clearing the browse, and clearing the browse takes the
+// retreat with it.
+//
+// The wide window matters, and was got wrong once. Gating on "the
+// retreat is *running*" leaves the delay uncovered, and anything ending
+// the ring's hold inside the delay clears the browse while the retreat is
+// still only a plan -- the run then vanishes in one step. With
+// ringIdleMs below fillRetreatDelayMs that is not a corner case, it
+// happens every time. See ledstring_browseRetreatPending() in
+// src/ledstring.h.
 RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
-					bool retreatInProgress);
+					bool retreatPending);
 
 }  // namespace retroroom_core

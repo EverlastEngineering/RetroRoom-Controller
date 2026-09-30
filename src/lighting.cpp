@@ -108,12 +108,21 @@ void pushPaint(const RingPaint& p) {
 // See lighting.h for the contract. Returns true on the single tick a fade
 // completed, which is the cue for an abandoned browse to revert.
 bool lighting_loop() {
-	// The strip still unwinding an abandoned run holds the ring. Giving
-	// up there would call ledstring_browseClear(), and the reset takes
-	// the run with it -- so the strip would empty in one step instead of
-	// fading, which is the exact thing the retreat exists to avoid.
+	// The strip still owes the operator a retreat -- either waiting out
+	// fillRetreatDelayMs before the first LED comes back, or part way
+	// through giving them back. The ring holds its countdown and
+	// withholds its "the browse is over" signal for the whole of it.
+	//
+	// Both halves matter. Clearing the browse mid-retreat empties the
+	// strip in one step instead of letting it unwind, and clearing it
+	// during the delay does the same thing earlier -- the run has not
+	// even started giving itself back yet. So this asks
+	// ledstring_browseRetreatPending() rather than the narrower
+	// "is it running", which left the delay uncovered and made any
+	// ringIdleMs below fillRetreatDelayMs snap the strip back every time.
 	const RingUpdate u = retroroom_core::ringTick(
-		ringState, millis(), ringConfig(), ledstring_fillRetreatInProgress());
+		ringState, millis(), ringConfig(),
+		ledstring_browseRetreatPending());
 	pushPaint(u.paint);
 	return u.fadeCompleted;
 }

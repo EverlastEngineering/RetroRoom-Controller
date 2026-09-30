@@ -756,6 +756,32 @@ bool ledstring_fillRetreatInProgress() {
 	return fillRetreatInProgress && mode == StripMode::FILLING;
 }
 
+bool ledstring_browseRetreatPending() {
+	// A mode change ends the debt the same way it ends a running
+	// retreat: the browse is gone, so there is nothing left to give
+	// back. Checked first, and for the same reason as above.
+	if (mode != StripMode::FILLING) {
+		return false;
+	}
+	// The quiet period has passed the delay, so the retreat is owed even
+	// though no LED has moved yet. The flag alone cannot answer this --
+	// it is only set once the retreat is under way, which is one frame
+	// too late, and one frame is the whole difference between the run
+	// unwinding and the run disappearing.
+	//
+	// fillRetreatDelayMs <= 0 disables the retreat entirely (see
+	// paintFilling(), which gates the whole calculation on both values
+	// being positive), so with it off there is nothing to wait for and
+	// the answer is just the running flag.
+	if (ledFeel.fillRetreatDelayMs > 0 && ledFeel.fillRetreatStepMs > 0) {
+		const uint32_t quietMs = (uint32_t)(millis() - lastDetentMs);
+		if (quietMs > (uint32_t)ledFeel.fillRetreatDelayMs) {
+			return true;
+		}
+	}
+	return fillRetreatInProgress;
+}
+
 void ledstring_selectEffect(int idx) {
 	const int n = HowManyConsoles();
 	if (n <= 0 || idx < 0 || idx >= n) {

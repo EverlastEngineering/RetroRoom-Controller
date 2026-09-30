@@ -139,7 +139,7 @@ void ringProximity(RingState& s, uint32_t nowMs, bool near) {
 }
 
 RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
-					bool retreatInProgress) {
+					bool retreatPending) {
 	RingUpdate u;
 
 	// A strike that has run its course becomes a fade. This is first so
@@ -166,7 +166,7 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 	if (s.proximityEngaged) {
 		s.mode = RingMode::PROXIMITY;
 		s.holdUntilMs = nowMs + cfg.idleMs;
-	} else if (s.mode == RingMode::IDLE && retreatInProgress) {
+	} else if (s.mode == RingMode::IDLE && retreatPending) {
 		// Pushed out, not shortened: the operator gets the full idle
 		// timeout after the last LED of the retreat goes, rather than
 		// whatever was left of it.
@@ -223,7 +223,7 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 			// being cleared by the next event -- and the difference
 			// between "deliver now" and "remember, then deliver" is
 			// exactly the kind of subtlety that loses a signal.
-			if (retreatInProgress) {
+			if (retreatPending) {
 				s.fadeDonePending = true;
 			} else {
 				u.fadeCompleted = true;
@@ -252,7 +252,7 @@ RingUpdate ringTick(RingState& s, uint32_t nowMs, const RingConfig& cfg,
 	// A fade that finished during a retreat reports now that the retreat
 	// is over, and only then -- the shell clears the browse in response,
 	// and doing it during the retreat is the bug this exists to stop.
-	if (s.fadeDonePending && !retreatInProgress) {
+	if (s.fadeDonePending && !retreatPending) {
 		s.fadeDonePending = false;
 		u.fadeCompleted = true;
 	}
