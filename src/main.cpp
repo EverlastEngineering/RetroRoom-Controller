@@ -148,6 +148,24 @@ void loop() {
 		hasRotarySelectorInterruptFired = false;
 		rotarySelector.read();
 	}
+	// EasyButton::update(), which is what drives onPressedFor() -- the
+	// long press that opens the config menu.
+	//
+	// It has to be here rather than inside the block above, and that is
+	// not a style choice. enableInterrupt() switches the button to
+	// EASYBUTTON_READ_TYPE_INTERRUPT, and in that mode read() stops
+	// calling the held-time check entirely -- update() is the only thing
+	// that does, and the library says so: "only needed when using
+	// interrupts". The ISR fires on CHANGE, so it fires on the press and
+	// the release and *nothing in between*: hold the knob for a second
+	// and no further interrupt arrives, so a pump inside the block
+	// would run once at the press and never again, and the long press
+	// could never fire at all. That is exactly what happened.
+	//
+	// It is cheap and idempotent -- a millis() comparison when the
+	// button is up -- and the callback is guarded by _held_callback_called,
+	// so calling it every tick fires the hold exactly once per press.
+	rotarySelector.update();
 	if (hasNextConsoleInterruptFired) {
 		hasNextConsoleInterruptFired = false;
 		nextConsoleButton.read();
