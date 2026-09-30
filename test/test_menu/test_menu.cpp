@@ -47,14 +47,36 @@ void tearDown(void) {}
 
 // The example from the spec: two configurable items plus Go Back.
 static const MenuItem kItems[] = {
-    {"Detents", "detentsPerStep", false, 1, 30, 1},
-    {"Level", "selfPct", false, 10, 100, 10},
+    {"Detents", "detentsPerStep", retroroom_core::MenuAction::NONE, false, 1, 30, 1},
+    {"Level", "selfPct", retroroom_core::MenuAction::NONE, false, 10, 100, 10},
 };
-static Menu menu2() {
+// The shell appends its action rows to whatever the config declared, so
+// the tests build the same shape rather than a menu with a row missing.
+// The caller owns `buf`: the Menu points into it, so it must outlive
+// every use of the Menu, which a returned-by-value helper could not
+// guarantee.
+static Menu menuWithActions(MenuItem* buf, int max, const MenuItem* items,
+                            int count) {
+	int n = 0;
+	for (int i = 0; i < count && n < max - 2; ++i) {
+		buf[n++] = items[i];
+	}
+	buf[n].label = retroroom_core::kMenuGoBackLabel;
+	buf[n].key = nullptr;
+	buf[n].action = retroroom_core::MenuAction::GO_BACK;
+	buf[n].isBool = false;
+	buf[n].lo = 0;
+	buf[n].hi = 0;
+	buf[n].step = 1;
+	++n;
 	Menu m;
-	m.items = kItems;
-	m.count = 2;
+	m.items = buf;
+	m.count = n;
 	return m;
+}
+
+static Menu menu2(MenuItem* buf) {
+	return menuWithActions(buf, 8, kItems, 2);
 }
 
 // Compare a row against an expectation, ignoring the padding to the
@@ -114,9 +136,8 @@ static void test_the_list_renders_as_specified(void) {
 	MenuState s;
 
 	// One setting: both rows are visible, no scrolling.
-	Menu one;
-	one.items = &kItems[0];
-	one.count = 1;
+	MenuItem oneBuf[4];
+	const Menu one = menuWithActions(oneBuf, 4, &kItems[0], 1);
 	menuOpen(s);
 	MenuView v = menuView(s, one, 0, 2, 16);
 	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"), v.row[0]);
@@ -124,7 +145,8 @@ static void test_the_list_renders_as_specified(void) {
 
 	// Two settings: the second row is the other setting, and the window
 	// only slides once the selection is past the bottom row.
-	const Menu m = menu2();
+	MenuItem twoBuf[8];
+	const Menu m = menu2(twoBuf);
 	menuOpen(s);
 	v = menuView(s, m, 0, 2, 16);
 	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"), v.row[0]);
@@ -150,7 +172,8 @@ static void test_the_list_renders_as_specified(void) {
 // The selection stops at both ends. A knob that wrapped would take a
 // setting past its limit without the operator seeing it happen.
 static void test_the_selection_clamps_at_both_ends(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 
@@ -172,7 +195,8 @@ static void test_the_selection_clamps_at_both_ends(void) {
 // The draft clamps at the item's own limits, which may be narrower than
 // the field's.
 static void test_the_draft_clamps_at_its_limits(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 	menuSelect(s, m, 5);  // detentsPerStep, 1..30
@@ -191,10 +215,9 @@ static void test_the_draft_clamps_at_its_limits(void) {
 // A menu item's range may be narrower than the field's own, and the
 // value the row started from is clamped into it on the way in.
 static void test_a_narrow_menu_range_clamps_the_incoming_value(void) {
-	MenuItem wide = {"D", "detentsPerStep", false, 1, 30, 1};
-	Menu m;
-	m.items = &wide;
-	m.count = 1;
+	MenuItem wide = {"D", "detentsPerStep", retroroom_core::MenuAction::NONE, false, 1, 30, 1};
+	MenuItem wideBuf[4];
+	Menu m = menuWithActions(wideBuf, 4, &wide, 1);
 	MenuState s;
 	menuOpen(s);
 	// The live config says 64, which the *file* allows but the menu
@@ -208,10 +231,9 @@ static void test_a_narrow_menu_range_clamps_the_incoming_value(void) {
 
 // A step of 0 would pin the value and read as a broken encoder.
 static void test_a_zero_step_still_moves(void) {
-	MenuItem stuck = {"D", "detentsPerStep", false, 1, 30, 0};
-	Menu m;
-	m.items = &stuck;
-	m.count = 1;
+	MenuItem stuck = {"D", "detentsPerStep", retroroom_core::MenuAction::NONE, false, 1, 30, 0};
+	MenuItem stuckBuf[4];
+	Menu m = menuWithActions(stuckBuf, 4, &stuck, 1);
 	MenuState s;
 	menuOpen(s);
 	menuSelect(s, m, 5);
@@ -225,7 +247,8 @@ static void test_a_zero_step_still_moves(void) {
 
 // Clicking Go Back leaves. It is the last entry, always.
 static void test_go_back_closes_the_menu(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 	menuDetent(s, m, 1);
@@ -241,7 +264,11 @@ static void test_go_back_closes_the_menu(void) {
 // what makes an empty `menu` array in the config a lock-down rather
 // than a menu with a blank screen in it.
 static void test_an_empty_menu_is_only_go_back(void) {
-	Menu m;  // count = 0, items = null
+	// No declared items at all: the shell still appends Go Back, so
+	// this is a menu with exactly one row rather than a menu with
+	// nothing in it.
+	MenuItem bareBuf[2];
+	Menu m = menuWithActions(bareBuf, 2, nullptr, 0);
 	MenuState s;
 	menuOpen(s);
 	TEST_ASSERT_EQUAL_INT(0, s.selected);
@@ -269,7 +296,8 @@ static void test_an_empty_menu_is_only_go_back(void) {
 // UI usually has: turn the knob, see "Current" change too, and there is
 // no way to tell what you started from.
 static void test_the_editor_shows_current_and_new_separately(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 	menuSelect(s, m, 5);
@@ -291,7 +319,8 @@ static void test_the_editor_shows_current_and_new_separately(void) {
 // A commit writes the *draft*, returns to the list, and shows the new
 // value in the row for a moment before the label comes back.
 static void test_a_commit_writes_the_draft_and_shows_it_briefly(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 	menuSelect(s, m, 5);
@@ -323,7 +352,8 @@ static void test_a_commit_writes_the_draft_and_shows_it_briefly(void) {
 // A commit outside the editor is not a commit. Otherwise a stray click
 // in the list would write a value nobody chose.
 static void test_a_click_in_the_list_writes_nothing(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	menuOpen(s);
 	int written = -1;
@@ -335,10 +365,9 @@ static void test_a_click_in_the_list_writes_nothing(void) {
 // A bool alternates rather than stepping, and the first turn always
 // reaches the *other* value whatever it started as.
 static void test_a_bool_alternates(void) {
-	MenuItem toggle = {"Night", "nightMode", true, 0, 1, 1};
-	Menu m;
-	m.items = &toggle;
-	m.count = 1;
+	MenuItem toggle = {"Night", "nightMode", retroroom_core::MenuAction::NONE, true, 0, 1, 1};
+	MenuItem toggleBuf[4];
+	Menu m = menuWithActions(toggleBuf, 4, &toggle, 1);
 	MenuState s;
 	menuOpen(s);
 
@@ -364,7 +393,8 @@ static void test_a_bool_alternates(void) {
 // A closed menu renders nothing. The shell paints the normal live
 // display underneath, and blanking it would look like a crash.
 static void test_a_closed_menu_renders_nothing(void) {
-	const Menu m = menu2();
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
 	MenuState s;
 	const MenuView v = menuView(s, m, 0, 2, 16);
 	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ""), v.row[0]);
@@ -378,10 +408,9 @@ static void test_a_closed_menu_renders_nothing(void) {
 // columns is the whole width and there is no second line to spill onto.
 static void test_a_long_label_is_clipped_not_wrapped(void) {
 	MenuItem longLabel = {"An Extremely Long Setting Name", "detentsPerStep",
-						  false, 1, 30, 1};
-	Menu m;
-	m.items = &longLabel;
-	m.count = 1;
+						  retroroom_core::MenuAction::NONE, false, 1, 30, 1};
+	MenuItem longBuf[4];
+	Menu m = menuWithActions(longBuf, 4, &longLabel, 1);
 	MenuState s;
 	menuOpen(s);
 	const MenuView v = menuView(s, m, 0, 2, 16);
@@ -390,6 +419,180 @@ static void test_a_long_label_is_clipped_not_wrapped(void) {
 								  "a row must be exactly the panel width");
 	// And the visible part is the beginning of the label.
 	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>An Extremely"), v.row[0]);
+}
+
+// ---- actions -------------------------------------------------------------
+
+// The item array the shell builds: the declared settings, then Save,
+// then Reboot, then Go Back. Go Back is last because that is where a
+// menu is expected to put it, and Save/Reboot sit together because both
+// are "things the system does", not settings.
+struct SystemItem {
+        const char* label;
+        retroroom_core::MenuAction action;
+};
+static const SystemItem kSystem[] = {
+        {"Save", retroroom_core::MenuAction::SAVE},
+        {"Reboot", retroroom_core::MenuAction::REBOOT},
+        {retroroom_core::kMenuGoBackLabel, retroroom_core::MenuAction::GO_BACK},
+};
+
+static Menu systemMenu(MenuItem* buf, const MenuItem* items, int count) {
+        int n = 0;
+        for (int i = 0; i < count && n < 8; ++i) {
+                buf[n++] = items[i];
+        }
+        for (int i = 0; i < 3 && n < 8; ++i) {
+                buf[n].label = kSystem[i].label;
+                buf[n].key = nullptr;
+                buf[n].action = kSystem[i].action;
+                buf[n].isBool = false;
+                buf[n].lo = 0;
+                buf[n].hi = 0;
+                buf[n].step = 1;
+                ++n;
+        }
+        Menu m;
+        m.items = buf;
+        m.count = n;
+        return m;
+}
+
+// An action row is not editable. Clicking one must not open the editor
+// and leave the knob turning a value that does not exist.
+static void test_an_action_row_cannot_be_edited(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);  // now on Save
+        TEST_ASSERT_EQUAL_INT_MESSAGE(2, s.selected, "expected to be on Save");
+
+        menuSelect(s, m, 0);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(retroroom_core::MenuMode::CONFIRM),
+                                      static_cast<int>(s.mode),
+                                      "Save must ask rather than just do it");
+        // And the knob does not adjust a draft that is not there.
+        const int before = s.draft;
+        menuDetent(s, m, 1);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(before, s.draft,
+                                      "an action row has no draft to move");
+}
+
+// The prompt says what it will do rather than asking a yes/no. That is
+// the whole reason it exists: "Save" and "Save+Reboot" are the same
+// decision told honestly, and the operator finds out about the restart
+// before committing to it.
+static void test_the_prompt_names_the_consequence(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+
+        // Save, nothing needing a restart.
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        s.pendingNeedsReboot = false;
+        menuSelect(s, m, 0);
+        MenuView v = menuView(s, m, 0, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Save"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:Go Back"), v.row[1]);
+
+        // Save, with a restart owed.
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        s.pendingNeedsReboot = true;
+        menuSelect(s, m, 0);
+        v = menuView(s, m, 0, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Save+Reboot"), v.row[0]);
+        // rowIs() trims the padding, so the comparison above is against
+        // the text and not the filled row: "1:>Save+Reboot" is thirteen
+        // columns. "1:>Save + Reboot" would be exactly sixteen and fit
+        // with nothing to spare, which is the kind of tight fit that
+        // breaks silently the next time somebody rewords it.
+}
+
+// Backing out changes nothing. The action is not returned, so a caller
+// switching on the result cannot act on something the operator declined.
+static void test_backing_out_of_the_prompt_chooses_nothing(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        menuSelect(s, m, 0);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(retroroom_core::MenuMode::CONFIRM),
+                             static_cast<int>(s.mode));
+
+        menuDetent(s, m, 1);  // move to Go Back
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, s.selected, "expected to be on Go Back");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+                static_cast<int>(retroroom_core::MenuAction::NONE),
+                menuSelect(s, m, 0),
+                "backing out must not return an action to perform");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(retroroom_core::MenuMode::LIST),
+                                      static_cast<int>(s.mode),
+                                      "backing out returns to the list");
+}
+
+// Confirming returns the action that was asked about, and the restart
+// flag is readable next to it.
+static void test_confirming_returns_the_action_and_its_reboot_flag(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        s.pendingNeedsReboot = true;
+        menuSelect(s, m, 0);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+                static_cast<int>(retroroom_core::MenuAction::SAVE),
+                menuSelect(s, m, 0),
+                "confirming must return the action being asked about");
+        TEST_ASSERT_TRUE_MESSAGE(retroroom_core::menuActionNeedsReboot(s),
+                                 "the reboot flag must survive the choice");
+}
+
+// Go Back needs no prompt. It is reversible and the operator asked for
+// it; a confirm step here is friction on an already deep menu.
+static void test_go_back_is_immediate(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        for (int i = 0; i < 4; ++i) {
+                menuDetent(s, m, 1);
+        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+                static_cast<int>(retroroom_core::MenuAction::GO_BACK),
+                menuSelect(s, m, 0),
+                "Go Back must act rather than ask");
+        TEST_ASSERT_FALSE(retroroom_core::menuIsOpen(s));
+}
+
+// The message covers the list and expires on its own. It is a
+// transient notice, not a menu, and a fixed three seconds on a 16x2 is
+// a blink rather than a message.
+static void test_a_message_covers_the_list_then_goes_away(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuMessage(s, 1000, 500);
+
+        MenuView v = menuView(s, m, 1100, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Reboot to see"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:all changes"), v.row[1]);
+
+        menuTick(s, 1600);
+        TEST_ASSERT_FALSE(retroroom_core::menuMessageVisible(s, 1600));
+        v = menuView(s, m, 1600, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"),
+                                 "the list must come back under the message");
 }
 
 int main(int argc, char** argv) {
@@ -415,5 +618,12 @@ int main(int argc, char** argv) {
 	// Rendering.
 	RUN_TEST(test_a_closed_menu_renders_nothing);
 	RUN_TEST(test_a_long_label_is_clipped_not_wrapped);
+	// Actions: the rows that do something other than edit a setting.
+	RUN_TEST(test_an_action_row_cannot_be_edited);
+	RUN_TEST(test_the_prompt_names_the_consequence);
+	RUN_TEST(test_backing_out_of_the_prompt_chooses_nothing);
+	RUN_TEST(test_confirming_returns_the_action_and_its_reboot_flag);
+	RUN_TEST(test_go_back_is_immediate);
+	RUN_TEST(test_a_message_covers_the_list_then_goes_away);
 	return UNITY_END();
 }

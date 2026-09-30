@@ -32,10 +32,34 @@ extern const std::uint32_t kMenuSavedMs;
 
 enum class MenuMode : std::uint8_t {
 	CLOSED,
-	// Choosing an item. The knob scrolls, a click opens it.
+	// Choosing an item. The knob scrolls, a click opens it -- or runs it,
+	// if it is an action rather than a setting.
 	LIST,
 	// Changing it. The knob adjusts the draft, a click commits.
 	EDIT,
+	// Answering "are you sure?". Only the action items get here, and
+	// only the ones with a consequence: a plain GO_BACK is immediate,
+	// and there is nothing to confirm about leaving.
+	CONFIRM,
+};
+
+// What a row does that is not editing a setting.
+//
+// Actions are items rather than a special case, so the list has no
+// special-cased row and no off-by-one index: GO_BACK is just the last
+// entry, like everything else. The shell appends these to whatever the
+// config declared, so a config that says nothing still has a menu with
+// a way out of it -- which is also what makes an empty `menu` array a
+// lock-down rather than a trap.
+enum class MenuAction : uint8_t {
+	// An ordinary setting. `key` names a config field.
+	NONE,
+	// Leave the menu.
+	GO_BACK,
+	// Write the changed settings to flash.
+	SAVE,
+	// Restart the cabinet.
+	REBOOT,
 };
 
 // One adjustable `led` option, parsed from the config's `menu` array.
@@ -50,7 +74,12 @@ struct MenuItem {
 	// clips rather than wraps, because a label that silently runs off
 	// the right edge is worse than a truncated one.
 	const char* label;
+	// The config field this edits, or null for an action item. The
+	// presence of this is also what decides whether a click opens the
+	// editor or runs the action -- there is no separate flag to fall
+	// out of step with it.
 	const char* key;
+	MenuAction action;
 	// A bool cycles 0 <-> 1 and ignores lo/hi/step. An int steps by
 	// `step` and clamps at lo/hi.
 	bool isBool;
@@ -69,9 +98,8 @@ struct Menu {
 
 struct MenuState {
 	MenuMode mode = MenuMode::CLOSED;
-	// 0..count-1 for an item, and `count` for "Go Back". One past the
-	// array rather than a sentinel inside it, so the selection and the
-	// index into the items are the same number and cannot disagree.
+	// The row the operator is on. Every entry is a real item now, so
+	// there is no "count means Go Back" special case to get wrong.
 	int selected = 0;
 	// The value being edited, and the value it started from. Separate
 	// because the editor shows both -- "Current" against "New" -- and
@@ -82,6 +110,15 @@ struct MenuState {
 	// While the clock is before this, the selected row shows the saved
 	// value in place of its label. Zero means "not showing".
 	std::uint32_t savedUntilMs = 0;
+	// What CONFIRM is asking about, and whether it wants a restart as
+	// part of it. `needsReboot` is what picks the wording -- "Save" or
+	// "Save+Reboot" -- so the button says what it will do rather than
+	// asking a yes/no the operator has to interpret.
+	MenuAction pending = MenuAction::NONE;
+	bool pendingNeedsReboot = false;
+	// A message to show instead of the list, until this time. Used for
+	// the "Reboot to see all changes" notice. Zero means none.
+	std::uint32_t messageUntilMs = 0;
 };
 
 // Two rows of the display, NUL-terminated and always `width` columns
@@ -107,11 +144,44 @@ bool menuIsOpen(const MenuState& s);
 // setting.
 void menuDetent(MenuState& s, const Menu& m, int direction);
 
-// A click. On "Go Back" it closes. On an item it opens the editor,
-// seeded with `currentValue` clamped into the item's own range -- which
-// is allowed to be narrower than the field's, so a menu can offer 1..30
-// for a field the file allows 1..64.
-void menuSelect(MenuState& s, const Menu& m, int currentValue);
+// A click. Returns the action the operator just chose, or NONE if the
+// click did not choose one.
+//
+// That single return value is the whole shell interface: the caller
+// switches on it and does not otherwise need to know which mode the
+// menu was in. LIST + a setting opens the editor and returns NONE;
+// LIST + Go Back closes and returns GO_BACK; LIST + Save or Reboot
+// opens a confirmation and returns NONE; CONFIRM + the first row
+// returns the action that was being asked about; CONFIRM + the second
+// row returns NONE, having changed nothing.
+//
+// On a setting, `currentValue` seeds the editor, clamped into the
+// item's own range -- which is allowed to be narrower than the
+// field's, so a menu can offer 1..30 for a field the file allows
+// 1..64.
+MenuAction menuSelect(MenuState& s, const Menu& m, int currentValue);
+
+// Show a message instead of the list, until `nowMs + durationMs`.
+// Deliberately not "for N seconds": the notice exists to say something
+// the operator needs to read, and a fixed duration on a 16x2 is a
+// blink rather than a message. The caller decides when it has been read
+// -- a detent or a click ends it early -- and this is only the cap.
+void menuMessage(MenuState& s, std::uint32_t nowMs, std::uint32_t durationMs);
+
+// Is the message still being shown?
+bool menuMessageVisible(const MenuState& s, std::uint32_t nowMs);
+
+// Does the action just returned by menuSelect() need a restart to take
+// effect?
+//
+// The contract is narrow and deliberate: valid immediately after
+// menuSelect() returns, for the action that was being confirmed. A
+// single MenuAction return cannot also say "and restart", and adding a
+// second return value for one bit of information would put the two out
+// of step at some call site. The shell sets pendingNeedsReboot when it
+// raises the confirmation, by asking configFieldNeedsReboot() whether
+// any setting it changed is init-bound.
+bool menuActionNeedsReboot(const MenuState& s);
 
 // A click in the editor. Writes the draft through `valueOut` and
 // returns to the list, showing the new value for kMenuSavedMs.

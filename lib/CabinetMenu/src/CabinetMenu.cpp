@@ -17,10 +17,12 @@ const std::uint32_t kMenuSavedMs = 1500;
 
 namespace {
 
-// "Go Back" sits one past the last item, so the selectable range is
-// 0..count inclusive: count+1 entries in total.
+// "Go Back" is an ordinary item the shell appends, not a row past the
+// end of the array. That is why this is just the count: every entry
+// has an index, and no caller has to remember that one of them is
+// special.
 int totalEntries(const Menu& m) {
-	return (m.count > 0 ? m.count : 0) + 1;
+	return m.count > 0 ? m.count : 0;
 }
 
 int clampInt(int v, int lo, int hi) {
@@ -76,9 +78,6 @@ const char* listLabel(const MenuState& s, const Menu& m, int index,
 		std::snprintf(valueText, sizeof(valueText), "%d", s.saved);
 		return valueText;
 	}
-	if (index >= m.count) {
-		return kMenuGoBackLabel;
-	}
 	return m.items[index].label;
 }
 
@@ -120,7 +119,7 @@ void menuDetent(MenuState& s, const Menu& m, int direction) {
 		return;
 	}
 	const int total = totalEntries(m);
-	if (s.mode == MenuMode::LIST) {
+	if (s.mode == MenuMode::LIST || s.mode == MenuMode::CONFIRM) {
 		// Clamp, never wrap. A knob that wraps the ends of a menu has
 		// silently changed a setting on its way to somewhere the
 		// operator was not looking.
@@ -128,12 +127,15 @@ void menuDetent(MenuState& s, const Menu& m, int direction) {
 		return;
 	}
 	if (s.mode != MenuMode::EDIT) {
-		return;
+		return;  // a click while confirming is a confirmation, not an edit
 	}
 	if (m.count <= 0 || s.selected < 0 || s.selected >= m.count) {
 		return;  // nothing being edited
 	}
 	const MenuItem& item = m.items[s.selected];
+	if (item.key == nullptr || item.action != MenuAction::NONE) {
+		return;  // an action row has no draft to adjust
+	}
 	if (item.isBool) {
 		// A bool has no ends to clamp to, it just alternates. Testing
 		// the draft for non-zero rather than adding one means the first
@@ -147,20 +149,48 @@ void menuDetent(MenuState& s, const Menu& m, int direction) {
 	s.draft = clampInt(s.draft + direction * step, item.lo, item.hi);
 }
 
-void menuSelect(MenuState& s, const Menu& m, int currentValue) {
+MenuAction menuSelect(MenuState& s, const Menu& m, int currentValue) {
+	if (s.mode == MenuMode::CONFIRM) {
+		// Row 0 is "do it", row 1 is "go back". Decided here rather
+		// than by the caller, so the answer on screen and the answer
+		// acted on cannot come from different places.
+		//
+		// Read the row BEFORE resetting it. Capturing it afterwards
+		// would compare a zero against a zero and always agree.
+		const bool confirmed = (s.selected == 0);
+		const MenuAction action = s.pending;
+		s.pending = MenuAction::NONE;
+		s.mode = MenuMode::LIST;
+		s.selected = 0;
+		// pendingNeedsReboot is deliberately left set: the single
+		// MenuAction return cannot also carry "and restart", so the
+		// caller reads menuActionNeedsReboot() immediately after. See
+		// its comment for the contract.
+		return confirmed ? action : MenuAction::NONE;
+	}
 	if (s.mode != MenuMode::LIST) {
-		return;  // a click while editing is a commit, not a re-open
+		return MenuAction::NONE;  // a click while editing is a commit
 	}
 	const int total = totalEntries(m);
 	s.selected = clampInt(s.selected, 0, total - 1);
-	if (s.selected >= m.count) {
-		// "Go Back": leave, rather than opening an editor for an item
-		// that does not exist.
-		menuClose(s);
-		return;
+	if (s.selected < 0 || s.selected >= m.count) {
+		return MenuAction::NONE;
+	}
+	const MenuItem& item = m.items[s.selected];
+	if (item.key == nullptr || item.action != MenuAction::NONE) {
+		// An action. Free ones happen; the rest open a confirmation,
+		// which is the shell's decision to make rather than the menu's,
+		// because "is this worth a prompt" is not a property of a row.
+		if (item.action == MenuAction::GO_BACK) {
+			menuClose(s);
+			return MenuAction::GO_BACK;
+		}
+		s.mode = MenuMode::CONFIRM;
+		s.pending = item.action;
+		s.selected = 0;
+		return MenuAction::NONE;
 	}
 	s.mode = MenuMode::EDIT;
-	const MenuItem& item = m.items[s.selected];
 	// The menu's own range wins over the field's, and is allowed to be
 	// narrower: a menu offering 1..30 for a field the file allows 1..64
 	// is a menu choosing what to expose, which is the point of a
@@ -186,6 +216,26 @@ void menuTick(MenuState& s, std::uint32_t nowMs) {
 	if (expired(nowMs, s.savedUntilMs)) {
 		s.savedUntilMs = 0;
 	}
+	// The message expires here rather than at render time so that a
+	// caller which asks "is there a message" and a caller which draws
+	// one cannot disagree about whether it is still up.
+	if (expired(nowMs, s.messageUntilMs)) {
+		s.messageUntilMs = 0;
+	}
+}
+
+void menuMessage(MenuState& s, std::uint32_t nowMs,
+                 std::uint32_t durationMs) {
+	s.messageUntilMs = nowMs + durationMs;
+}
+
+bool menuActionNeedsReboot(const MenuState& s) {
+	return s.pendingNeedsReboot;
+}
+
+bool menuMessageVisible(const MenuState& s, std::uint32_t nowMs) {
+	return s.messageUntilMs != 0 &&
+		   static_cast<std::int32_t>(nowMs - s.messageUntilMs) < 0;
 }
 
 MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
@@ -214,6 +264,38 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		place(v.row[0], 17, width, 0, buf);
 		std::snprintf(buf, sizeof(buf), "2:New: %d", s.draft);
 		place(v.row[1], 17, width, 0, buf);
+		return v;
+	}
+
+	if (s.mode == MenuMode::CONFIRM) {
+		// The one place the menu says what it is about to do rather
+		// than asking a yes/no the operator has to interpret. "Save" and
+		// "Save+Reboot" are the same decision told honestly, and the
+		// operator finds out the restart before they commit to it rather
+		// than after.
+		//
+		// Thirteen columns, not sixteen: "1:>Save+Reboot" is exactly
+		// sixteen and would fit with nothing to spare, which is the
+		// kind of tight fit that breaks silently the next time somebody
+		// rewords it.
+		char buf[17];
+		std::snprintf(buf, sizeof(buf), "1:>%s", s.pending == MenuAction::REBOOT
+										   ? "Reboot"
+										   : (s.pendingNeedsReboot ? "Save+Reboot"
+																  : "Save"));
+		place(v.row[0], 17, width, 0, buf);
+		place(v.row[1], 17, width, 0, s.selected == 0 ? "2:Go Back"
+													   : "2:>Go Back");
+		return v;
+	}
+
+	// A message covers the list entirely. Not stacked on it: on sixteen
+	// columns there is nowhere to put a notice without hiding the thing
+	// the notice is about, and "Reboot to see all changes" is only
+	// meaningful on its own.
+	if (menuMessageVisible(s, nowMs)) {
+		place(v.row[0], 17, width, 0, "1:Reboot to see");
+		place(v.row[1], 17, width, 0, "2:all changes");
 		return v;
 	}
 
