@@ -1294,6 +1294,96 @@ void test_a_menu_survives_being_copied_twice(void) {
         TEST_ASSERT_EQUAL_STRING("led", block);
 }
 
+// The shipped config, from src/factory-config.json. Included as a
+// header rather than read from disk so the host test and the firmware
+// are provably parsing the same bytes.
+#include <factoryconfig.h>
+
+// The config a cabinet ships with must actually parse, and must be the
+// thing the docs call "all options". A factory default that does not
+// load is a cabinet that boots empty, and one that loads with three
+// consoles and no menu is a cabinet whose settings cannot be reached.
+void test_the_shipped_config_parses(void) {
+	LoadResult r = retroroom_core::loadFromJson(kFactoryConfigJson);
+	TEST_ASSERT_TRUE_MESSAGE(r.ok, r.error.c_str());
+	TEST_ASSERT_TRUE_MESSAGE(r.warnings.empty(),
+	                             r.warnings.empty() ? "" : r.warnings[0].c_str());
+	TEST_ASSERT_EQUAL(3, static_cast<int>(r.consoles.size()));
+	// Every block the format has, so a dropped one is a test failure
+	// rather than something a user finds out about on a bench.
+	TEST_ASSERT_TRUE(r.shelves.size() > 0);
+	TEST_ASSERT_TRUE(r.feel.totalLeds > 0);
+	TEST_ASSERT_TRUE(r.showWifiConnectionFailureMessage);
+	TEST_ASSERT_FALSE(r.networkDisabled);
+	// And per-console fields the old default omitted entirely.
+	for (const Console& c : r.consoles) {
+		TEST_ASSERT_TRUE_MESSAGE(!c.tagline.empty(), c.id.c_str());
+	}
+}
+
+// The one that keeps the registry and the shipped menu in step. Adding
+// a config field without adding a row for it means a setting the
+// operator can see in the file and cannot reach by the knob -- the
+// exact failure that shipped when the registry grew past the old
+// 32-row cap and a fresh cabinet quietly lost a row.
+//
+// Without this, "every field has a menu row" is a claim in a comment.
+// With it, it is a fact the suite checks.
+void test_every_config_field_has_a_menu_row_in_the_shipped_config(void) {
+	LoadResult r = retroroom_core::loadFromJson(kFactoryConfigJson);
+	TEST_ASSERT_TRUE(r.ok);
+
+	int fields = 0;
+	int blockCount = 0;
+	// configBlocks() *returns* the table and fills the count through
+	// the out-param, so both halves are needed.
+	const retroroom_core::ConfigBlock* blocks =
+	    retroroom_core::configBlocks(&blockCount);
+	TEST_ASSERT_TRUE(blocks != nullptr);
+	for (int b = 0; b < blockCount; ++b) {
+		const retroroom_core::ConfigBlock& block = blocks[b];
+		for (int f = 0; f < block.count; ++f) {
+			++fields;
+			std::string path = std::string(block.prefix) + "." +
+			                   block.fields[f].key;
+			bool found = false;
+			for (std::size_t i = 0; i < r.menu.keys.size(); ++i) {
+				if (r.menu.keys[i] == path) {
+					found = true;
+					break;
+				}
+			}
+			TEST_ASSERT_TRUE_MESSAGE(found, path.c_str());
+		}
+	}
+	TEST_ASSERT_TRUE_MESSAGE(fields > 30,
+	                             "the registry looks smaller than expected; "
+	                             "check this test still walks every block");
+	// And the reverse: no row naming a field that does not exist. The
+	// parser already drops those with a warning, so an empty warning
+	// list is the assertion.
+	TEST_ASSERT_EQUAL(size_t(fields), r.menu.items.size());
+}
+
+// A menu longer than the shell's array is truncated. That is a ceiling
+// on a fixed allocation and cannot go away, so the number has to leave
+// room for the shipped menu and the suite has to notice if it stops
+// doing so.
+void test_the_shipped_menu_fits_the_shell_array(void) {
+	LoadResult r = retroroom_core::loadFromJson(kFactoryConfigJson);
+	TEST_ASSERT_TRUE(r.ok);
+	TEST_ASSERT_TRUE_MESSAGE(
+	    r.menu.items.size() <= static_cast<size_t>(retroroom_core::kMaxMenuItems),
+	    "the shipped menu is longer than kMaxMenuItems; rows will be "
+	    "dropped silently at runtime");
+	// The label is what a person reads, on sixteen columns. A longer
+	// one is clipped by the menu renderer rather than wrapped, so
+	// "Fill retreat delay ms" is a setting nobody can identify.
+	for (const retroroom_core::MenuItem& item : r.menu.items) {
+		TEST_ASSERT_TRUE_MESSAGE(std::strlen(item.label) <= 16, item.label);
+	}
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -1364,5 +1454,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_total_leds_cannot_exceed_what_was_built_for);
 	RUN_TEST(test_total_leds_comes_from_the_config);
 	RUN_TEST(test_a_config_with_no_led_block_gets_the_defaults);
+	RUN_TEST(test_the_shipped_config_parses);
+	RUN_TEST(test_every_config_field_has_a_menu_row_in_the_shipped_config);
+	RUN_TEST(test_the_shipped_menu_fits_the_shell_array);
 	return UNITY_END();
 }

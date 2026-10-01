@@ -19,39 +19,36 @@
 #endif
 #include "stackselector.h"
 
-// Embedded console-configuration JSON. Source of truth: lib/ConsoleConfig/.
-// The shell stores the same string in PROGMEM so it lands in flash and the
-// core's parser is fed directly from RAM. (The legacy approach was a
-// hand-rolled addConsole(...) sequence in main.cpp; this file replaces it.)
+// The config a cabinet ships with. The document itself is
+// src/factory-config.json, pulled in through factoryconfig.h by the
+// preprocessor; see that header for why it is a file and not a
+// literal. (The legacy approach was a hand-rolled addConsole(...)
+// sequence in main.cpp, and before that a 1.5 KB string literal in this
+// file, which was unreadable in a diff and impossible to lint.)
 //
 // At boot, consoleDefinitions() prefers /consoles.json from LittleFS
-// (the slot maintained by the POST /consoles.json handler in
-// src/network.cpp). This PROGMEM literal is the fallback used when:
-//   - the FS isn't mounted (board with no filesystem partition,
-//     e.g. [env:pico_base]),
-//   - /consoles.json is missing (factory-fresh device),
+// (the slot maintained by POST /consoles.json and the serial
+// PUT CONFIG). This is the fallback used when:
+//   - the FS isn't mounted (board with no filesystem partition),
+//   - /consoles.json is missing (factory-fresh device, or one that has
+//     been RESET),
 //   - or /consoles.json fails to parse (corrupt or partial write).
-// Keeping the default here means the device never wedges at boot just
-// because no one has POSTed a config yet -- it comes up with the
-// 3-console example config and the operator can build from there.
-static const char CONFIG_JSON[] PROGMEM = R"({
-    "irCodes": {
-        "SVideo": "0x030",
-        "Front": "0x830",
-        "Video": "0x430",
-        "YUV":   "0xE30"
-    },
-    "consoleNames": {
-        "NES":  "Nintendo Entertainment System",
-        "SNES": "Super Nintendo Entertainment System",
-        "GEN":  "Sega Genesis"
-    },
-    "consoles": [
-        {"id": "NES",  "tvInput": "Video", "selectorPosition": 1, "ledPosition": 1,  "ledWidth": 1},
-        {"id": "SNES", "tvInput": "YUV",   "selectorPosition": 2, "ledPosition": 7,  "ledWidth": 5},
-        {"id": "GEN",  "tvInput": "YUV",   "selectorPosition": 3, "ledPosition": 13, "ledWidth": 5}
-    ]
-})";
+//
+// Keeping a default here means the device never wedges at boot just
+// because no one has configured it yet: it comes up with three
+// consoles, a full `led` block, and a `menu` array with a row for
+// every setting in the registry. That last part is the load-bearing
+// one -- it is what makes `network.disable` reachable by the knob on a
+// cabinet nobody has ever put a config on, and therefore what stops
+// that switch from being the permanent brick it was the commit before
+// last.
+//
+// It is deliberately NOT written to flash on the first boot. See
+// consoleConfigIsUploaded() for why the absence of /consoles.json is
+// the flag and saving the default would destroy it.
+#include "factoryconfig.h"
+
+#define CONFIG_JSON kFactoryConfigJson
 
 int currentConsoleIndex = 0;
 // The console the operator is *looking at*, which is not the same as
@@ -143,6 +140,20 @@ static void buildShellMenu() {
         for (size_t i = 0; i < menuDef.items.size() &&
                            shellMenuCount < retroroom_core::kMaxMenuItems; ++i) {
                 shellMenuItems[shellMenuCount++] = menuDef.items[i];
+        }
+        // Say so when rows were left off. The cap exists to bound a
+        // fixed array, and the array bound means a config declaring
+        // more than the cap gets the first N and no indication -- a
+        // setting that is in the file, adjustable in principle, and
+        // simply not there. That is exactly the kind of silence this
+        // repo has spent a session removing elsewhere.
+        if (menuDef.items.size() >
+            static_cast<size_t>(retroroom_core::kMaxMenuItems)) {
+                Serial.print("menu: config declares ");
+                Serial.print(menuDef.items.size());
+                Serial.print(" items, only ");
+                Serial.print(retroroom_core::kMaxMenuItems);
+                Serial.println(" fit; the rest were dropped");
         }
         struct {
                 const char* label;

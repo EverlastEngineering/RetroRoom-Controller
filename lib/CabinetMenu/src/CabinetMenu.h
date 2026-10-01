@@ -27,7 +27,18 @@ namespace retroroom_core {
 // array it appends its action rows to. Not a limit the menu enforces --
 // the core takes whatever it is given -- but a ceiling on what a
 // hand-edited config should be able to ask for.
-constexpr int kMaxMenuItems = 32;
+//
+// 40, not 32. The shipped factory config has one row per field in the
+// config registry, and the registry grew past this while the number
+// sat at 32 -- so a fresh cabinet silently lost its last menu row,
+// which is the last thing anyone wants to discover by turning a knob
+// and finding nothing happens.
+//
+// A ceiling is still needed: it bounds a fixed array, and
+// `shellMenuItems` in src/consoles.cpp is sized from it. The
+// consequence is that a config declaring more is truncated, and the
+// shell logs when that happens rather than dropping rows quietly.
+constexpr int kMaxMenuItems = 40;
 
 // The label of the "Go Back" action row. Not a config key -- it edits
 // nothing, it leaves.

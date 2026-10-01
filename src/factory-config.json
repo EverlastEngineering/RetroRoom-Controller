@@ -1,0 +1,268 @@
+R""""(
+{
+    "irCodes": {
+        "SVideo": "0x030",
+        "Front": "0x830",
+        "Video": "0x430",
+        "YUV": "0xE30"
+    },
+    "consoleNames": {
+        "NES": "Nintendo Entertainment System",
+        "SMS": "Sega Master System",
+        "XBOX": "Microsoft Xbox"
+    },
+    "consoles": [
+        {
+            "id": "NES",
+            "tvInput": "Video",
+            "selectorPosition": 1,
+            "ledPosition": 4,
+            "ledWidth": 8,
+            "shelf": 0,
+            "tagline": "Now you're playing with power!"
+        },
+        {
+            "id": "SMS",
+            "tvInput": "YUV",
+            "selectorPosition": 2,
+            "ledPosition": 21,
+            "ledWidth": 12,
+            "shelf": 0,
+            "tagline": "The challenge will always be there."
+        },
+        {
+            "id": "XBOX",
+            "tvInput": "YUV",
+            "selectorPosition": 3,
+            "ledPosition": 55,
+            "ledWidth": 39,
+            "shelf": 0,
+            "tagline": "It's good to play together."
+        }
+    ],
+    "shelves": [
+        {
+            "id": 0,
+            "fromLed": 0,
+            "toLed": 117
+        }
+    ],
+    "led": {
+        "totalLeds": 118,
+        "travelMs": 420,
+        "travelPeakWidth": 6,
+        "travelSparkLeds": 2,
+        "detentsPerStep": 5,
+        "fastDetentsPerStep": 2,
+        "fastSpinWindowMs": 0,
+        "settleLockoutMs": 250,
+        "fillMinLeds": 3,
+        "fillRetreatDelayMs": 3000,
+        "fillRetreatStepMs": 250,
+        "blobWidth": 3,
+        "pulseMs": 1100,
+        "pulseMinPct": 30,
+        "pulseMaxPct": 100,
+        "abovePct": 0,
+        "selfPct": 100,
+        "dimPct": 22,
+        "fillPct": 45,
+        "blobPct": 100,
+        "browseFromPct": 25,
+        "browseToPct": 45,
+        "explodeMs": 400,
+        "igniteMs": 200,
+        "ringIdleMs": 5000,
+        "ringFlashMs": 120,
+        "frameIntervalMs": 8,
+        "colors": {
+            "stack": [
+                12,
+                28,
+                40
+            ],
+            "leaving": [
+                20,
+                34,
+                48
+            ],
+            "fill": [
+                16,
+                40,
+                56
+            ],
+            "travel": [
+                64,
+                40,
+                8
+            ],
+            "proposal": [
+                64,
+                40,
+                8
+            ],
+            "selected": [
+                48,
+                36,
+                24
+            ]
+        }
+    },
+    "lcd": {
+        "backlightOffAfterMs": 2000
+    },
+    "network": {
+        "showWIFIConnectionFailureMessage": true,
+        "disable": false
+    },
+    "menu": [
+        {
+            "label": "Strip length",
+            "set": "led.totalLeds"
+        },
+        {
+            "label": "Travel time",
+            "set": "led.travelMs"
+        },
+        {
+            "label": "Travel peak",
+            "set": "led.travelPeakWidth"
+        },
+        {
+            "label": "Travel spark",
+            "set": "led.travelSparkLeds"
+        },
+        {
+            "label": "Detents",
+            "set": "led.detentsPerStep"
+        },
+        {
+            "label": "Fast detents",
+            "set": "led.fastDetentsPerStep"
+        },
+        {
+            "label": "Spin window",
+            "set": "led.fastSpinWindowMs"
+        },
+        {
+            "label": "Settle lockout",
+            "set": "led.settleLockoutMs"
+        },
+        {
+            "label": "Fill min",
+            "set": "led.fillMinLeds"
+        },
+        {
+            "label": "Fill delay",
+            "set": "led.fillRetreatDelayMs"
+        },
+        {
+            "label": "Fill step",
+            "set": "led.fillRetreatStepMs"
+        },
+        {
+            "label": "Blob width",
+            "set": "led.blobWidth"
+        },
+        {
+            "label": "Pulse time",
+            "set": "led.pulseMs"
+        },
+        {
+            "label": "Pulse dim",
+            "set": "led.pulseMinPct",
+            "step": 5
+        },
+        {
+            "label": "Pulse bright",
+            "set": "led.pulseMaxPct",
+            "step": 5
+        },
+        {
+            "label": "Stack level",
+            "set": "led.abovePct",
+            "step": 5
+        },
+        {
+            "label": "Selected level",
+            "set": "led.selfPct",
+            "step": 5
+        },
+        {
+            "label": "Context level",
+            "set": "led.dimPct",
+            "step": 5
+        },
+        {
+            "label": "Fill level",
+            "set": "led.fillPct",
+            "step": 5
+        },
+        {
+            "label": "Blob level",
+            "set": "led.blobPct",
+            "step": 5
+        },
+        {
+            "label": "Browse from",
+            "set": "led.browseFromPct",
+            "step": 5
+        },
+        {
+            "label": "Browse to",
+            "set": "led.browseToPct",
+            "step": 5
+        },
+        {
+            "label": "Explode",
+            "set": "led.explodeMs"
+        },
+        {
+            "label": "Ignite",
+            "set": "led.igniteMs"
+        },
+        {
+            "label": "Ring idle",
+            "set": "led.ringIdleMs"
+        },
+        {
+            "label": "Ring strike",
+            "set": "led.ringFlashMs"
+        },
+        {
+            "label": "Ring grace",
+            "set": "led.ringOffDelayMs"
+        },
+        {
+            "label": "Ring fade",
+            "set": "led.ringFadeMs"
+        },
+        {
+            "label": "Brightness",
+            "set": "led.brightnessPct",
+            "min": 20,
+            "max": 100,
+            "step": 5,
+            "preview": true
+        },
+        {
+            "label": "Frame interval",
+            "set": "led.frameIntervalMs"
+        },
+        {
+            "label": "Backlight",
+            "set": "lcd.backlightOffAfterMs"
+        },
+        {
+            "label": "WiFi notice",
+            "set": "network.showWIFIConnectionFailureMessage",
+            "type": "bool"
+        },
+        {
+            "label": "WiFi off",
+            "set": "network.disable",
+            "type": "bool"
+        }
+    ]
+}
+)""""

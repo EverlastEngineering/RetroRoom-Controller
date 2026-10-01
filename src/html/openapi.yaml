@@ -544,7 +544,18 @@ components:
           additionalProperties:
             type: string
             pattern: "^0x[0-9a-fA-F]{1,4}$"
-            example: "0x430"
+          # An explicit example, and not just the one on
+          # additionalProperties. Swagger's synthesised sample expands
+          # additionalProperties into three members literally named
+          # `additionalProp1..3`, all copies of the same example --
+          # which reads on the /openapi page as though the firmware had
+          # written that, and is a fair enough thing for someone to
+          # believe. Real keys are unambiguous.
+          example:
+            SVideo: "0x030"
+            Front: "0x830"
+            Video: "0x430"
+            YUV: "0xE30"
         consoleNames:
           type: object
           description: |
@@ -553,7 +564,11 @@ components:
             `console:<name>:<idx>` broadcast, and the operator UI.
           additionalProperties:
             type: string
-            example: "Nintendo Entertainment System"
+          # Same reasoning as irCodes above.
+          example:
+            NES: "Nintendo Entertainment System"
+            SNES: "Super Nintendo Entertainment System"
+            GEN: "Sega Genesis"
         consoles:
           type: array
           description: |
