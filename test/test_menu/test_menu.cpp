@@ -140,8 +140,8 @@ static void test_the_list_renders_as_specified(void) {
 	const Menu one = menuWithActions(oneBuf, 4, &kItems[0], 1);
 	menuOpen(s);
 	MenuView v = menuView(s, one, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:Go Back"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Detents"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Go Back"), v.row[1]);
 
 	// Two settings: the second row is the other setting, and the window
 	// only slides once the selection is past the bottom row.
@@ -149,20 +149,20 @@ static void test_the_list_renders_as_specified(void) {
 	const Menu m = menu2(twoBuf);
 	menuOpen(s);
 	v = menuView(s, m, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:Level"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Detents"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Level"), v.row[1]);
 
 	// One detent down: the marker moves, the window does not.
 	menuDetent(s, m, 1);
 	v = menuView(s, m, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Detents"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:>Level"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, " Detents"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, ">Level"), v.row[1]);
 
 	// Again: the window slides so Go Back is on the last row.
 	menuDetent(s, m, 1);
 	v = menuView(s, m, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Level"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:>Go Back"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, " Level"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, ">Go Back"), v.row[1]);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +280,7 @@ static void test_an_empty_menu_is_only_go_back(void) {
 	TEST_ASSERT_EQUAL_INT(0, s.selected);
 
 	const MenuView v = menuView(s, m, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Go Back"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Go Back"), v.row[0]);
 
 	// And it closes.
 	menuSelect(s, m, 0);
@@ -305,15 +305,15 @@ static void test_the_editor_shows_current_and_new_separately(void) {
 						  static_cast<int>(s.mode));
 
 	MenuView v = menuView(s, m, 0, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Current: 5"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:New: 5"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: 5"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "New: 5"), v.row[1]);
 
 	menuDetent(s, m, 1);
 	menuDetent(s, m, 1);
 	v = menuView(s, m, 200, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Current: 5"),
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: 5"),
 							 "Current must not move with the draft");
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:New: 7"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "New: 7"), v.row[1]);
 }
 
 // A commit writes the *draft*, returns to the list, and shows the new
@@ -339,13 +339,13 @@ static void test_a_commit_writes_the_draft_and_shows_it_briefly(void) {
 	// other row is untouched, which is what makes it obvious the value
 	// belongs to the marked item and not to the list.
 	MenuView v = menuView(s, m, 1100, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>7"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:Level"), v.row[1]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">7"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Level"), v.row[1]);
 
 	// And it reverts to the label on its own once the moment passes.
 	menuTick(s, 1000 + kMenuSavedMs + 1);
 	v = menuView(s, m, 1000 + kMenuSavedMs + 1, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"),
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Detents"),
 							 "the label must come back after the moment");
 }
 
@@ -418,7 +418,7 @@ static void test_a_long_label_is_clipped_not_wrapped(void) {
 	TEST_ASSERT_EQUAL_INT_MESSAGE(16, static_cast<int>(std::strlen(v.row[0])),
 								  "a row must be exactly the panel width");
 	// And the visible part is the beginning of the label.
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>An Extremely"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">An Extremely Lo"), v.row[0]);
 }
 
 // ---- actions -------------------------------------------------------------
@@ -496,8 +496,8 @@ static void test_the_prompt_names_the_consequence(void) {
         s.pendingNeedsReboot = false;
         menuSelect(s, m, 0);
         MenuView v = menuView(s, m, 0, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Save"), v.row[0]);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:Go Back"), v.row[1]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Save"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Go Back"), v.row[1]);
 
         // Save, with a restart owed.
         menuOpen(s);
@@ -506,10 +506,10 @@ static void test_the_prompt_names_the_consequence(void) {
         s.pendingNeedsReboot = true;
         menuSelect(s, m, 0);
         v = menuView(s, m, 0, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Save+Reboot"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Save+Reboot"), v.row[0]);
         // rowIs() trims the padding, so the comparison above is against
-        // the text and not the filled row: "1:>Save+Reboot" is thirteen
-        // columns. "1:>Save + Reboot" would be exactly sixteen and fit
+        // the text and not the filled row: ">Save+Reboot" is thirteen
+        // columns. ">Save + Reboot" would be exactly sixteen and fit
         // with nothing to spare, which is the kind of tight fit that
         // breaks silently the next time somebody rewords it.
 }
@@ -585,13 +585,13 @@ static void test_a_message_covers_the_list_then_goes_away(void) {
         menuMessage(s, 1000, 500);
 
         MenuView v = menuView(s, m, 1100, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:Reboot to see"), v.row[0]);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "2:all changes"), v.row[1]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Reboot to see"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "all changes"), v.row[1]);
 
         menuTick(s, 1600);
         TEST_ASSERT_FALSE(retroroom_core::menuMessageVisible(s, 1600));
         v = menuView(s, m, 1600, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "1:>Detents"),
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Detents"),
                                  "the list must come back under the message");
 }
 

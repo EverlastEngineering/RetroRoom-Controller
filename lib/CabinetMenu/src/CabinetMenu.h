@@ -92,6 +92,30 @@ struct MenuItem {
 	int lo;
 	int hi;
 	int step;
+
+	// A constructor, so a MenuItem is never half-built.
+	//
+	// The config parser assigned six of the seven fields and left
+	// `action` to whatever was on the stack. Detents happened to get 0
+	// and worked; Brightness did not, and was treated as an action row,
+	// so clicking it never opened an editor. The compiler cannot catch a
+	// *missing* initialiser, and six assignments that look complete are
+	// exactly what a reader waves through.
+	//
+	// Every field defaults here, so the safe thing is the only thing:
+	// "MenuItem item;" is a valid NONE action, and adding an eighth
+	// field later cannot be silently forgotten. Brace-initialising with
+	// all seven still works, so the existing call sites are unaffected.
+	MenuItem(const char* label_ = nullptr, const char* key_ = nullptr,
+			 MenuAction action_ = MenuAction::NONE, bool isBool_ = false,
+			 int lo_ = 0, int hi_ = 0, int step_ = 1)
+		: label(label_),
+		  key(key_),
+		  action(action_),
+		  isBool(isBool_),
+		  lo(lo_),
+		  hi(hi_),
+		  step(step_) {}
 };
 
 // The parsed `menu` array. The shell owns the storage; the core only

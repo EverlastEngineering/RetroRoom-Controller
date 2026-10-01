@@ -263,9 +263,9 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		// the one being edited -- a '>' on it would be a third way of
 		// saying the same thing.
 		char buf[17];
-		std::snprintf(buf, sizeof(buf), "1:Current: %d", s.current);
+		std::snprintf(buf, sizeof(buf), "Current: %d", s.current);
 		place(v.row[0], 17, width, 0, buf);
-		std::snprintf(buf, sizeof(buf), "2:New: %d", s.draft);
+		std::snprintf(buf, sizeof(buf), "New: %d", s.draft);
 		place(v.row[1], 17, width, 0, buf);
 		return v;
 	}
@@ -282,12 +282,12 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		// kind of tight fit that breaks silently the next time somebody
 		// rewords it.
 		char buf[17];
-		std::snprintf(buf, sizeof(buf), "1:>%s", s.pending == MenuAction::REBOOT
+		std::snprintf(buf, sizeof(buf), ">%s", s.pending == MenuAction::REBOOT
 										   ? "Reboot"
 										   : (s.pendingNeedsReboot ? "Save+Reboot"
 																  : "Save"));
 		place(v.row[0], 17, width, 0, buf);
-		place(v.row[1], 17, width, 0, s.selected == 0 ? "2:Go Back"
+		place(v.row[1], 17, width, 0, s.selected == 0 ? " Go Back"
 													   : "2:>Go Back");
 		return v;
 	}
@@ -297,8 +297,8 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 	// the notice is about, and "Reboot to see all changes" is only
 	// meaningful on its own.
 	if (menuMessageVisible(s, nowMs)) {
-		place(v.row[0], 17, width, 0, "1:Reboot to see");
-		place(v.row[1], 17, width, 0, "2:all changes");
+		place(v.row[0], 17, width, 0, "Reboot to see");
+		place(v.row[1], 17, width, 0, "all changes");
 		return v;
 	}
 
@@ -313,12 +313,17 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		}
 		char buf[17];
 		// "1:>Label" when selected, "1:Label" when not. The marker
-		// shifts the text by a column on purpose: a row that is
-		// indented is a row that is selected, without spending two
+		// The marker shifts the text by a column on purpose: a row that
+		// is indented is a row that is selected, without spending two
 		// columns on a highlight.
-		std::snprintf(buf, sizeof(buf), "%d:%s%s", r + 1,
-					  index == s.selected ? ">" : "",
-					  listLabel(s, m, index, savedVisible));
+		//
+		// No row number. The '>' alone says which row is selected, and the
+		// count is what the scrolling window is for: a number that
+		// renumbers itself as you scroll tells the operator nothing they
+		// can act on.
+		std::snprintf(buf, sizeof(buf), "%s%s",
+							  index == s.selected ? ">" : " ",
+							  listLabel(s, m, index, savedVisible));
 		place(v.row[r], 17, width, 0, buf);
 	}
 	return v;
