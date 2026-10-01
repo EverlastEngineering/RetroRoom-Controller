@@ -46,9 +46,13 @@
 // It is deliberately NOT written to flash on the first boot. See
 // consoleConfigIsUploaded() for why the absence of /consoles.json is
 // the flag and saving the default would destroy it.
+//
+// Nothing below includes this file directly. The three places that
+// need "the config to run" -- this file's boot path, configSave(),
+// and the serial channel's GET CONFIG -- ask the store instead
+// (retroroom_store::loadConsoleConfigOrDefault), so there is one
+// answer to that question rather than three that can disagree.
 #include "factoryconfig.h"
-
-#define CONFIG_JSON kFactoryConfigJson
 
 int currentConsoleIndex = 0;
 // The console the operator is *looking at*, which is not the same as
@@ -398,17 +402,19 @@ retroroom_store::SaveResult configSave() {
                 edits[i].value = pending[i].value;
         }
         // Whatever the cabinet is running from: the file if there is
-        // one, the embedded default otherwise. That is what makes Save
+        // one, the built-in default otherwise. That is what makes Save
         // work on a device that has never been configured, and it saves
         // the exact document the cabinet booted from rather than a
-        // reconstruction of it.
-        std::string source;
-        if (!retroroom_store::loadLiveConsoleConfig(source) || source.empty()) {
-                source = std::string(CONFIG_JSON);
+        // reconstruction of it. Same source the boot path used, so Save
+        // cannot edit a different document from the one running.
+        retroroom_store::ConsoleConfigSource cfg;
+        if (!retroroom_store::loadConsoleConfigOrDefault(cfg)) {
+                Serial.println("save refused: no config to edit");
+                return retroroom_store::SaveResult::WriteFailed;
         }
         std::string result;
         std::string error;
-        if (!retroroom_core::applyConfigEdits(source, edits, pendingCount, &result, &error)) {
+        if (!retroroom_core::applyConfigEdits(cfg.json, edits, pendingCount, &result, &error)) {
                 // A refusal, not a write. Nothing on flash changed and
                 // the running cabinet is exactly as it was, which is the
                 // entire point of checking before writing.
@@ -516,18 +522,21 @@ void consoleDefinitions() {
 	//      This means the device always boots with *something* -- the
 	//      example 3-console config -- even on a fresh device or a board
 	//      with no FS at all.
-	std::string source;
-	std::string source_label;
-	std::string fs_json;
-	const bool readFromFlash =
-	    retroroom_store::loadLiveConsoleConfig(fs_json) && !fs_json.empty();
-	if (readFromFlash) {
-		source = std::move(fs_json);
-		source_label = "LittleFS /consoles.json";
-	} else {
-		source.assign(CONFIG_JSON);
-		source_label = "PROGMEM default (CONFIG_JSON)";
+	// The config, from flash or failing that the built-in default.
+	// Routed through the store so the boot path and the serial
+	// channel's GET CONFIG cannot answer "what is this running"
+	// differently -- and so the "has anyone configured this" flag
+	// below comes from the same answer rather than from a second
+	// guess about the same file.
+	retroroom_store::ConsoleConfigSource cfg;
+	if (!retroroom_store::loadConsoleConfigOrDefault(cfg)) {
+		Serial.println("Console config load failed (no config and no built-in default)");
+		return;
 	}
+	const std::string& source = cfg.json;
+	const std::string source_label =
+	    cfg.fromFlash ? "LittleFS /consoles.json"
+	                  : "PROGMEM default (CONFIG_JSON)";
 
 	retroroom_core::LoadResult result =
 		retroroom_core::loadFromJson(source.data(), source.size());
@@ -546,14 +555,17 @@ void consoleDefinitions() {
 	ledFeel = result.feel;
 	menuDef = result.menu;
 	buildShellMenu();
-	// Set only now, and only because the file parsed. The tempting
-	// version -- "a file was read off flash" -- is wrong for a
-	// *corrupt* one: a half-written /consoles.json on a cabinet that
-	// was never configured would report itself as the operator's and
-	// suppress the notice that would have told them to fix it. A file
-	// nobody can parse is not an upload, it is a problem, and the
-	// "not set up yet" pages are the right thing to say about it.
-	consoleConfigUploaded = readFromFlash;
+	// The "not set up yet" pages are keyed off this, so it is set from
+	// the same answer the document came from rather than from a second
+	// look at the same file.
+	//
+	// It is deliberately *not* "a file was read off flash". A
+	// half-written /consoles.json on a cabinet nobody had configured
+	// would report itself as the operator's and suppress the notice
+	// that would have told them to fix it. A file nobody can parse is
+	// not an upload, it is a problem, and the "not set up yet" pages
+	// are the right thing to say about it.
+	consoleConfigUploaded = cfg.fromFlash;
 	Serial.print("Menu items: ");
 	Serial.println(menuDef.items.size());
 	for (const std::string& w : result.warnings) {

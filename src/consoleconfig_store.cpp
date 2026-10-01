@@ -23,6 +23,10 @@
 
 #include <ConsoleConfig.h>
 
+// The compiled-in default. The one copy of it in the firmware, so
+// "what a fresh cabinet runs" has exactly one answer.
+#include "factoryconfig.h"
+
 namespace retroroom_store {
 
 namespace {
@@ -188,6 +192,23 @@ bool saveLastSelectedConsole(int index) {
 	}
 	const std::string payload = std::to_string(index);
 	return writeFileFrom(kLastSelectedPath, payload);
+}
+
+bool loadConsoleConfigOrDefault(ConsoleConfigSource& out) {
+	// A missing or unmountable filesystem is not an error here. It is
+	// the "board with no filesystem partition" case, and the whole
+	// point of a compiled-in default is that the cabinet still comes
+	// up. The caller distinguishes the two cases with
+	// `fromFlash`, not by this returning false.
+	std::string fromFlash;
+	if (loadLiveConsoleConfig(fromFlash) && !fromFlash.empty()) {
+		out.json = std::move(fromFlash);
+		out.fromFlash = true;
+		return true;
+	}
+	out.json.assign(kFactoryConfigJson);
+	out.fromFlash = false;
+	return !out.json.empty();
 }
 
 bool clearLastSelectedConsole() {

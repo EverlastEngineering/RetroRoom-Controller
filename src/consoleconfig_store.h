@@ -41,6 +41,35 @@ namespace retroroom_store {
 // the wrapper in this header that does it for them).
 bool loadLiveConsoleConfig(std::string& out);
 
+// Which config the cabinet is actually running, and where it came
+// from. Always non-empty on success: this is the question the boot
+// path needs ("what do I run?") and the question `GET CONFIG` needs
+// ("what is this set to?") are the same question, and they must not
+// be able to answer it differently.
+struct ConsoleConfigSource {
+	// The document itself. From flash, byte-for-byte as written. The
+	// built-in default when `fromFlash` is false, which is the same
+	// bytes `src/factory-config.json` holds.
+	std::string json;
+	// False when nothing usable was on flash and the built-in default
+	// is standing in. This is also what `consoleConfigIsUploaded()`
+	// reports, and the two must not drift: if they did, the "not set
+	// up yet" pages would show on a cabinet that had been configured.
+	bool fromFlash = false;
+};
+
+// The config the cabinet should run, from flash or failing that the
+// built-in default. Returns true whenever there is a config to run --
+// which, given a compiled-in fallback, is always on a board with a
+// firmware image. False only if the embedded default is somehow
+// unusable.
+//
+// One function rather than "try the file, else use the default" at
+// each call site. The boot path and the serial channel both need that
+// pair, and two copies of it is two places for a factory reset, a
+// missing partition and a corrupt file to be answered differently.
+bool loadConsoleConfigOrDefault(ConsoleConfigSource& out);
+
 
 // Read both backup slots into the provided buffers. Each buffer is
 // overwritten only if the corresponding file exists; if the file is

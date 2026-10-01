@@ -66,28 +66,33 @@ void printStatus() {
 	Serial.println("s");
 }
 
-// Hand the host whatever is on flash, or say plainly that there is
-// nothing there. The distinction matters: a cabinet running the shipped
-// default has no file, and "GET CONFIG" returning nothing is not the
-// same answer as returning that default's text.
+// Hand the host whatever the cabinet is running, length-prefixed.
+//
+// Both cases send a config. When nothing is on flash that is the
+// built-in default rather than a comment saying there is nothing: a
+// caller asking "what is this set to?" gets a real answer, and gets
+// something they can edit and PUT back as a starting point. The header
+// says which of the two it is, so a client can tell an operator's own
+// config from the factory one without parsing the body.
 void sendConfig() {
-	if (!retroroom_store::ensureMounted()) {
-		reply("err: LittleFS mount failed");
+	retroroom_store::ConsoleConfigSource cfg;
+	if (!retroroom_store::loadConsoleConfigOrDefault(cfg)) {
+		reply("err: no config on flash and no built-in default");
 		return;
 	}
-	std::string json;
-	if (!retroroom_store::loadLiveConsoleConfig(json) || json.empty()) {
-		reply("# no config on flash; the cabinet is running the built-in default");
-		reply("# use PUT CONFIG to save one.");
-		return;
-	}
+	const char* origin = cfg.fromFlash
+	                         ? "from flash"
+	                         : "built-in default, nothing on flash";
 	// Length-prefixed, then raw bytes. A config contains newlines, so
 	// it cannot be framed by them, and a client reading to a
 	// terminator would otherwise have to know the document's shape.
 	Serial.print("# config ");
-	Serial.print((unsigned long)json.size());
-	Serial.println(" bytes:");
-	Serial.write(reinterpret_cast<const uint8_t*>(json.data()), json.size());
+	Serial.print((unsigned long)cfg.json.size());
+	Serial.print(" bytes (");
+	Serial.print(origin);
+	Serial.println("):");
+	Serial.write(reinterpret_cast<const uint8_t*>(cfg.json.data()),
+	             cfg.json.size());
 	Serial.println();
 	reply("ok");
 }
