@@ -49,6 +49,7 @@
 // is gated on. Explicit rather than inherited through main.h: this
 // file uses both, and a transitive include is not a dependency.
 #include "consoles.h"
+#include "serialconfig.h"
 #if defined(HAS_LEDS)
 #include "ledstring.h"
 #endif
@@ -69,23 +70,16 @@ constexpr const char* kHostname      = "RetroRoom";  // DHCP hostname -> RetroRo
 constexpr uint8_t     kStaTimeoutSec = 20;
 constexpr uint8_t     kScanCacheMax  = 24; // CYW43 returns at most 24 per scan
 
-// How long a WiFi notice stays on the LCD, and what the two SoftAP
-// entry points say.
+// What the two SoftAP entry points say, and the second line of the
+// unconfigured one.
 //
-// The hold was 2 s and is now 5. Two seconds is enough to read a line
-// you are already looking at, and this is a line nobody is looking at:
-// the operator is at a cabinet, not at a screen, and the message is
-// the only thing telling them why the thing they are holding is not on
-// their network. It also has to survive being missed once -- look away
-// for the two seconds it takes to pick up a controller, and a two
-// second message is gone. Five is still short enough that it does not
-// feel like a fault: the cabinet is usable the whole time, and the
-// live view comes straight back when the hold ends.
+// The hold is LCD_NOTICE_MS, in display.h, and deliberately not a
+// number of its own: these pages and the "not set up yet" pages shown
+// at boot are the same kind of thing, and they should last the same
+// length of time.
 //
-// It is shown at the one moment someone is standing there: boot.
-//
-// There are two messages, not one, because there are two genuinely
-// different situations and only one of them is a failure:
+// Two messages, not one, because there are two genuinely different
+// situations and only one of them is a failure:
 //
 //   - We had a saved network and could not reach it. The radios work;
 //     the router is not answering. The operator's problem is
@@ -103,7 +97,6 @@ constexpr uint8_t     kScanCacheMax  = 24; // CYW43 returns at most 24 per scan
 // line is simply cut off -- so this is checked by eye, and the SSID
 // sitting one character under the limit is the one that will break
 // first if the AP is ever renamed.
-constexpr unsigned long kWifiNoticeMs = 5000;
 constexpr const char* kWifiJoinFailedLine1 = "Wifi Join Failed";
 constexpr const char* kWifiJoinFailedLine2 = "Check Network!";
 constexpr const char* kWifiUnconfiguredLine1 = "WIFI Not Set Up";
@@ -140,7 +133,7 @@ unsigned long staConnectStartedAtMs = 0;
 // a dot every tick.
 unsigned long staConnectLastDotMs = 0;
 // Non-zero while a WiFi notice is on the panel; holds the deadline at
-// which the live view comes back. See kWifiNoticeMs.
+// which the live view comes back. See LCD_NOTICE_MS in display.h.
 unsigned long wifiNoticeUntilMs = 0;
 
 struct CachedNet {
@@ -1054,16 +1047,14 @@ static void startStaServer() {
 		// can't be re-submitted by a browser-back-then-forward.
 		g_factoryResetNonce.store(0);
 
-		Serial.println("net: /factory-reset POST -- nonce OK, wiping /wifi.json and scheduling reboot");
-		if (LittleFS.begin()) {
-			LittleFS.remove(kWifiConfigPath);
-			// Also drop the saved console selection. It's device state
-			// that names a slot in the operator's cabinet, so a device
-			// handed to someone else shouldn't boot into the previous
-			// owner's last selection. Routed through the store wrapper
-			// rather than a raw remove() so the path constant stays in
-			// one place.
-			retroroom_store::clearLastSelectedConsole();
+		Serial.println("net: /factory-reset POST -- nonce OK, wiping all state and scheduling reboot");
+		// Every file the cabinet keeps, gone -- live config, both
+		// backups, the saved selection, and the credentials. Routed
+		// through the store's one wipe so this and the serial RESET
+		// cannot drift into disagreeing about what a factory reset
+		// is; see wipeEverything() for why the backups have to go too.
+		if (!retroroom_store::wipeEverything()) {
+			Serial.println("net: factory-reset -- LittleFS unavailable or a file survived");
 		}
 
 		// Serve the post-reset confirmation page. The auto-refresh
@@ -1227,6 +1218,17 @@ static void finishStaBringup() {
 	Serial.println("net: STA connect timed out; falling back to SoftAP");
 	showWifiNotice(kWifiJoinFailedLine1, kWifiJoinFailedLine2);
 	startApPortal();
+	// The web API is not reachable from here -- onNotFound redirects
+	// everything on the AP to /setup, so /consoles.json is not even
+	// routed. If the operator is going to fix this, the cable is what
+	// they have, so open the session rather than waiting for an `i`
+	// they have no reason to know about.
+	//
+	// Deliberately not done at setup() time. A cabinet with good
+	// credentials whose router takes fifteen seconds is *on its way* to
+	// being fine, and opening a session on it would be a guess; by the
+	// time this runs, the guess has been settled.
+	serialcmd_maybeAutoEnter();
 }
 
 void network_init() {
@@ -1303,7 +1305,7 @@ void network_init() {
 	Serial.println("net: joining in the background; the cabinet is live while we wait");
 }
 
-// Put a two-line WiFi notice on the panel for kWifiNoticeMs, unless
+// Put a two-line WiFi notice on the panel for LCD_NOTICE_MS, unless
 // the operator has turned that off. Called from both SoftAP entry
 // points, which are in different functions and have genuinely
 // different things to say -- see the constants above.
@@ -1346,7 +1348,7 @@ static void showWifiNotice(const char* line1, const char* line2) {
 	Serial.print(line2);
 	Serial.println("\"");
 	display_show_status(line1, line2);
-	wifiNoticeUntilMs = millis() + kWifiNoticeMs;
+	wifiNoticeUntilMs = millis() + LCD_NOTICE_MS;
 }
 
 // Blank the operator-facing outputs so a pending reboot reads as a

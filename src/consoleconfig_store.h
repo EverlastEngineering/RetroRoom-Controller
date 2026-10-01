@@ -108,6 +108,29 @@ bool saveLastSelectedConsole(int index);
 // true if the file is absent afterwards (removed, or never existed).
 bool clearLastSelectedConsole();
 
+// ---------- factory reset ----------
+//
+// Every file the cabinet keeps state in, gone: the live config, both
+// rolling backups, the saved selection, and the WiFi credentials.
+//
+// The backups are the load-bearing part of that list. The boot path
+// prefers live -> bak1 -> bak2 -> PROGMEM, so a "reset" that removed
+// only the live file would leave the next boot loading the backup, and
+// the operator would conclude the reset had done nothing. Wiping means
+// wiped.
+//
+// One function, and every caller uses it: the HTTP /factory-reset
+// handler in src/network.cpp and the serial RESET command both come
+// through here, so the two cannot drift into disagreeing about what a
+// factory reset is. /wifi.json's path lives here rather than in
+// network.cpp for the same reason -- there is now one place that knows
+// what state exists, and one place that decides to delete it.
+//
+// Returns true if LittleFS mounted. False means the erase did not
+// happen and the caller should say so rather than reporting a clean
+// reset.
+bool wipeEverything();
+
 }  // namespace retroroom_store
 
 #endif  // RR_CONSOLECONFIG_STORE_H

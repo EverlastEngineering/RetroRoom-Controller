@@ -1,5 +1,6 @@
 #include "state.h"
 #include "main.h"
+#include "serialconfig.h"
 
 // Defaults: boot into the "flashing" state so the on-board LED is
 // blinking at boot. The previous `false` left the LED dark until the
@@ -117,6 +118,22 @@ void flashLedTick() {
 // either source.
 void heartbeatTick() {
 #if defined(HAS_WIFI)
+	// Nothing at all while the serial session is open.
+	//
+	// Not tidiness. Someone reading a pasted config or typing a
+	// password should not have a line of telemetry landing in the
+	// middle of each one, and the heartbeat is the only thing in the
+	// firmware that writes to the port on a timer. It also stops the
+	// session from looking alive-then-chatty, which is the impression
+	// the hint line below is trying not to give.
+	//
+	// The cost is that a device in interactive mode has no liveness
+	// signal on the wire. The instruction screen says so in its first
+	// line, and a session with nobody at it is exactly the case where
+	// nobody is reading the log anyway.
+	if (serialcmd_isInteractive()) {
+		return;
+	}
 	constexpr unsigned long kHeartbeatIntervalMs = 2000UL;
 	static unsigned long lastBeat = 0;
 	const unsigned long now = millis();

@@ -79,6 +79,21 @@
 #ifndef LCD_WELCOME_MS
 #define LCD_WELCOME_MS 5000
 #endif
+// How long any *status* screen holds before the live view comes back:
+// the "not set up yet" pages at boot, and the WiFi join notices. One
+// number for all of them, deliberately -- they are all the same kind of
+// thing (something the operator was not expecting, shown once, at a
+// moment when they are standing at the cabinet) and two constants that
+// happen to agree today is how they stop agreeing tomorrow.
+//
+// The same reasoning as LCD_WELCOME_MS, and the same number: long
+// enough that someone who has to pick up a controller still reads it,
+// short enough that a working cabinet does not feel like it is
+// complaining. display_show_status() pins both rows rather than
+// scrolling them, because a status is read once.
+#ifndef LCD_NOTICE_MS
+#define LCD_NOTICE_MS 5000
+#endif
 // How long a freshly-selected line holds at the left edge before the
 // marquee starts moving it. After that the line loops continuously.
 #ifndef LCD_SCROLL_PAUSE_MS

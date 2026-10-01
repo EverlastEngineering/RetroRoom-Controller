@@ -12,6 +12,7 @@
 #include "main.h"
 
 #include "display.h"
+#include "serialconfig.h"
 
 // consoleDefinitions() is defined in src/consoles.cpp and reads the embedded
 // JSON via the functional core (lib/ConsoleConfig). On boot it prints the
@@ -119,6 +120,47 @@ void setup() {
 	// loop()'s display_loop() picks up the startup phase on its first
 	// tick and takes it from there.
 	display_wake();
+
+	// "Nobody has set this cabinet up yet" -- two pages, and only on a
+	// cabinet that is still running the config we shipped.
+	//
+	// Blocking, on purpose. Everything it could be done without
+	// blocking is worse here: the pages are a setup flow, they belong
+	// before the SoftAP rather than fighting it for the same 16x2
+	// panel, and a queue would mean the LCD driver owned an ordering
+	// between two subsystems that have no business knowing about each
+	// other. A cabinet in this state has nothing configured to lose
+	// and no network to break.
+	//
+	// The cost is honest and worth naming: loop() does not run for
+	// two LCD_NOTICE_MS, so the LED does not blink, the knob does not
+	// turn, and the radio does not start until these are done. That is
+	// the same trade the Loading screen already makes (see
+	// LCD_LOADING_MS), and on a cabinet nobody has configured there is
+	// nothing for any of those to be doing.
+	//
+	// This skips the welcome splash entirely -- display_show_status()
+	// forces the Live phase, and the handover in display_loop() has
+	// not happened yet. Correct here: "RetroRoom / Sit and Play" is a
+	// greeting for a cabinet that is ready, and this one is not.
+	//
+	// Guarded on HAS_LCD rather than left to the display stubs, because
+	// on a board with no panel there is nothing to show and the ten
+	// seconds would be spent waiting for nobody to look.
+	if (!consoleConfigIsUploaded()) {
+		display_show_status("Learn How To", "Setup RetroRoom");
+		delay(LCD_NOTICE_MS);
+		display_show_status("At everlast", "engineering.com");
+		delay(LCD_NOTICE_MS);
+		// Back to the live view. Same call selectConsole() makes, and
+		// guarded on a non-empty list for the reason every other
+		// CurrentConsole() caller guards: a cabinet with no config at
+		// all has nothing to dereference.
+		if (HowManyConsoles() > 0) {
+			display_show_console(CurrentConsole().name.c_str(),
+			                     CurrentConsole().tagline.c_str());
+		}
+	}
 #endif
 #if defined(HAS_WIFI)
 	// Network LAST, and that ordering is the whole point.
@@ -145,6 +187,12 @@ void setup() {
 	network_scan_cache();
 	network_init();
 #endif
+	// The USB-serial configuration channel. After the network, because
+	// its auto-entry decision needs to know whether there is a network
+	// to reach us on -- and deliberately not before, because a cabinet
+	// with valid credentials whose router is merely slow is on its way
+	// to being fine.
+	serialcmd_init();
 	Serial.println("Setup Complete.");
 	Serial.flush();
 }
@@ -199,6 +247,11 @@ void loop() {
 	// because the just-saved value has to revert to its label on a
 	// timer, and with no detent and no click nothing else would move.
 	controls_menuLoop();
+
+	// The USB-serial configuration channel. Before the network pump,
+	// because a paste arrives faster than the loop iterates and the
+	// network is the one thing in here that can be slow.
+	serialcmd_loop();
 
 	// Pump the network stack (currently the captive-portal DNS server).
 	// No-op when WiFi is not active.

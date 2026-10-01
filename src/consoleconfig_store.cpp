@@ -34,6 +34,14 @@ constexpr const char* kLivePath    = "/consoles.json";
 constexpr const char* kBackup1Path = "/consoles.bak1";
 constexpr const char* kBackup2Path = "/consoles.bak2";
 
+// The saved WiFi credentials. This used to be a file-local constant in
+// src/network.cpp, with the erase left to whichever caller happened to
+// be doing a reset. It lives here because wipeEverything() has to
+// remove it, and a path constant that only one of the two files that
+// erase it can see is a path constant that will eventually be wrong in
+// one of them.
+constexpr const char* kWifiPath = "/wifi.json";
+
 // Last-selected console index. Kept separate from the config blobs
 // above because its lifetime is different: the config changes only
 // when an operator POSTs a new one (which wipes this file), whereas
@@ -191,6 +199,33 @@ bool clearLastSelectedConsole() {
 	// turns "remove failed" into an honest return value.
 	LittleFS.remove(kLastSelectedPath);
 	return !LittleFS.exists(kLastSelectedPath);
+}
+
+bool wipeEverything() {
+	if (!ensureMounted()) {
+		return false;
+	}
+	// Every file the cabinet keeps state in, in one list so the set
+	// cannot be half-remembered. The two backups are here because the
+	// boot path prefers live -> bak1 -> bak2 -> PROGMEM: remove only
+	// the live file and the next boot loads the backup, which looks
+	// exactly like a reset that did nothing.
+	constexpr const char* const kAll[] = {
+	    kLivePath, kBackup1Path, kBackup2Path, kLastSelectedPath, kWifiPath,
+	};
+	for (const char* path : kAll) {
+		LittleFS.remove(path);
+	}
+	// Verified rather than assumed. A LittleFS::remove() that failed
+	// would otherwise be reported to the operator as a clean factory
+	// reset, and the first thing they would find is a config that came
+	// straight back.
+	for (const char* path : kAll) {
+		if (LittleFS.exists(path)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 }  // namespace retroroom_store

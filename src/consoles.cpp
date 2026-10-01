@@ -108,11 +108,11 @@ std::vector<Shelf> shelfBounds;
 // loaded gets the same numbers the config would have given it.
 retroroom_core::LedFeel ledFeel = retroroom_core::defaultLedFeel();
 
-// The operator's menu, parsed from the config's `menu` array. Owns its
-// strings; CabinetMenu() hands out a non-owning view of them, which is
-// why the view must be fetched fresh rather than cached -- the strings
-// move if this is ever re-assigned.
-static retroroom_core::ParsedMenu menuDef;
+// Whether the console list now running came off flash, or is the
+// built-in PROGMEM default nobody has chosen yet. Set by
+// consoleDefinitions(); read through consoleConfigIsUploaded() so the
+// reason it is not simply "a file exists" lives with the accessor.
+static bool consoleConfigUploaded = false;
 
 // The menu the shell actually shows: whatever the config declared,
 // then the actions. Built once, after the config lands, because the
@@ -131,6 +131,12 @@ static retroroom_core::ParsedMenu menuDef;
 // expected to put it.
 static retroroom_core::MenuItem shellMenuItems[retroroom_core::kMaxMenuItems + 3];
 static int shellMenuCount = 0;
+
+// The operator's menu, parsed from the config's `menu` array. Owns its
+// strings; CabinetMenu() hands out a non-owning view of them, which is
+// why the view must be fetched fresh rather than cached -- the strings
+// move if this is ever re-assigned.
+static retroroom_core::ParsedMenu menuDef;
 
 static void buildShellMenu() {
         shellMenuCount = 0;
@@ -164,6 +170,10 @@ const retroroom_core::Menu CabinetMenu() {
         m.items = shellMenuItems;
         m.count = shellMenuCount;
         return m;
+}
+
+bool consoleConfigIsUploaded() {
+        return consoleConfigUploaded;
 }
 
 // ---- applying and saving settings at runtime -----------------------------
@@ -498,7 +508,9 @@ void consoleDefinitions() {
 	std::string source;
 	std::string source_label;
 	std::string fs_json;
-	if (retroroom_store::loadLiveConsoleConfig(fs_json) && !fs_json.empty()) {
+	const bool readFromFlash =
+	    retroroom_store::loadLiveConsoleConfig(fs_json) && !fs_json.empty();
+	if (readFromFlash) {
 		source = std::move(fs_json);
 		source_label = "LittleFS /consoles.json";
 	} else {
@@ -523,6 +535,14 @@ void consoleDefinitions() {
 	ledFeel = result.feel;
 	menuDef = result.menu;
 	buildShellMenu();
+	// Set only now, and only because the file parsed. The tempting
+	// version -- "a file was read off flash" -- is wrong for a
+	// *corrupt* one: a half-written /consoles.json on a cabinet that
+	// was never configured would report itself as the operator's and
+	// suppress the notice that would have told them to fix it. A file
+	// nobody can parse is not an upload, it is a problem, and the
+	// "not set up yet" pages are the right thing to say about it.
+	consoleConfigUploaded = readFromFlash;
 	Serial.print("Menu items: ");
 	Serial.println(menuDef.items.size());
 	for (const std::string& w : result.warnings) {

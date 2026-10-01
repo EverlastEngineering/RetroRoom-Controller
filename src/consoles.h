@@ -85,6 +85,24 @@ const Console& BrowsedConsole();
 // todo/open/2026-09-30_menu-lock-down-mode.md.
 const retroroom_core::Menu CabinetMenu();
 
+// True once consoleDefinitions() has loaded a config that came off
+// flash, and it parsed. False means the cabinet is running the
+// built-in PROGMEM default: nobody has set this cabinet up yet.
+//
+// Read by main.cpp to decide whether to put the "not set up yet" pages
+// on the LCD at boot, and by the serial and HTTP status paths to say
+// the same thing in words.
+//
+// Deliberately *not* auto-cleared by anything, and deliberately never
+// satisfied by writing the default out: the absence of
+// /consoles.json *is* the flag. Auto-saving it would destroy the only
+// way to tell "nobody has configured this" from "configured to the
+// factory settings", and would make the notice fire once and then
+// never again -- including after a firmware reflash, which leaves
+// LittleFS intact. The way to make this go away is to put a real
+// config on the cabinet, which is the thing we want done anyway.
+bool consoleConfigIsUploaded();
+
 // ---- applying and saving settings at runtime -----------------------------
 //
 // Apply changes what the cabinet is doing; save changes what is on
