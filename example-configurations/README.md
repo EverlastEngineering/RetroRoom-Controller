@@ -14,6 +14,46 @@ the one closest to your cabinet rather than from an empty file.
 
 ---
 
+## Configuration and options
+
+The file holds two different kinds of thing, and knowing which is which
+saves a lot of confusion later.
+
+**Configuration** describes *this* cabinet. It is different on every
+one. `consoles[]`, `shelves[]`, `irCodes`, `consoleNames`.
+
+**Options** are parameters the firmware adjusts through a known range.
+`led.*`, `lcd.*`, `network.*`, and whatever comes next — `ir.*` when
+the blaster gets settings of its own.
+
+The test is short enough to hold in your head:
+
+> **A key is an option if the set of legal values can be written down
+> without reading the document.**
+
+`led.detentsPerStep` is 1..64 for every cabinet in the world, so it is
+an option. `consoles[2].ledPosition` is legal only relative to this
+cabinet's string and this cabinet's other consoles, so it is
+configuration. `irCodes` maps names the operator invented, so it is
+configuration.
+
+Three things follow, and they are the practical consequences:
+
+- **Only options can go in the `menu`.** A row has to offer a range to
+  turn through, and only options have one.
+- **Only options have a default.** A missing `led.ringIdleMs` is a
+  number the firmware knows. A missing console is not a thing the
+  firmware can invent — inventing one would be inventing hardware.
+- **Only options get filled in when a document is completed.** A config
+  written before a setting existed is silent about it; the firmware
+  fills that in from its own defaults and leaves everything else alone.
+
+The option blocks are the hardware subsystems — the strip, the panel,
+the radio, the blaster. Adding one is a row in a table in the firmware,
+not a new special case in the parser.
+
+---
+
 ## The `led` block
 
 Everything about how the strip looks and feels, as an optional

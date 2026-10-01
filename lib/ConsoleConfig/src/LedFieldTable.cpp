@@ -1,9 +1,33 @@
-// The one table of `led` options.
+// The one table of every *option* in the config, and the line between
+// an option and configuration.
 //
-// Every `led.*` key, where it lives in LedFeel, and the range it may
-// legally hold. Split into its own translation unit so it is obviously
-// the single home for the ranges, and so the parser and the runtime
-// setter cannot each grow their own copy.
+// THE INVARIANT: a key is an option if the set of legal values can be
+// written down without reading the document. Everything else is
+// configuration -- a description of one particular cabinet.
+//
+//   led.detentsPerStep      an option. 1..64 for every cabinet in the
+//                           world, and a row right here says so.
+//   consoles[2].ledPosition configuration. Legal only relative to this
+//                           cabinet's string and this cabinet's other
+//                           consoles.
+//   irCodes                 configuration. The operator invented the
+//                           names; there is no range to check them
+//                           against.
+//   led.colors              configuration, deliberately. They are a
+//                           choice made once on the bench, not a dial.
+//
+// Stating it is what makes the boundary usable rather than a matter of
+// taste. Only options can go in the `menu`, because only options have a
+// range to turn through. Only options have a default, because only
+// options have a default worth having. Only options get filled in when
+// a document is completed -- "there is no sensible default console" is
+// a sentence this rule produces rather than something every caller has
+// to remember to decide.
+//
+// The blocks below are the categories, and the categories are the
+// hardware: the strip, the panel, the radio, and later the IR blaster.
+// A new option is a row here, which is why nothing in the parser, the
+// setter or the writer special-cases the strip.
 //
 // It deliberately does NOT carry defaults. defaultLedFeel() is the
 // default, in LedFeelDefaults.cpp, beside the comment explaining what

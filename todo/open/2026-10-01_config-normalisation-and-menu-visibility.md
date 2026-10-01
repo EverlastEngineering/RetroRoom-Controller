@@ -5,6 +5,15 @@
 `src/consoleconfig_store.cpp` (flash), `src/consoles.cpp::buildShellMenu()`,
 `agent-script/e2e-serial.py`
 
+## Status
+
+`visible` is **shipped** — commit `11c7fc0`. Absent means visible, so
+every document written before it behaves exactly as it did, and
+`src/factory-config.json` now states the flag on every row. The rest of
+this note is still open and still needs the decision below.
+
+Completion is not started.
+
 ## What
 
 Two related things:
@@ -13,7 +22,8 @@ Two related things:
    `visible: false` stays in `/consoles.json` and does not appear on the
    LCD. The point is that an operator reading their own config can see
    that the setting exists and what it does, without it taking up one of
-   the forty rows on a sixteen-column screen.
+   the forty rows on a sixteen-column screen. A hidden row frees a slot,
+   so it is also the cure for the overflow the firmware logs.
 2. **Completion.** When a document is read out or written, every setting
    in the field registry is present in it — taken from the operator's own
    value where there is one, from the shipped default where there is
@@ -22,6 +32,44 @@ Two related things:
 
 Absent means `visible: true`, so every config written before this change
 behaves exactly as it did.
+
+## Scope: options, not everything
+
+Agreed with the operator, and the boundary is the invariant now stated
+in `LedFieldTable.cpp`: **a key is an option if the set of legal values
+can be written down without reading the document.** Everything else is
+configuration.
+
+So completion covers `led.*`, `lcd.*`, `network.*` and whatever comes
+next — not `consoles`, `shelves`, `irCodes`, `consoleNames` or
+`led.colors`. There is no sensible default console, no default shelf
+extent, and a missing IR code means "do not send this" rather than
+"send the default".
+
+### On nesting them under an `options` key — not done, on purpose
+
+The operator proposed `"options": { "led": {...}, "lcd": {...} }`.
+The idea is right and the nesting is not worth what it costs:
+
+- **The blocks already *are* the categories**, and the categories are
+  the hardware. `led`, `lcd`, `network`, and later `ir` for
+  `broadcastIrTimeMs` / `repeatBroadcast`. An `options` level adds a
+  nesting level and no new category.
+- **The registry already is the options list.** `configBlocks()` returns
+  exactly the option blocks, and completion iterates them. "Options" is
+  already a machine-readable concept in the firmware; it is spelled
+  `kBlocks` and lives in C++ rather than in the document.
+- **Nesting breaks every deployed config.** The parser reads
+  `doc["led"]`. Move that to `doc["options"]["led"]` and every
+  `/consoles.json` in the field silently loses every option and reverts
+  to defaults. The mitigation is reading both shapes forever, which is a
+  permanent compatibility shim bought with a documentary gain — on a
+  format that has already produced one one-way-door brick from a config
+  flag.
+
+What was adopted instead is the *rule*, written down where it is
+enforced: the invariant in `LedFieldTable.cpp` and a "Configuration and
+options" section in `example-configurations/README.md`.
 
 ## When — the decision this note is actually about
 
