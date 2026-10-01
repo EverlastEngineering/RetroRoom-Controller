@@ -5,6 +5,121 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-10-01T00:00:00.000Z — A cabinet with no network still has to be configurable, so the cable is a channel
+
+**Context:** The entry below shipped `network.disable` and, in the same
+breath, described it as "one-way" as though that were an acceptable
+property. It is not, and the reason is worth stating plainly because
+it is the kind of gap that only exists in the states nobody tests:
+
+  - `/consoles.json` was writable only over HTTP, and the only writer
+    was `POST /consoles.json`.
+  - `network.disable` leaves the radio off, so there is no HTTP.
+  - A dead CYW43 never brings the SoftAP up either — `network_init()`
+    returns on `WL_NO_MODULE`.
+  - And a USB reflash does not help. `picotool` writes the sketch
+    region; LittleFS is a separate 1 MB partition, and nothing else in
+    this repo writes it.
+
+So "turn the radio off" was a permanent brick, and the one thing that
+had been put in place to prevent it — a menu row the operator could
+delete — was on the *other* side of the door.
+
+**Decision:**
+
+1. **The recovery channel is the cable already plugged in.** USB-serial,
+   because it works in every state the hardware can be in: no network,
+   dead radio, no SD, no filesystem. A mass-storage device exposing
+   LittleFS was considered and rejected — an MSC endpoint serves
+   sector reads and the host expects FAT, so it needs a FAT stack *and*
+   a block layer over a log-structured filesystem, running alongside
+   the CDC that `pio device monitor`, `serial-snapshot.sh` and the
+   flash wrapper all depend on. The ergonomics it was for are
+   available from a two-line shell alias instead.
+
+2. **The protocol is a pure state machine in `lib/SerialCmd`, and the
+   I/O is a separate shell in `src/serialconfig`.** The part that can
+   wedge forever is the part that can be tested on the host, which is
+   the same bargain `lib/CabinetMenu` and `lib/ConsoleConfig` already
+   make.
+
+   Two halves that differ only by case are a landmine, and cost an
+   afternoon: on macOS and Windows, `src/serialcmd.h` and
+   `lib/SerialCmd/src/SerialCmd.h` are the same file to the compiler.
+   `#include <SerialCmd.h>` from inside the shell resolved to the
+   shell's own header, `#pragma once` skipped the real one, and the
+   only symptom was a cascade of "does not name a type" with no
+   missing-include error anywhere. The shell is `serialconfig.*` and
+   the reason is written at the top of that file.
+
+3. **Words, not paths: `GET CONFIG`, `PUT CONFIG`, `SETUP WIFI`,
+   `RESET`, `REBOOT`, `STATUS`, `?`.** A pasted config is terminated
+   by a line reading exactly `CONFIG DONE`, which is *not* a thing
+   that can collide with a config: every key and every string value in
+   JSON is quoted, so no bare token in a valid document can equal it.
+   A tagline of `CONFIG DONE` arrives as `"tagline": "CONFIG DONE",`
+   and does not match.
+
+   An unrecognised line gets one terse line, with no echo, and the
+   command list prints only for `?`. That is the whole anti-flood
+   design: garbage produces one short line per line of garbage and
+   never a help dump. A blank line produces silence, because an extra
+   Enter is the most common accidental input and it is not an error.
+   There is no prompt string and no way out but a reboot, because the
+   users are a person at a terminal and the scripts in `agent-script/`.
+
+4. **The session opens itself exactly when the web API cannot be
+   used, and the question it asks is the hard one.** No config on
+   flash, the radio off, or the SoftAP up for want of credentials — in
+   each of those `/consoles.json` is unreachable, and on the AP it is
+   not even *routed*.
+
+   The first version asked `!network_inStaMode()`, which is true at the
+   end of `setup()` for a cabinet with good credentials whose router
+   is merely slow: it has not joined *yet*. So it opened unprompted on
+   every boot of a healthy device, which is the entire thing the rule
+   was for. `network_isUnreachable()` is the fix, and it is false
+   while a join is in flight. Three accessors rather than one enum
+   because each has been wrong in a different direction — two because
+   two states looked alike, and one because "not yet" and "not going
+   to" are not the same answer.
+
+5. **The shipped config is a real file with a row for every setting.**
+   `src/factory-config.json`, wrapped in `R""""(` and pulled in by the
+   preprocessor exactly as `src/html.h` does for the UI files. It used
+   to be a 1.5 KB string literal in a `.cpp` — unreadable in a diff,
+   impossible to lint, and holding three consoles and nothing else, so
+   a cabinet nobody had configured had an empty menu and could not
+   reach the radio switch by the knob.
+
+   The menu has one row per field in the registry, and a test walks
+   the *registry* and fails if a field has no row. That test is the
+   real content. Without it, "every setting is in the menu" is a claim
+   in a comment, which is how `kMaxMenuItems` sat at 32 while the
+   registry grew past it and `buildShellMenu()` truncated *silently* —
+   a fresh cabinet had already lost a row. The cap still exists
+   because `shellMenuItems` is a fixed array, but it now logs when it
+   drops rows, and the test fails before that ever happens.
+
+6. **Nothing is auto-saved, and the absence of the file is the flag.**
+   A cabinet that has never been configured keeps showing the "not set
+   up yet" pages, every boot, until someone puts a real config on it.
+   Writing the shipped default to flash on the first boot would look
+   tidier and would destroy the only way to tell "nobody configured
+   this" from "configured to the factory settings" — the pages would
+   fire once, ever, including not at all after a firmware reflash,
+   which leaves LittleFS intact. And `RESET`, which wipes everything,
+   then returns the cabinet to setup state for free, which is what a
+   reset should do.
+
+**Consequences:** the channel has no written documentation outside the
+firmware's own instruction screen, which is the worst place for the
+only description of the thing that exists for the case where nothing
+else works. See `todo/open/2026-10-01_serial-mode-docs.md`. A Web
+Serial client makes this sharper rather than softer — two
+implementations of an undocumented protocol is how they come to
+disagree about where a `CONFIG DONE` line goes.
+
 ## 2026-09-30T00:00:00.000Z — The WiFi bring-up is a state machine the main loop resolves, and a menu entry names a path rather than a strip key
 
 **Context:** `network_init()` ended in a blocking wait:
