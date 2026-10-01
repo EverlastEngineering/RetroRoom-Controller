@@ -381,6 +381,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScanResult"
 
+  /lights:
+    get:
+      tags: [cabinet]
+      summary: Runtime brightness state
+      description: |
+        A brightness override held in memory. Not the config: not
+        written to flash, not in the menu, and gone on a restart.
+
+        That is the point of it, and why it is an endpoint rather than
+        a menu row. A knob gesture or a URL that quietly edited
+        `led.brightnessPct` would need a save, a prompt and an undo,
+        and "turn it off for the evening" deserves none of that.
+      responses:
+        "200":
+          description: Current state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  brightness: { type: integer, example: 100, description: The level in use right now. }
+                  configBrightness: { type: integer, example: 100, description: What `led.brightnessPct` says. }
+                  override: { type: integer, example: -1, description: -1 when following the config. }
+                  nightMode: { type: boolean, example: false, description: True when the override is 0. }
+                  persisted: { type: boolean, example: false, description: Always false. A runtime level is never written to flash. }
+      examples:
+        followingConfig:
+          summary: Undimmed
+          value: { brightness: 100, configBrightness: 100, override: -1, nightMode: false, persisted: false }
+        dimmedForTheEvening:
+          summary: Overridden, not saved
+          value: { brightness: 0, configBrightness: 100, override: 0, nightMode: true, persisted: false }
+
+  /lights/on:
+    get:
+      tags: [cabinet]
+      summary: Drop the override, follow the config again
+      description: |
+        Equivalent to setting the override to -1. The cabinet returns
+        to whatever `led.brightnessPct` says.
+      responses:
+        "200": { description: OK }
+
+  /lights/off:
+    get:
+      tags: [cabinet]
+      summary: The same as brightness 0
+      responses:
+        "200": { description: OK }
+
+  /lights/brightness:
+    get:
+      tags: [cabinet]
+      summary: Set a runtime brightness level
+      description: |
+        `GET /lights/brightness/<n>` for an integer 0 to 100. The level
+        is the rest of the path, so this is not a query parameter and
+        not a range.
+
+        Out of range is a 400 rather than a clamp, which is the
+        opposite of what the *config* field does and on purpose: this
+        is a command from something that is probably a script, and a
+        script sending 1000 has a bug worth surfacing rather than
+        absorbing.
+      parameters:
+        - name: level
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200": { description: OK }
+        "400": { description: Level outside 0..100 }
+
   /factory-reset:
     get:
       tags: [admin]

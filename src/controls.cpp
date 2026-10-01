@@ -118,6 +118,48 @@ static retroroom_core::MenuState menuState;
 // ask for.
 static uint32_t settleLockoutUntilMs = 0;
 
+// ---- double-click: the lights ----
+//
+// How close together two presses have to be. 300 ms is the usual
+// double-click window and is comfortably under the 900 ms hold, so the
+// two gestures cannot overlap. It is a guess in the sense that every
+// double-click window is; it is worth setting by feel.
+constexpr uint32_t kDoubleClickMs = 300;
+
+// millis() of the previous press, or 0 when there is no pending first
+// press. 0 rather than a bool so "no press pending" and "pressed at
+// boot" cannot be confused -- the wrap-safe comparison below would
+// otherwise treat a press at millis()==0 as an enormous age.
+uint32_t lastPressAtMs = 0;
+// Set by any detent the browse actually processes, and cleared by
+// every press. The double-click's "no turns in between" test.
+bool knobTurnedSincePress = false;
+
+// Turn the lights off, or back to whatever the config says.
+//
+// A brightness override in memory, not a config change: not written to
+// flash, not in the menu, gone on restart. That is deliberate and it
+// is the whole reason this is not just `led.brightnessPct = 0` -- a
+// knob gesture that quietly edits the operator's config would need a
+// save, a prompt, and a way to undo it, and "turn it off for the
+// evening" deserves none of that.
+//
+// The strip is resting whenever the cabinet is idle, and
+// ledstring_loop() is a no-op while it rests -- by design, because
+// re-sending an unchanged frame forever is time taken from the
+// network and the ring. So a level change has to ask for a repaint
+// explicitly, exactly as a menu preview does, or the strip would stay
+// at the old brightness until something else happened to move it.
+void toggleNightMode() {
+	const bool turningOff = lightBrightnessOverridePct() != 0;
+	setLightBrightnessOverride(turningOff ? -1 : 0);
+	ledstring_repaint();
+	Serial.print("lights: ");
+	Serial.print(turningOff ? "off" : "following config");
+	Serial.print(", effective brightness ");
+	Serial.println(lightBrightnessPct());
+}
+
 namespace {
 // The ring's free-running spinner: the only thing that answers a turn
 // the browse is not going to act on.
@@ -255,6 +297,33 @@ void controls_init() {
 
 
 void rotarySelectorPressed() {
+	// A double-click turns the lights off, and on again.
+	//
+	// "No turns in between" is not a detail of the gesture, it is the
+	// gesture. Turning the knob is how the operator browses, and a
+	// browse that happens to end in two quick presses is a commit and
+	// a second commit, not a request to go dark. The condition is what
+	// keeps "browse then press twice" from dimming the room.
+	//
+	// Only the *second* press is consumed. The first does what a press
+	// does, because deferring it to see whether a second press is
+	// coming would add the double-click window's latency to every
+	// commit on the cabinet -- and a click that lands a third of a
+	// second late is a click that feels broken.
+	//
+	// The press arrives on *release*, so a long press is one press
+	// event and cannot be a double-click by construction. The window
+	// is well under the 900 ms hold anyway.
+	if (!knobTurnedSincePress && lastPressAtMs != 0 &&
+	    (uint32_t)(millis() - lastPressAtMs) < kDoubleClickMs) {
+		lastPressAtMs = 0;  // a third press starts a new pair
+		toggleNightMode();
+		Serial.println("rotary: double-click -- lights toggled");
+		return;
+	}
+	lastPressAtMs = millis();
+	knobTurnedSincePress = false;
+
 	// The config menu owns the click while it is open -- it opens the
 	// editor, or commits the one being edited, or leaves on "Go Back".
 	// Returning here is the whole point: a click that reached
@@ -571,6 +640,11 @@ void touchReleaseDetected() {
 
 
 void rotaryEncoderTick() {
+	// Any detent at all counts as "the operator turned the knob", which
+	// is all the double-click needs to know. Deliberately not "the
+	// browse acted on it": a turn that the gate swallowed still
+	// happened, and the operator still turned the thing.
+	knobTurnedSincePress = true;
 	static int pos = 0;
 
 	encoder->tick(); // just call tick() to check the state.

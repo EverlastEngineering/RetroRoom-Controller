@@ -80,6 +80,14 @@ not get it.
   fight. Turning a console off and on should return to the config's
   value, not to the override's.
 
+**The web API needs a network.** `GET /lights`, `/lights/off`,
+`/lights/on` and `/lights/brightness/<n>` are only reachable once the
+cabinet has joined one. The device is currently in factory state with
+no credentials, so `SETUP WIFI` (serial) or the captive portal has to
+come first. The double-click works with no network at all, which is
+worth checking too — the whole point of a runtime override is that it
+needs nothing configured.
+
 ## 4. Also worth a look, from earlier in this work
 
 - **A save that needs a restart now restarts on its own.** Turn a
@@ -99,3 +107,25 @@ not get it.
 - **The factory-reset page** claims it erases the config, the
   credentials and the selection. It now does all three plus both
   backups. Confirm the page text and the behaviour agree.
+
+## Known gaps in what was built, on purpose
+
+So none of these reads as an oversight discovered later:
+
+- **The LCD backlight is not affected by night mode.** Only the LED
+  string and the ring. The backlight is the other thing that lights a
+  dark room, and it has its own setting
+  (`lcd.backlightOffAfterMs`, which `0` turns off permanently), so
+  there is already a config-level answer if you want one.
+- **The IR blaster is not affected.** Switching the TV is the
+  cabinet's job regardless of what the room looks like.
+- **The on-board status LED is not affected.** It is a status
+  indicator, and its three cadences already mean three different
+  things.
+- **Night mode is not in the menu**, by design. A menu row for it
+  would mean a save, and the whole point is that it is temporary. It
+  is in the API instead, and on the knob as a double-click.
+- **The serial channel does not have it.** The user asked for this
+  explicitly: serial is for configuration, not runtime operation, and
+  a runtime verb there would be the first step towards it becoming a
+  second remote control.

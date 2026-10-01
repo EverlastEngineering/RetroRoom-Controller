@@ -70,6 +70,31 @@ extern bool showWifiConnectionFailureMessage;
 // RAM-only -- reloaded on every boot.
 extern bool networkDisabled;
 
+// The brightness the LEDs are actually using, right now: the runtime
+// override if there is one, otherwise the config's
+// `led.brightnessPct`.
+//
+// This is the only function src/lighting.cpp and src/ledstring.cpp
+// should ask about brightness. They used to read `ledFeel.brightnessPct`
+// directly, which is fine until something needs to change the level
+// without changing the config -- at which point every writer of pixels
+// is a second place to remember, and the strip and the ring disagree
+// the moment one of them is missed.
+
+// -1 means "no override": follow the config. 0..100 is a temporary
+// level that is not saved, not in the menu, and gone on restart.
+// That is the whole point: a "turn the lights off for the evening"
+// must not become a config change nobody asked for, and must not come
+// back by itself after a power cut.
+//
+// Clamped to 0..100 rather than refused, so a caller that computes a
+// level cannot put the LEDs somewhere the config could not have asked
+// for.
+extern int lightBrightnessPct();
+extern void setLightBrightnessOverride(int pct);
+// The raw override, for reporting. -1 when following the config.
+extern int lightBrightnessOverridePct();
+
 void addConsole(const Console& console);
 int HowManyConsoles();
 const Console& CurrentConsole();

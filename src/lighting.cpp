@@ -74,14 +74,14 @@ static bool hasPushed = false;
 
 namespace {
 
-// led.brightnessPct as a FastLED scale.
+// led.brightnessPct as a FastLED scale, with any runtime override on
+// top.
 //
 // Read live and pushed on a change, not configured once at init. A
-// cached copy of a ledFeel value is a value the config menu cannot
-// change -- the same mistake as the browse gate's detent thresholds,
-// and the reason those now arrive per call.
-// led.brightnessPct as a 0..255 multiplier, applied to the pixels this
-// file writes.
+// cached copy of a brightness is a brightness nothing can change --
+// the same mistake as the browse gate's detent thresholds, and the
+// reason those now arrive per call. It is a 0..255 multiplier, applied
+// to the pixels this file writes.
 //
 // It is deliberately NOT FastLED's setBrightness(). That sets one
 // global mScale which the RP2040 PIO backend does not appear to
@@ -91,7 +91,8 @@ namespace {
 // particular backend happens to treat mScale.
 uint8_t ledBrightnessScale() {
 	return static_cast<uint8_t>(
-		(static_cast<uint32_t>(255) * static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
+		(static_cast<uint32_t>(255) *
+		 static_cast<uint32_t>(lightBrightnessPct())) / 100u);
 }
 
 // The config's `led` block as the core wants it. Read fresh on every use

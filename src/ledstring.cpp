@@ -274,9 +274,16 @@ void pushFrame(const retroroom_core::StripFrame& frame) {
 	// established is preserved and only the overall level moves. See
 	// ledBrightnessScale() in src/lighting.cpp for why this is not
 	// FastLED's setBrightness().
+	//
+	// lightBrightnessPct() rather than ledFeel.brightnessPct, so a
+	// runtime override reaches the strip as well as the ring. Reading
+	// it here, at the point the levels become pixels, is also why a
+	// commit animation under night mode cannot flash: every pixel of
+	// the burst goes through this multiplier, so there is no window in
+	// which the cabinet writes at full brightness.
 	const uint8_t scale = static_cast<uint8_t>(
 		(static_cast<uint32_t>(255) *
-		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
+		 static_cast<uint32_t>(lightBrightnessPct())) / 100u);
 	for (int i = 0; i < ledFeel.totalLeds; ++i) {
 		const retroroom_core::LedColor c = retroroom_core::resolvePixel(frame, px[i]);
 		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r * scale / 255),
