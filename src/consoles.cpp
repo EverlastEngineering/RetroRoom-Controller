@@ -102,37 +102,21 @@ bool showWifiConnectionFailureMessage = true;
 // that the operator asked for.
 bool networkDisabled = false;
 
-// A brightness chosen at runtime, overriding `led.brightnessPct`.
-// sNoOverride means "no override": use the config.
-//
-// Deliberately NOT a LedFeel field. `led.brightnessPct` is a config
-// setting, it is in the menu, it is saved on Save and it survives a
-// restart -- and a temporary "turn the lights off for the evening"
-// must do none of those. Putting the override in the config would
-// mean a menu that quietly writes a file, and a brightness that came
-// back on its own after a power cut.
-//
-// Separate from `ledFeel` on purpose, and read live rather than
-// cached, for the same reason the config value is: a cached copy of a
-// brightness is a brightness the config menu cannot change.
-constexpr int sNoOverride = -1;
-int sLightBrightnessOverridePct = sNoOverride;
+// Night mode. See the declaration in this header for why this is not
+// a brightness override -- it used to be one, and scaling the whole
+// strip to zero also scaled away the browse and the commit animation,
+// which are the parts of the cabinet you need to see when you are
+// using it.
+static bool sNightMode = false;
 
-int lightBrightnessPct() {
-	return sLightBrightnessOverridePct >= 0 ? sLightBrightnessOverridePct
-	                                        : ledFeel.brightnessPct;
+bool nightMode() {
+	return sNightMode;
 }
 
-void setLightBrightnessOverride(int pct) {
-	// sNoOverride clears the override; anything else is a 0..100 level,
-	// clamped rather than refused, so a caller that computes one cannot
-	// put the LEDs into a state the config could not have asked for.
-	sLightBrightnessOverridePct = (pct < 0) ? sNoOverride : (pct > 100 ? 100 : pct);
+void setNightMode(bool on) {
+	sNightMode = on;
 }
 
-int lightBrightnessOverridePct() {
-	return sLightBrightnessOverridePct;
-}
 std::vector<Console> consoles;
 // The shelf extents from the config's optional `shelves` block. Empty
 // is the normal case and is not an error.

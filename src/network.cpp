@@ -768,81 +768,50 @@ static void onConsolesJsonGet(AsyncWebServerRequest* req) {
 
 // /lights -- runtime brightness.
 //
-// A brightness override held in memory. Not the config: not written to
-// flash, not in the menu, gone on a restart. That is the whole point,
-// and it is why this is an endpoint rather than a menu row -- a knob
-// gesture or a URL that quietly edited `led.brightnessPct` would need
-// a save, a prompt and an undo, and "turn it off for the evening"
-// deserves none of that.
+// Night mode, held in memory. Not the config: not written to flash, not
+// in the menu, gone on a restart. That is the whole point, and it is
+// why this is an endpoint rather than a menu row -- a knob gesture or
+// a URL that quietly edited `led.colors.selected` would need a save, a
+// prompt and an undo, and "turn it off for the evening" deserves none
+// of that.
 //
-// Three shapes, matching the plainness of the rest of the API:
-//   GET /lights                     the state, as JSON
-//   GET /lights/on                  follow the config again
-//   GET /lights/off                 the same as brightness 0
-//   GET /lights/brightness/<0-100>  a level, clamped
+// Two shapes, matching the plainness of the rest of the API:
+//   GET /lights       the state, as JSON
+//   GET /lights/on    night mode on -- the resting selection goes dark
+//   GET /lights/off   night mode off -- back to the configured colours
+//
+// There is no /lights/brightness/<n> and there should not be. It came
+// with the brightness override this replaced, and it was asking the
+// wrong question: a level is a *config* setting (`led.brightnessPct`),
+// and a config setting that a URL can change behind the config menu's
+// back is a second writer for one number.
 //
 // Deliberately absent from the serial channel. That channel is for
 // configuration; a runtime operation on it would be the first step
 // towards it being a second remote control.
 static void onLightsGet(AsyncWebServerRequest* req) {
-	String out = "{\"brightness\":";
-	out += String((unsigned)lightBrightnessPct());
-	out += ",\"configBrightness\":";
+	String out = "{\"nightMode\":";
+	out += nightMode() ? "true" : "false";
+	out += ",\"brightness\":";
 	out += String((unsigned)ledFeel.brightnessPct);
-	// -1 when following the config, which is the case a client most
-	// often wants to distinguish: "is this cabinet dim because it is
-	// configured dim, or because somebody dimmed it?"
-	out += ",\"override\":";
-	out += String((int)lightBrightnessOverridePct());
-	out += ",\"nightMode\":";
-	out += (lightBrightnessOverridePct() == 0) ? "true" : "false";
 	out += ",\"persisted\":false}";
 	req->send(200, "application/json", out);
 }
 
-static void setLightsOverride(int pct) {
-	setLightBrightnessOverride(pct);
+static void onLightsOn(AsyncWebServerRequest* req) {
+	setNightMode(true);
 	// The strip is idle most of the time and ledstring_loop() does
 	// nothing while it rests, so without this the change would not
-	// appear until something else happened to move the strip. The ring
-	// is read live and needs nothing -- it is only ever lit by a touch
-	// or a commit, and picks the new level up when it next is.
+	// appear until something else happened to move the strip.
 	ledstring_repaint();
-	Serial.print("lights: brightness ");
-	Serial.print(lightBrightnessPct());
-	Serial.print(" (override ");
-	Serial.print((int)lightBrightnessOverridePct());
-	Serial.println(")");
-}
-
-static void onLightsOn(AsyncWebServerRequest* req) {
-	setLightsOverride(-1);
+	Serial.println("lights: night mode on");
 	req->send(200, "application/json", "OK\n");
 }
 
 static void onLightsOff(AsyncWebServerRequest* req) {
-	setLightsOverride(0);
-	req->send(200, "application/json", "OK\n");
-}
-
-static void onLightsBrightness(AsyncWebServerRequest* req) {
-	// /lights/brightness/<n>. The number is the rest of the path, so
-	// this cannot be a query parameter and cannot be a range -- a bad
-	// value clamps rather than 404s, matching the config field's own
-	// 0..100 clamp.
-	const String tail = req->url();
-	const int slash = tail.lastIndexOf('/');
-	if (slash < 0) {
-		req->send(400, "application/json", "{\"error\":\"expected a level\"}\n");
-		return;
-	}
-	const long value = atol(tail.c_str() + slash + 1);
-	if (value < 0 || value > 100) {
-		req->send(400, "application/json",
-		          "{\"error\":\"level must be 0 to 100\"}\n");
-		return;
-	}
-	setLightsOverride(static_cast<int>(value));
+	setNightMode(false);
+	ledstring_repaint();
+	Serial.println("lights: night mode off");
 	req->send(200, "application/json", "OK\n");
 }
 
@@ -882,7 +851,6 @@ static void startStaServer() {
 	server.on("/lights", HTTP_GET, onLightsGet);
 	server.on("/lights/on", HTTP_GET, onLightsOn);
 	server.on("/lights/off", HTTP_GET, onLightsOff);
-	server.on("/lights/brightness", HTTP_GET, onLightsBrightness);
 
 	// /consoles.json GET: route registration. The handler itself
 	// (onConsolesJsonGet) lives in the STA-mode section above so

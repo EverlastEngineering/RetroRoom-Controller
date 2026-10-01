@@ -201,35 +201,31 @@ void loop() {
 	// Track the rotary encoder for console switching.
 	rotaryEncoderTick();
 
-	// Pump the deferred-button ISRs. The actual EasyButton::read()
-	// (which may invoke the _pressed_callback synchronously) is
-	// called here in loop() context, NOT in the ISR, so the
-	// callback chain -- which drives the latch, the LCD, the IR
-	// blaster, and FastLED -- never runs with interrupts blocked.
-	// Doing it in the ISR starved the CYW43 WiFi driver and surfaced
-	// as a 1-2 s stall on every rotary click.
-	if (hasRotarySelectorInterruptFired) {
-		hasRotarySelectorInterruptFired = false;
-		rotarySelector.read();
-	}
-	// EasyButton::update(), which is what drives onPressedFor() -- the
-	// long press that opens the config menu.
+	// The rotary selector is POLLED, every tick, unconditionally.
 	//
-	// It has to be here rather than inside the block above, and that is
-	// not a style choice. enableInterrupt() switches the button to
-	// EASYBUTTON_READ_TYPE_INTERRUPT, and in that mode read() stops
-	// calling the held-time check entirely -- update() is the only thing
-	// that does, and the library says so: "only needed when using
-	// interrupts". The ISR fires on CHANGE, so it fires on the press and
-	// the release and *nothing in between*: hold the knob for a second
-	// and no further interrupt arrives, so a pump inside the block
-	// would run once at the press and never again, and the long press
-	// could never fire at all. That is exactly what happened.
+	// Two reasons, and the second is the one that matters.
 	//
-	// It is cheap and idempotent -- a millis() comparison when the
-	// button is up -- and the callback is guarded by _held_callback_called,
-	// so calling it every tick fires the hold exactly once per press.
-	rotarySelector.update();
+	// First, the callback chain this read() can invoke drives the
+	// latch, the LCD, the IR blaster and FastLED, so it must not run
+	// with interrupts blocked. It used to be deferred out of the ISR
+	// into a flag for exactly that reason; polling reaches loop()
+	// context without the flag.
+	//
+	// Second, and this is the bug it fixes: in interrupt mode the
+	// library reads the pin only when the ISR says it changed, and its
+	// read() discards any change arriving within the debounce window
+	// of the previous one. With a CHANGE interrupt nothing else will
+	// report that transition, so the edge is gone. When the edge lost
+	// is the release, the library still believes the knob is held and
+	// fires the 900 ms long-press callback with it up -- the config
+	// menu, opening itself during a fast double-click. POLL mode
+	// re-reads every tick and simply picks the change up on the next
+	// one, so nothing is lost. See the long version in
+	// src/controls.cpp::controls_init().
+	//
+	// No update() call alongside it: in POLL mode read() itself drives
+	// the onPressedFor held-time check.
+	rotarySelector.read();
 	if (hasNextConsoleInterruptFired) {
 		hasNextConsoleInterruptFired = false;
 		nextConsoleButton.read();

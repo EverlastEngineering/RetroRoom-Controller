@@ -44,57 +44,72 @@ the screen said.
 
 ## 3. Night mode: double-click the encoder
 
-**What changed:** a brightness *override* in memory, toggled by a
-double-click of the encoder with no turning in between, and by
-`/lights/*` over HTTP. Not saved, not in the menu, gone on restart.
+**What changed:** a flag in memory that paints the *selected* console's
+window black. Toggled by a double-click of the encoder with no turning
+in between, and by `/lights/on` / `/lights/off` over HTTP. Not saved,
+not in the menu, gone on restart.
 
-> **This is not the night mode in
-> `todo/open/2026-09-30_night-mode.md`,** which asked for something
-> different and is still open. That note wanted a *persisted*
-> `led.nightMode`, affecting only the resting selected window, with
-> browsing still fully visible. What shipped is a temporary global
-> level, chosen later and deliberately simplified to "brightness 0" in
-> a dark room. The open question from the original note — should
-> browsing stay bright while the selected window is dark? — is
-> unanswered and is a real difference, not a detail.
+**It used to be a brightness override and that was wrong.** Scaling
+every pixel to zero also scaled away the browse, the travel and the
+commit animation — the parts of the cabinet you need to see when you
+are using it. Setting `led.colors.selected` to `[0,0,0]` by hand does
+exactly the right thing, so that is what the gesture does now, in
+memory. It is also the question `todo/open/2026-09-30_night-mode.md`
+left open: **yes, browsing stays bright while the selected window is
+dark.** That note is still open for the other half of its idea —
+persistence, a `led.nightMode` config field and a menu row.
 
 **Acceptance:**
-- Double-click with the knob still: the strip and the ring go dark.
-  Double-click again: they come back at the brightness the config says.
+- Double-click with the knob still: the resting strip goes dark.
+  Double-click again: it comes back at the colours the config says.
 - Turn the knob at all, then double-click: the lights should **not**
   toggle. That "no turns in between" condition is the whole point of
   the gesture and it is the part most likely to be wrong.
-- Select a console while the lights are off: the strip must stay off.
-  Turning a knob is a browse gesture, and the override must survive
-  it.
-- `GET /lights` reports the state, and setting brightness over HTTP
-  changes it. Restart: back to the config's value, with no file
-  changed and nothing to undo.
-- Commit a console with the lights off. **This is the one to watch:**
-  the commit animation is a burst of FastLED writes, and if the
-  override is applied before them rather than after, the cabinet
-  flashes for a moment on every selection.
+- With the strip dark, browse to another console: the browse and the
+  preview **must still light up**. That is the whole difference from
+  the old override, so it is the thing to check first.
+- Restart: back to the config's colours, with no file changed and
+  nothing to undo.
+- A double-click must **not** change the selected console. Only the
+  first press of the pair commits; the second does nothing except
+  toggle. If the cabinet re-fires IR and plays the commit animation on
+  the second press, the guard in `rotarySelectorPressed()` is wrong.
 
 **Watch out for:**
-- The two presses must be within the double-click window *and* the
-  encoder must not have moved since the first. A fast browse that ends
-  in two quick presses will otherwise look like a double-click.
+- **The double-click itself was broken and the cause was not the
+  gesture.** The rotary selector was on EasyButton's interrupt mode,
+  and in that mode `read()` throws away any pin change that arrives
+  within the debounce window of the previous one — and because the ISR
+  is what triggers `read()`, a thrown-away edge is never seen again.
+  Losing the *release* leaves the library believing the knob is still
+  down, so `update()` fires the 900 ms long-press callback with the
+  knob up: the menu opened by itself. The selector is now polled every
+  loop tick, which loses nothing. So: **try the double-click fast,
+  slowly, and with a very short gap between the two presses** — the
+  fast case is the one that used to fail.
 - Long press is already a gesture (it opens the menu). A long press
-  must not also count as a double-click.
-- The ring and the strip are driven from different places. Verify
-  *both* go dark, and that the on-board status LED does not — it is a
-  status indicator, not part of the show.
-- A brightness override and a config `brightnessPct` change must not
-  fight. Turning a console off and on should return to the config's
-  value, not to the override's.
+  must not also count as a double-click, and a double-click must not
+  open the menu.
+- The ring is **not** affected by night mode. It follows
+  `led.brightnessPct` like everything else. Reach for the knob in the
+  dark and the ring still comes on — which is intentional, since the
+  ring is the affordance that says the knob is there. Flag it if you
+  disagree.
+- The on-board status LED does not change either.
 
-**The web API needs a network.** `GET /lights`, `/lights/off`,
-`/lights/on` and `/lights/brightness/<n>` are only reachable once the
-cabinet has joined one. The device is currently in factory state with
-no credentials, so `SETUP WIFI` (serial) or the captive portal has to
-come first. The double-click works with no network at all, which is
-worth checking too — the whole point of a runtime override is that it
-needs nothing configured.
+**The web API needs a network.** `GET /lights`, `/lights/off` and
+`/lights/on` are only reachable once the cabinet has joined one. The
+device is currently in factory state with no credentials, so
+`SETUP WIFI` (serial) or the captive portal has to come first. The
+double-click works with no network at all, which is worth checking
+too — the whole point of a runtime mode is that it needs nothing
+configured.
+
+`GET /lights/brightness/<n>` is **gone**, deliberately. A level is a
+config setting (`led.brightnessPct`); a URL that can change it behind
+the config menu's back is a second writer for one number. It was
+removed with the override it came with, so if anything still calls it,
+it will 404.
 
 ## 4. Also worth a look, from earlier in this work
 
@@ -121,10 +136,15 @@ needs nothing configured.
 So none of these reads as an oversight discovered later:
 
 - **The LCD backlight is not affected by night mode.** Only the LED
-  string and the ring. The backlight is the other thing that lights a
-  dark room, and it has its own setting
-  (`lcd.backlightOffAfterMs`, which `0` turns off permanently), so
-  there is already a config-level answer if you want one.
+  string. The backlight is the other thing that lights a dark room,
+  and it has its own setting (`lcd.backlightOffAfterMs`, which `0`
+  turns off permanently), so there is already a config-level answer if
+  you want one.
+- **The ring is not affected by night mode.** It follows
+  `led.brightnessPct`, on the grounds that a hand reaching for the
+  knob in the dark wants the ring to come on. The original note asked
+  whether it should; this is the answer, and it is a judgement call
+  rather than a fact.
 - **The IR blaster is not affected.** Switching the TV is the
   cabinet's job regardless of what the room looks like.
 - **The on-board status LED is not affected.** It is a status

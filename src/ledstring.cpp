@@ -120,6 +120,12 @@ retroroom_core::RolePalette buildPalette() {
 	p.colors[static_cast<int>(retroroom_core::LedRole::PROPOSAL)] = {
 		ledFeel.colorR[retroroom_core::kRoleProposal], ledFeel.colorG[retroroom_core::kRoleProposal],
 		ledFeel.colorB[retroroom_core::kRoleProposal]};
+	// The selected role's colour is straight from the config, night
+	// mode or not. The palette says what a role *is*; night mode is a
+	// statement about what the strip shows right now, so it rides on
+	// the frame (StripFrame::nightMode) and the core applies it. Doing
+	// it here would have been one line too, and needed hardware to
+	// check.
 	p.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] = {
 		ledFeel.colorR[retroroom_core::kRoleSelected], ledFeel.colorG[retroroom_core::kRoleSelected],
 		ledFeel.colorB[retroroom_core::kRoleSelected]};
@@ -275,15 +281,13 @@ void pushFrame(const retroroom_core::StripFrame& frame) {
 	// ledBrightnessScale() in src/lighting.cpp for why this is not
 	// FastLED's setBrightness().
 	//
-	// lightBrightnessPct() rather than ledFeel.brightnessPct, so a
-	// runtime override reaches the strip as well as the ring. Reading
-	// it here, at the point the levels become pixels, is also why a
-	// commit animation under night mode cannot flash: every pixel of
-	// the burst goes through this multiplier, so there is no window in
-	// which the cabinet writes at full brightness.
+	// Read live, and read the config directly: this used to go through
+	// a runtime override accessor, which made "night mode" a scale on
+	// every pixel. Night mode is a palette question now (buildPalette
+	// blacks the SELECTED role), so this scale has one input again.
 	const uint8_t scale = static_cast<uint8_t>(
 		(static_cast<uint32_t>(255) *
-		 static_cast<uint32_t>(lightBrightnessPct())) / 100u);
+		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
 	for (int i = 0; i < ledFeel.totalLeds; ++i) {
 		const retroroom_core::LedColor c = retroroom_core::resolvePixel(frame, px[i]);
 		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r * scale / 255),
@@ -344,6 +348,7 @@ retroroom_core::StripFrame baseFrame() {
 	// whole distinction the role exists for.
 	f.activeWindow = windowFor(currentConsoleIndex);
 	f.palette = buildPalette();
+	f.nightMode = nightMode();
 	f.pulseMinPct = ledFeel.pulseMinPct;
 	f.pulseMaxPct = ledFeel.pulseMaxPct;
 	f.pulsePeriodMs = ledFeel.pulseMs;

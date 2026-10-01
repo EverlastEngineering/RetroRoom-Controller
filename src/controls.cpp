@@ -76,7 +76,9 @@ EasyButton prevConsoleButton(PREV_CONSOLE_PIN);
 // from inside the interrupt handler -- symptom was a 1-2 s stall on
 // every rotary click that propagated randomly to any of the
 // loop() handlers because the recovery happened off-loop.
-volatile bool hasRotarySelectorInterruptFired = false;
+//
+// The rotary selector has no flag here: it is polled. See the comment
+// in controls_init() for why interrupt mode was losing clicks on it.
 volatile bool hasNextConsoleInterruptFired = false;
 volatile bool hasPrevConsoleInterruptFired = false;
 
@@ -120,44 +122,74 @@ static uint32_t settleLockoutUntilMs = 0;
 
 // ---- double-click: the lights ----
 //
-// How close together two presses have to be. 300 ms is the usual
-// double-click window and is comfortably under the 900 ms hold, so the
-// two gestures cannot overlap. It is a guess in the sense that every
-// double-click window is; it is worth setting by feel.
+// EasyButton has all three of the knob's gestures and controls_init()
+// registers all three: onPressed for a click, onSequence(2, ...) for
+// this one, onPressedFor(900, ...) for the long press that opens the
+// menu. The library owns the timing; nothing here counts presses.
+//
+// The window has to sit under the 900 ms hold or the two gestures
+// overlap. 300 ms is the usual double-click window.
 constexpr uint32_t kDoubleClickMs = 300;
 
 // millis() of the previous press, or 0 when there is no pending first
 // press. 0 rather than a bool so "no press pending" and "pressed at
-// boot" cannot be confused -- the wrap-safe comparison below would
-// otherwise treat a press at millis()==0 as an enormous age.
+// boot" cannot be confused -- the wrap-safe comparison would otherwise
+// treat a press at millis()==0 as an enormous age.
+//
+// This is NOT the double-click detector. onSequence() is. This is here
+// for the one thing the library cannot do: EasyButton announces the
+// press that completes a pair and the pair itself from the *same*
+// release, press callback first, so by the time anything knows a pair
+// was involved the press has already committed. Suppressing that
+// commit -- so that going dark does not also re-fire IR, re-run the
+// stack selector and play the commit animation -- has to be decided in
+// the press handler, which is therefore the only place that can
+// decide it. If this number were wrong the lights would still work;
+// only a stray commit would come with them.
 uint32_t lastPressAtMs = 0;
+
 // Set by any detent the browse actually processes, and cleared by
-// every press. The double-click's "no turns in between" test.
+// every press. The double-click's "no turns in between" test: turning
+// the knob is how the operator browses, and a browse that happens to
+// end in two quick presses is a commit and a second commit, not a
+// request to go dark.
 bool knobTurnedSincePress = false;
 
-// Turn the lights off, or back to whatever the config says.
-//
-// A brightness override in memory, not a config change: not written to
-// flash, not in the menu, gone on restart. That is deliberate and it
-// is the whole reason this is not just `led.brightnessPct = 0` -- a
-// knob gesture that quietly edits the operator's config would need a
-// save, a prompt, and a way to undo it, and "turn it off for the
-// evening" deserves none of that.
+// A copy of knobTurnedSincePress taken by the press handler, because
+// doubleClicked() runs *after* it on the same release and the live flag
+// has already been cleared by then.
+static bool doubleClickHadTurn = false;
+
+// Night mode on or off. See src/consoles.h for what it is and is not.
 //
 // The strip is resting whenever the cabinet is idle, and
 // ledstring_loop() is a no-op while it rests -- by design, because
 // re-sending an unchanged frame forever is time taken from the
-// network and the ring. So a level change has to ask for a repaint
+// network and the ring. So a palette change has to ask for a repaint
 // explicitly, exactly as a menu preview does, or the strip would stay
-// at the old brightness until something else happened to move it.
+// on the old colours until something else happened to move it.
 void toggleNightMode() {
-	const bool turningOff = lightBrightnessOverridePct() != 0;
-	setLightBrightnessOverride(turningOff ? -1 : 0);
+	setNightMode(!nightMode());
 	ledstring_repaint();
-	Serial.print("lights: ");
-	Serial.print(turningOff ? "off" : "following config");
-	Serial.print(", effective brightness ");
-	Serial.println(lightBrightnessPct());
+	Serial.print("lights: night mode ");
+	Serial.println(nightMode() ? "on" : "off");
+}
+
+// A double-click on the knob: night mode on, or off again.
+//
+// Reached from rotarySelector.onSequence(2, kDoubleClickMs, ...), which
+// is the library's own double-click detector and the reason there is no
+// press counting in this file.
+void doubleClicked() {
+	// A pair with a detent in the middle is a browse that happened to
+	// end in two quick clicks, not a request to go dark. Both presses
+	// have already committed by now -- see rotarySelectorPressed().
+	if (doubleClickHadTurn) {
+		Serial.println("rotary: double-click ignored; the knob turned between the presses");
+		return;
+	}
+	toggleNightMode();
+	Serial.println("rotary: double-click");
 }
 
 namespace {
@@ -227,6 +259,10 @@ void controls_init() {
 	// rotary clicker
 	rotarySelector.begin();
 	rotarySelector.onPressed(rotarySelectorPressed);
+	// A double-click is night mode. onSequence(2, ...) counts releases
+	// and fires when the second lands inside the window, which is the
+	// detector this gesture used to hand-roll and get wrong.
+	rotarySelector.onSequence(2, kDoubleClickMs, doubleClicked);
 	// Long press opens the config menu. onPressedFor() fires once the
 	// button has been *held* for the duration, so it cannot be confused
 	// with a click -- which matters, because a click is already "commit
@@ -236,13 +272,40 @@ void controls_init() {
 	// 900 ms is a guess and should be set by feel. It has to be long
 	// enough that a deliberate press-and-turn is never mistaken for a
 	// hold, and short enough that opening the menu does not feel like
-	// waiting. The dead double-click registration that used to sit here
-	// is gone; see sequenceElapsed(), which now does the menu.
+	// waiting.
 	rotarySelector.onPressedFor(900, sequenceElapsed);
-	if (rotarySelector.supportsInterrupt()) {
-		rotarySelector.enableInterrupt(rotarySelectorISR);
-		Serial.println("Button will be used through interrupts");
-	}
+
+	// DELIBERATELY NOT enableInterrupt(), which this button used to
+	// use. It lost clicks, and losing them looked like a bug in the
+	// gesture rather than in the wiring.
+	//
+	// In interrupt mode the library only reads the pin when the ISR
+	// says it changed, and its read() throws away any change that
+	// arrives within the debounce window of the previous one
+	// (EasyButton.h: `if (read_started_ms - _last_change < _db_time)
+	// _changed = false;`). With a CHANGE interrupt the edge is
+	// consumed and no further interrupt comes for that transition, so
+	// a dropped edge is dropped for good -- the next read() finds the
+	// pin in the state the library already thinks it is in.
+	//
+	// Losing the *release* is the expensive case. _current_state stays
+	// true with _last_change still at the press, and update() (called
+	// every loop tick) then finds the button "held" 900 ms later and
+	// fires the onPressedFor callback with the knob physically up.
+	// That is the menu opening by itself on a fast double-click: not
+	// the double-click being slow, the release being eaten.
+	//
+	// POLL mode re-reads the pin on every call, so a change lost to
+	// the debounce is picked up on the next tick and nothing is lost.
+	// read() runs from loop() here for the same reason it always did:
+	// the callback chain drives the latch, the LCD, the IR blaster and
+	// FastLED, and running that from an ISR starved the CYW43 WiFi
+	// driver for a second or two. Polling has no such problem -- it is
+	// the same context the deferred flag was invented to reach.
+	//
+	// The next/prev buttons still use interrupts, and correctly: a
+	// missed press there costs one console step, and they are read
+	// through the same debounce.
 
 	// touch sensor -- PROXIMITY ONLY, never a console selection.
 	//
@@ -297,13 +360,9 @@ void controls_init() {
 
 
 void rotarySelectorPressed() {
-	// A double-click turns the lights off, and on again.
-	//
-	// "No turns in between" is not a detail of the gesture, it is the
-	// gesture. Turning the knob is how the operator browses, and a
-	// browse that happens to end in two quick presses is a commit and
-	// a second commit, not a request to go dark. The condition is what
-	// keeps "browse then press twice" from dimming the room.
+	// The completing half of a double-click does not commit. See
+	// lastPressAtMs above for why this has to be answered here rather
+	// than left to the library.
 	//
 	// Only the *second* press is consumed. The first does what a press
 	// does, because deferring it to see whether a second press is
@@ -314,15 +373,20 @@ void rotarySelectorPressed() {
 	// The press arrives on *release*, so a long press is one press
 	// event and cannot be a double-click by construction. The window
 	// is well under the 900 ms hold anyway.
-	if (!knobTurnedSincePress && lastPressAtMs != 0 &&
-	    (uint32_t)(millis() - lastPressAtMs) < kDoubleClickMs) {
-		lastPressAtMs = 0;  // a third press starts a new pair
-		toggleNightMode();
-		Serial.println("rotary: double-click -- lights toggled");
+	const uint32_t now = millis();
+	const bool completesDoubleClick =
+		!knobTurnedSincePress && lastPressAtMs != 0 &&
+		(uint32_t)(now - lastPressAtMs) < kDoubleClickMs;
+	// Read before the clear. doubleClicked() fires from the same
+	// release as this function, just after it, and wants to know
+	// whether the knob turned during the pair.
+	doubleClickHadTurn = knobTurnedSincePress;
+	lastPressAtMs = now;
+	knobTurnedSincePress = false;
+
+	if (completesDoubleClick) {
 		return;
 	}
-	lastPressAtMs = millis();
-	knobTurnedSincePress = false;
 
 	// The config menu owns the click while it is open -- it opens the
 	// editor, or commits the one being edited, or leaves on "Go Back".
@@ -441,15 +505,6 @@ void controls_menuLoop() {
 	}
 }
 
-
-void rotarySelectorISR() {
-	// Defer: only set the flag. The .read() pump in loop()
-	// calls rotarySelector.read() which may invoke the
-	// _pressed_callback. Running the callback from ISR would
-	// block the CYW43 driver and any other time-critical
-	// interrupt for the duration of selectConsole().
-	hasRotarySelectorInterruptFired = true;
-}
 
 // The config menu takes the knob away from the browse while it is open.
 // A detent scrolls the list rather than moving the console cursor, and a

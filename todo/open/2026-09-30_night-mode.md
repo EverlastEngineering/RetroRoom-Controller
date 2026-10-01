@@ -1,10 +1,37 @@
 # Night mode — the selected console's LEDs stay dark
 
-**Status:** open
-**File anchor:** `src/controls.cpp` (double-click detection),
-`lib/ConsoleConfig/src/ConsoleConfig.h` (`led.nightMode`),
-`src/ledstring.cpp` (the resting paint), `src/html/` (the setup page,
-if it grows a control)
+**Status:** open — the *behaviour* is done, the *config surface* is not
+**File anchor:** `src/controls.cpp` (the double-click),
+`lib/LedStringPaint/src/LedStringPaint.h` (`StripFrame::nightMode`),
+`src/ledstring.cpp` (`baseFrame`), `src/consoles.cpp` (the flag),
+`src/network.cpp` (`/lights/*`)
+
+## What shipped, and what is left
+
+**Shipped.** A double-click of the knob toggles night mode, and
+`/lights/on` and `/lights/off` do the same over HTTP. It paints the
+*selected* role black — `StripFrame::nightMode`, honoured in
+`resolvePixel()` — and nothing else. The browse, the travel and the
+commit animation stay visible. It is RAM-only: not a config field, not
+a menu row, gone on a restart.
+
+**That answers the question this note left open** ("should browsing
+stay bright while the selected window is dark?"): yes. It was also what
+a brightness override got wrong — scaling every pixel to zero turned
+the cabinet off exactly when it was being used.
+
+**Left, deliberately.** Everything here describes a *config* feature
+that is not built:
+
+- `led.nightMode` as a persisted boolean, so a cabinet that is dark at
+  2am is still dark after a power cut. The shipped version is not,
+  and that is a judgement rather than an oversight: a room condition is
+  not a cabinet preference, and a glowing cabinet after a power cut is
+  the problem being solved. If that reasoning is wrong, this is the
+  part to revisit.
+- A menu row. It follows from persistence — a menu row that cannot be
+  saved is a knob you have to remember.
+- `led.nightMode` in the field registry and the OpenAPI schema.
 
 ## What
 
@@ -37,29 +64,24 @@ accident while browsing.
 
 ## How
 
-- `EasyButton::onSequence(2, <ms>, cb)` is already available on
-  `rotarySelector` and already has a stub for it —
-  `sequenceElapsed()` in `src/controls.cpp`, currently dead, with the
-  `onSequence` registration commented out two lines above it. Wire it up
-  and check a console is selected (i.e. the browse is not mid-step)
-  before treating the double-click as the toggle rather than as two
-  clicks.
+- Done: `EasyButton::onSequence(2, <ms>, cb)` on `rotarySelector`,
+  registered in `controls_init()`. The detection is the library's; the
+  only thing done by hand is refusing to let the pair's second press
+  commit a console, which EasyButton cannot do — it calls the press
+  callback before the sequence callback, both from the same release.
+- Done: the suppression is in the core, in `resolvePixel()`, so it is
+  host-testable. It was a palette edit in the shell first, which needed
+  hardware to check.
 - The blink rate in night mode should be distinguishable from the normal
   resting paint without being *slower* than the idle timeout — the ring
   fades in `ringFadeMs` and a slow blink would read as a fault.
-- Decide whether night mode survives a reboot. It almost certainly
-  should not: it is a room condition, not a cabinet preference, and a
-  cabinet that boots glowing after a power cut is the exact problem
-  being solved. Default to not persisted, and say so in the config docs.
-- The resting paint lives in `paintResting()` in `src/ledstring.cpp` and
-  resolves through `computeStripFrame()` in `lib/LedStringPaint`. Put the
-  suppression in the core so it is host-testable, not in the shell — see
-  the note in `led-feel-dump.sh` about the core owning the decision.
+- Decide whether night mode survives a reboot. See "Left, deliberately"
+  above; the shipped answer is no.
 
 ## Not decided
 
-- Whether the ring should also dim in night mode. It is 8 pixels and
-  close to the operator's hand, so probably not, but the operator is the
-  one who can say.
+- Whether the ring should also dim in night mode. Shipped answer: no —
+  it follows `led.brightnessPct`, on the grounds that a hand reaching
+  for the knob in the dark wants the ring to come on. Still worth the
+  operator saying.
 - Whether night mode should be a menu item as well as a double-click.
-  Probably yes, once there is a menu to put it in.

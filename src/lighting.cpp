@@ -90,9 +90,15 @@ namespace {
 // the same shape as the strip's, and does not depend on how a
 // particular backend happens to treat mScale.
 uint8_t ledBrightnessScale() {
+	// The config's own value, read live. It used to go through a
+	// runtime override accessor so that a single "dim the cabinet"
+	// gesture could reach the ring as well as the strip; night mode no
+	// longer does that (it is the strip's selected colour, see
+	// buildPalette() in src/ledstring.cpp), so the ring has one input
+	// again and a brightness setting has one place to live.
 	return static_cast<uint8_t>(
 		(static_cast<uint32_t>(255) *
-		 static_cast<uint32_t>(lightBrightnessPct())) / 100u);
+		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
 }
 
 // The config's `led` block as the core wants it. Read fresh on every use

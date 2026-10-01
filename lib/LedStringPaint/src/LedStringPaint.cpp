@@ -894,6 +894,13 @@ LedColor resolvePixel(const StripFrame& frame, const StripPixel& pixel) {
 	if (pixel.role == LedRole::OFF || pixel.level <= 0) {
 		return kLedBlack;
 	}
+	// Night mode blacks the selected window and leaves every other role
+	// exactly as the palette has it. Deliberately after the OFF test and
+	// before the palette lookup, so it costs one comparison on the
+	// common path and cannot be reached by a level of zero anyway.
+	if (frame.nightMode && pixel.role == LedRole::SELECTED) {
+		return kLedBlack;
+	}
 	const LedColor base = frame.palette.colors[static_cast<int>(pixel.role)];
 	// Clamped rather than allowed to wrap: an over-100 level would
 	// otherwise roll a channel over into a different primary and a

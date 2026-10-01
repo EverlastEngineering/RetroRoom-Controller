@@ -1840,6 +1840,104 @@ static void test_resolve_pixel_gives_black_to_an_unlit_pixel(void) {
 	TEST_ASSERT_EQUAL(0, none.b);
 }
 
+static void test_night_mode_is_off_unless_something_asks_for_it(void) {
+	// A frame the shell did not think about must behave exactly as it
+	// did before night mode existed. The flag defaults to false, and a
+	// default that was anything else would black the selected console on
+	// every cabinet that never touches the knob.
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	TEST_ASSERT_FALSE(f.nightMode);
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] =
+		{200, 100, 50};
+	retroroom_core::StripPixel p;
+	p.role = retroroom_core::LedRole::SELECTED;
+	p.level = 100;
+	const retroroom_core::LedColor c = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(200, c.r);
+}
+
+static void test_night_mode_blacks_the_selected_window(void) {
+	// The resting picture is nothing but the selection at the shipped
+	// `led.abovePct` of 0, so blacking the SELECTED role is a genuinely
+	// dark strip. Asserted over every lit pixel of the frame rather
+	// than one hand-built pixel, because "the window is dark" is the
+	// claim and a single pixel would only say a pixel is dark.
+	StripFrame f = configuredFrame(StripEffect::RESTING);
+	f.abovePct = 0;
+	f.nightMode = true;
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] =
+		{200, 100, 50};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::STACK)] =
+		{10, 20, 30};
+	retroroom_core::LedRole roles[64];
+	frameRoles(f, roles);
+	int lit = 0;
+	for (int i = 0; i < 64; ++i) {
+		const retroroom_core::LedColor c = resolvePixel(
+			f, {roles[i], 100});
+		if (c.r != 0 || c.g != 0 || c.b != 0) {
+			lit++;
+		}
+	}
+	TEST_ASSERT_EQUAL(0, lit);
+}
+
+static void test_night_mode_leaves_the_browse_visible(void) {
+	// THE test. This is the whole difference between night mode and the
+	// brightness override it replaced.
+	//
+	// The override scaled every pixel to zero, so a browse, the travel
+	// and the commit animation all went dark too -- the cabinet turned
+	// itself off at the exact moment it was being used. Night mode
+	// blacks SELECTED and nothing else, so the person turning the knob
+	// can still see what they are choosing.
+	StripFrame f = configuredFrame(StripEffect::PREVIEW);
+	f.nightMode = true;
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::SELECTED)] =
+		{200, 100, 50};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::PROPOSAL)] =
+		{10, 200, 30};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::FILL)] =
+		{40, 50, 220};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::TRAVEL)] =
+		{60, 70, 240};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::STACK)] =
+		{80, 90, 250};
+	f.palette.colors[static_cast<int>(retroroom_core::LedRole::LEAVING)] =
+		{90, 100, 255};
+	f.to = kSms;
+	f.aboveWindows = 0;
+	f.aboveCount = 0;
+	retroroom_core::LedRole roles[64];
+	frameRoles(f, roles);
+	const retroroom_core::LedRole litRoles[] = {
+		retroroom_core::LedRole::PROPOSAL,
+		retroroom_core::LedRole::FILL,
+		retroroom_core::LedRole::TRAVEL,
+		retroroom_core::LedRole::STACK,
+		retroroom_core::LedRole::LEAVING,
+	};
+	for (size_t r = 0; r < sizeof(litRoles) / sizeof(litRoles[0]); ++r) {
+		const int slot = static_cast<int>(litRoles[r]);
+		const retroroom_core::LedColor want = f.palette.colors[slot];
+		const retroroom_core::LedColor got =
+			resolvePixel(f, {litRoles[r], 100});
+		TEST_ASSERT_EQUAL_INT(want.r, got.r);
+		TEST_ASSERT_EQUAL_INT(want.g, got.g);
+		TEST_ASSERT_EQUAL_INT(want.b, got.b);
+	}
+	// And the selected console is still dim-but-present as a role --
+	// night mode does not stop the frame from *knowing* which console
+	// is live, it stops it being drawn.
+	retroroom_core::StripPixel p;
+	p.role = retroroom_core::LedRole::SELECTED;
+	p.level = 100;
+	const retroroom_core::LedColor c = resolvePixel(f, p);
+	TEST_ASSERT_EQUAL(0, c.r);
+	TEST_ASSERT_EQUAL(0, c.g);
+	TEST_ASSERT_EQUAL(0, c.b);
+}
+
 static void test_only_the_active_console_and_the_candidate_are_lit(void) {
 	// The rule from the bench, twice over:
 	//
@@ -2098,6 +2196,9 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_resolve_pixel_applies_the_role_colour_and_level);
 	RUN_TEST(test_resolve_pixel_clamps_rather_than_wrapping);
 	RUN_TEST(test_resolve_pixel_gives_black_to_an_unlit_pixel);
+	RUN_TEST(test_night_mode_is_off_unless_something_asks_for_it);
+	RUN_TEST(test_night_mode_blacks_the_selected_window);
+	RUN_TEST(test_night_mode_leaves_the_browse_visible);
 	RUN_TEST(test_only_the_active_console_and_the_candidate_are_lit);
 	RUN_TEST(test_a_fill_frame_depends_on_the_clock);
 	RUN_TEST(test_a_fill_with_no_candidate_does_not_pulse);
@@ -2120,14 +2221,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_resting_frame_lights_each_window_above);
 	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);
 	RUN_TEST(test_resting_frame_tolerates_a_null_above_list);
-	RUN_TEST(test_resting_frame_lights_each_window_above);
-	RUN_TEST(test_resting_frame_with_zero_above_lights_only_the_selection);
-	RUN_TEST(test_resting_frame_tolerates_a_null_above_list);
 	RUN_TEST(test_resting_frame_splits_prefix_from_selection);
-	RUN_TEST(test_collect_above_picks_only_earlier_windows);
-	RUN_TEST(test_collect_above_preserves_the_windows_it_keeps);
-	RUN_TEST(test_collect_above_skips_a_straddling_window);
-	RUN_TEST(test_collect_above_is_defensive_about_bad_arguments);
 	RUN_TEST(test_collect_above_picks_only_earlier_windows);
 	RUN_TEST(test_collect_above_preserves_the_windows_it_keeps);
 	RUN_TEST(test_collect_above_skips_a_straddling_window);

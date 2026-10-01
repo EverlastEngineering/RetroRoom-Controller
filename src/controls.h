@@ -27,8 +27,11 @@ extern EasyButton nextConsoleButton;
 extern EasyButton prevConsoleButton;
 
 // Rotary selector (the push-button built into the rotary encoder).
-// Exposed so the main loop can call .read() on it; the ISR only sets
-// the matching IRQ flag, see hasRotarySelectorInterruptFired below.
+// Exposed so the main loop can poll .read() on it. It is deliberately
+// NOT interrupt-driven: see the comment in controls.cpp::controls_init()
+// for the edge loss that cost. A callback fired from this read() runs in
+// loop() context, which is also why the flag pattern below exists for the
+// other buttons.
 extern EasyButton rotarySelector;
 
 // Defer flags for the interrupt-driven buttons, following the same
@@ -38,7 +41,6 @@ extern EasyButton rotarySelector;
 // callback chain from the ISR starves the CYW43 WiFi driver for the
 // duration of selectConsole() -- that surfaced as a 1-2 s stall on
 // every rotary click.
-extern volatile bool hasRotarySelectorInterruptFired;
 extern volatile bool hasNextConsoleInterruptFired;
 extern volatile bool hasPrevConsoleInterruptFired;
 
@@ -63,8 +65,11 @@ extern void controls_browseReset();
 extern int currentConsoleIndex;
 
 void rotarySelectorPressed();
+// A double-click on the knob, from EasyButton's onSequence(2, ...).
+// Toggles night mode. Declared here because controls_init() registers
+// the callback by name.
+void doubleClicked();
 void sequenceElapsed();
-void rotarySelectorISR();
 // The config menu, opened by a long press on the rotary. It takes the
 // knob from the browse while open: these are how a turn and a click get
 // handed over, and controls_menuLoop() paints it and runs its clock.

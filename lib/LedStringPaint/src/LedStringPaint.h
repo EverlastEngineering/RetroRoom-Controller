@@ -489,6 +489,21 @@ struct StripFrame {
 	// defines in src/configuration.h; see there for what each is for.
 	RolePalette palette;
 
+	// Night mode: the selected console's window paints black.
+	//
+	// Here rather than as a palette edit in the shell, because this is
+	// a decision about what the strip shows and the core is where those
+	// live -- the shell's job is to fill the frame in and push it to the
+	// wire. It was also a brightness override once, in the shell, and
+	// that was wrong twice over: it needed hardware to verify, and it
+	// scaled every pixel rather than the one role.
+	//
+	// It applies to SELECTED and nothing else, so the browse, the
+	// travel and the commit animation stay visible -- which is the
+	// point of a knob gesture for "I am not using this right now" as
+	// opposed to one for "this cabinet is off".
+	bool nightMode = false;
+
 	// TRANSIT only.
 	int fractionPermille = 0;
 
