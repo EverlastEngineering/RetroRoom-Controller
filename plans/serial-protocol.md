@@ -147,6 +147,26 @@ terminator on the line-oriented replies — the device does not echo
 prompts, because a prompt fights with the boot log and the heartbeat
 for the same screen.
 
+**The port is shared output, so it is never silent.** A browser open
+on the cabinet's own UI produces its own lines while you work — the web
+UI polls, and each poll logs `net: ws rx: healthcheck`. A heartbeat
+does too, on a cabinet that is joined. So a client must select its own
+replies rather than assume everything on the port is addressed to it,
+and the prefixes are what makes that possible:
+
+| prefix | from |
+|---|---|
+| `ok` | a command succeeded |
+| `err:` | a command was refused |
+| `#` | commentary — the config header, and suppressed-input notices |
+| `status:` | the one line `STATUS` produces |
+| `net:` | the network stack's own logging, including other clients' traffic |
+| `Heartbeat:` | liveness, on a cabinet in the normal state |
+| `Setup Complete.` | the last line of boot |
+
+That is the whole of the framing: a client sends a command and reads
+until it has seen an `ok`, an `err:` or a `status:` of its own.
+
 If you are reading through a tty rather than raw USB, clear `OPOST`
 first (`stty -opost`): otherwise the tty rewrites every `\n` the device
 sends into `\r\n`, and the length-prefixed header will not parse. A

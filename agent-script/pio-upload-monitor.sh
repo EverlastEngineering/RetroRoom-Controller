@@ -162,12 +162,18 @@ if [ "$MONITOR_ONLY" = 1 ]; then
     # (no Verifying Flash line to look for, exit 0 if we got any
     # output, exit 1 if the log is empty -- which is exactly the
     # "device wedged" signal heartbeats exist to disambiguate).
+    #
+    # `set -m` puts the backgrounded job in its own process group, so
+    # the teardown can signal the *group* and take the inner `pio` with
+    # it. See the note on the upload path below for why that matters.
+    set -m
     script -q "$LOG" "$PIO" device monitor --environment "$ENV" &
     PIO_PID=$!
+    set +m
     sleep "$MONITOR_SECS"
-    kill -INT "$PIO_PID" 2>/dev/null || true
+    kill -INT -"$PIO_PID" 2>/dev/null || kill -INT "$PIO_PID" 2>/dev/null || true
     sleep 2
-    kill -9  "$PIO_PID" 2>/dev/null || true
+    kill -9 -"$PIO_PID" 2>/dev/null || kill -9 "$PIO_PID" 2>/dev/null || true
     wait "$PIO_PID" 2>/dev/null || true
     # Fall through to the log-printing + status-summary block below.
 fi
@@ -192,16 +198,33 @@ if [ "$MONITOR_ONLY" = 1 ]; then
     :  # no-op; the monitor-only block above already ran the monitor
 else
 echo "[pio-upload-monitor] $PIO run -e $ENV -t upload -t monitor (capped at ${MONITOR_SECS}s)..." >&2
+# `set -m` puts this backgrounded job in its own process group, which
+# is what makes the teardown below work.
+#
+# It used to signal only $PIO_PID, and that is the PID of `script`,
+# not of `pio`. `script` runs its argument as a child, so killing it
+# left the inner `pio run -t upload -t monitor` alive -- still holding
+# /dev/cu.usbmodem*, long after this script had printed its summary and
+# returned. The symptom is nasty and was misread twice: the next thing
+# that opens the port gets *no* output at all rather than an error,
+# because two processes are reading the same tty and the bytes are
+# split between them.
+#
+# Signalling the group (-PID) takes `script` and everything under it.
+# The bare-PID forms are kept as a fallback for a shell where job
+# control did not take.
+set -m
 script -q "$LOG" "$PIO" run -e "$ENV" -t upload -t monitor &
 PIO_PID=$!
+set +m
 
-# 3. Wait, then SIGINT (miniterm's "Ctrl+C" handler exits cleanly),
-#    then SIGKILL after a short grace if anything is still hanging on
-#    to /dev/cu.usbmodem*.
+# 3. Wait, then SIGINT the group (miniterm's "Ctrl+C" handler exits
+#    cleanly), then SIGKILL after a short grace if anything is still
+#    hanging on to /dev/cu.usbmodem*.
 sleep "$MONITOR_SECS"
-kill -INT "$PIO_PID" 2>/dev/null || true
+kill -INT -"$PIO_PID" 2>/dev/null || kill -INT "$PIO_PID" 2>/dev/null || true
 sleep 2
-kill -9  "$PIO_PID" 2>/dev/null || true
+kill -9 -"$PIO_PID" 2>/dev/null || kill -9 "$PIO_PID" 2>/dev/null || true
 wait "$PIO_PID" 2>/dev/null || true
 fi  # close the MONITOR_ONLY guard around step 2
 

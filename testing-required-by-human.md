@@ -44,11 +44,19 @@ the screen said.
 
 ## 3. Night mode: double-click the encoder
 
-**What changed:** two presses of the rotary encoder in quick
-succession, with no turning between them, toggle the LEDs off and on.
-It is a brightness override in memory: not saved, not restored, gone
-on restart. Web API only — the serial channel is for config and does
-not get it.
+**What changed:** a brightness *override* in memory, toggled by a
+double-click of the encoder with no turning in between, and by
+`/lights/*` over HTTP. Not saved, not in the menu, gone on restart.
+
+> **This is not the night mode in
+> `todo/open/2026-09-30_night-mode.md`,** which asked for something
+> different and is still open. That note wanted a *persisted*
+> `led.nightMode`, affecting only the resting selected window, with
+> browsing still fully visible. What shipped is a temporary global
+> level, chosen later and deliberately simplified to "brightness 0" in
+> a dark room. The open question from the original note — should
+> browsing stay bright while the selected window is dark? — is
+> unanswered and is a real difference, not a detail.
 
 **Acceptance:**
 - Double-click with the knob still: the strip and the ring go dark.

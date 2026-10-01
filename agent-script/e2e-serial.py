@@ -50,6 +50,7 @@ CI runner can grep them out, matching the sibling script.
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -84,6 +85,34 @@ def _candidate_ports():
                   glob.glob("/dev/tty.usbmodem*"))
 
 
+def _other_holders(port):
+    """PIDs other than us holding `port`, best effort.
+
+    A tty does not have exclusive access on macOS, so a second reader
+    is possible and the failure is silent: the port opens fine, the
+    commands go out, and the *replies* go to whichever process reads
+    first. Every assertion then fails on an empty string, and the real
+    cause -- somebody else's monitor is attached -- appears nowhere in
+    the output. It cost two debugging rounds here, so it is named.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(["lsof", "-t", port], capture_output=True,
+                             timeout=5).stdout
+    except Exception:
+        return []
+    mine = {os.getpid(), os.getppid()}
+    pids = []
+    for line in out.decode("utf-8", "replace").split():
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+        if pid not in mine:
+            pids.append(pid)
+    return pids
+
+
 def open_port(port, timeout=20.0):
     """Open the port, retrying while it is absent.
 
@@ -102,9 +131,16 @@ def open_port(port, timeout=20.0):
                 time.sleep(0.3)
                 continue
             port = ports[0]
+        holders = _other_holders(port)
+        if holders:
+            raise Failure(
+                "%s is held by pid%s %s. Close the other monitor and "
+                "re-run -- a shared port splits the replies between two "
+                "readers, so every command looks like it was ignored."
+                % (port, "s" if len(holders) > 1 else "", holders))
         try:
             return Device(port)
-        except serial.SerialException as exc:
+        except (serial.SerialException, OSError) as exc:
             last = exc
             time.sleep(0.5)
     raise Failure("could not open serial port %r: %s" % (port, last))
@@ -338,7 +374,24 @@ def sc_help(dev, args):
                 "an error must not dump the whole vocabulary")
     assert_true(b"FLARGLE" not in junk, "input is not echoed back")
     blank = dev.command("")
-    assert_eq(b"", blank, "a blank line is silence")
+    # Not "the port is silent". A connected web client produces its own
+    # lines here -- `net: ws rx: healthcheck` from a browser polling the
+    # UI, for instance -- and the port is shared output, so silence is
+    # not a property this channel can have.
+    #
+    # The property that matters is that a blank line is not a *command*:
+    # no error, and above all not the command list. Pressing Enter twice
+    # is not a mistake and must not be answered like one.
+    assert_true(b"err:" not in blank,
+                "a blank line must not be answered with an error, got %r"
+                % blank[:200])
+    assert_true(b"GET CONFIG" not in blank,
+                "a blank line must not print the vocabulary")
+    # And the next real command still works, which is the half that
+    # would actually break if a blank line had been mishandled.
+    TEST_STATUS_OK = dev.command("STATUS")
+    assert_true(b"status:" in TEST_STATUS_OK,
+                "the parser is still answering after a blank line")
     # Nothing here restarts the device, so the same handle stays good.
     return dev
 
