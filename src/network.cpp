@@ -225,11 +225,36 @@ void network_loop();
 bool network_isUp() { return networkUp; }
 bool network_inStaMode() { return networkUp && !inApMode; }
 
+// True when the radio was never started, or was started and could not
+// reach a saved network and is now on its own access point. False
+// while a join is still in flight, and false once it has joined.
+//
+// The distinction from `!network_inStaMode()` is the whole point of
+// this function, and the first version got it wrong. At the end of
+// setup() a cabinet with perfectly good credentials whose router is
+// merely slow has not joined *yet*, so `!network_inStaMode()` is true
+// for it -- and asking that question to decide whether to interrupt
+// the operator opened the session on a healthy device every single
+// boot. "Has not managed to join" and "has not finished trying" are
+// different states and only the first one is a problem.
+//
+// What is true is not quite "unreachable": on the SoftAP someone can
+// still reach /setup. What they cannot reach is /consoles.json, which
+// is not routed there at all -- onNotFound redirects everything to
+// the setup form. That is the question the caller is really asking.
+bool network_isUnreachable() { return networkDisabled || inApMode; }
+
 // True when `network.disable` turned the radio off, which is a third
 // state rather than a flavour of "not up". It has to be distinguishable
 // from SoftAP mode because the two look identical from here -- both
 // leave network_isUp() false -- and the LED and the heartbeat both use
 // the difference to avoid reporting a fault the operator asked for.
+//
+// The three above are the whole of "what state is the network in", and
+// they are deliberately three questions rather than one enum. Every one
+// of them has been wrong at least once, in a different direction: two
+// of them because two states looked alike, and one because "not yet"
+// and "not going to" are not the same answer.
 bool network_disabled() { return networkDisabled; }
 
 // network_scan_cache -- synchronous STA-mode scan, must be called

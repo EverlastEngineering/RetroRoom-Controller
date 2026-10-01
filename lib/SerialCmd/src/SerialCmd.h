@@ -88,6 +88,7 @@ enum class CmdAction {
 	PutConfig,         // `body`/`bodyLength` hold a complete pasted config.
 	SetWifi,           // `ssid` and `pass` hold what SETUP WIFI collected.
 	Reset,             // wipe everything and reboot.
+	Reboot,            // change nothing on flash, just restart.
 };
 
 // One unit of work. `text`, `ssid` and `pass` point at storage owned

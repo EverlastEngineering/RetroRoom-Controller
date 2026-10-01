@@ -13,6 +13,44 @@
 #include <CabinetMenu.h>      // retroroom_core::MenuState: the config menu
 #include "display.h"
 
+namespace {
+
+// How long the "saved, restarting" notice stays up before the board
+// actually goes down. Long enough to read on sixteen columns, short
+// enough that saving a setting does not feel like it cost ten seconds.
+//
+// It is also the length of the menu message, deliberately the same
+// number, because the restart must not land in the middle of the
+// notice that is explaining it.
+constexpr unsigned long kRebootNoticeMs = 4000;
+
+// millis() at which a save that needs a restart should restart, or 0
+// for "no restart pending".
+//
+// Zero rather than a bool so the "nothing pending" state is one the
+// unsigned wrap-safe comparison handles on its own -- the idiom the
+// pending-reboot deadlines in src/network.cpp use, and the reason
+// those are guarded with `if (const unsigned long d = ...)` rather
+// than a flag and a comparison.
+unsigned long pendingRebootAtMs = 0;
+
+// Go down. One function, because the menu's Reboot row and the
+// automatic restart after a save that needs one are the same event and
+// must not be able to differ in what the operator sees on the way.
+void restartNow() {
+	// The strip has to be dark before the reset, or the operator
+	// watches it light up again on the way down.
+	ledstring_allOff();
+	// Long enough for the frame to reach the wire. The PIO state
+	// machine and the I2C bus are both shared with the rest of the
+	// loop, and this is always followed by a hard reset.
+	delay(50);
+	Serial.flush();
+	rp2040.restart();
+}
+
+}  // namespace
+
 // No IRAM_ATTR shim needed anymore -- ESP8266 is gone. RP2040 / Pico does
 // not require a special attribute for ISR handlers (the vector system
 // handles alignment).
@@ -312,7 +350,9 @@ void sequenceElapsed() {
 //
 // menuTick() exists to expire the just-saved value back to a label, so
 // this cannot be called only on input: with no detent and no click the
-// value would sit on screen forever.
+// value would sit on screen forever. The pending reboot rides in here
+// for the same reason -- it needs a clock, and this is where the clock
+// is.
 void controls_menuLoop() {
 	if (!menuIsOpen(menuState)) {
 		return;
@@ -321,6 +361,15 @@ void controls_menuLoop() {
 	const retroroom_core::MenuView v =
 		menuView(menuState, CabinetMenu(), millis(), 2, LCD_COLS);
 	display_showMenu(v.row[0], v.row[1]);
+	// Checked after the paint, so the final frame the operator reads is
+	// the notice rather than whatever the menu happened to be showing
+	// when the deadline passed. Wrap-safe unsigned arithmetic, like the
+	// other deadlines in the firmware.
+	if (pendingRebootAtMs && (long)(millis() - pendingRebootAtMs) >= 0) {
+		pendingRebootAtMs = 0;
+		Serial.println("Menu: saved change needs a restart; restarting");
+		restartNow();
+	}
 }
 
 
@@ -399,23 +448,42 @@ void controls_menuClick() {
 		Serial.println("Menu: save");
 		const retroroom_store::SaveResult r = configSave();
 		Serial.print("Menu: save ");
-		Serial.println(r == retroroom_store::SaveResult::Ok ? "ok" : "FAILED");
-		if (menuActionNeedsReboot(menuState)) {
-			// The change is on flash; the cabinet is not. Say so, and say
-			// it long enough to read: on sixteen columns a three-second
-			// notice is a blink, and the message exists to be read.
+		const bool saved = (r == retroroom_store::SaveResult::Ok);
+		Serial.println(saved ? "ok" : "FAILED");
+		// Only announce, and only restart, when the save actually
+		// happened.
+		//
+		// It used to announce either way: a failed write showed "Reboot
+		// to see all changes" and restarted nothing, so a cabinet that
+		// could not write to flash was told its change was on disk and
+		// would appear after a restart. The operator's next move is
+		// either to look for the setting and not find it, or -- worse
+		// -- to trust the message and think the FS is fine.
+		if (!saved) {
 			menuMessage(menuState, millis(), 5000);
+			return;
+		}
+		if (menuActionNeedsReboot(menuState)) {
+			// The change is on flash and the cabinet is not running it.
+			// Restarting *is* the thing that makes the save take
+			// effect, so it is not a follow-up the operator should have
+			// to remember: the message is a notice, and then the
+			// board does it.
+			//
+			// The delay is the length of the notice it is going to be
+			// looking at, because the restart must not cut the message
+			// off. kMenuSavedMs is deliberately not the trigger -- that
+			// is the brief "Current: N" flash, and restarting under it
+			// would show the operator a number and then take it away
+			// before they had read it.
+			pendingRebootAtMs = millis() + kRebootNoticeMs;
+			menuMessage(menuState, millis(), kRebootNoticeMs);
 		}
 		return;
 	}
 	case retroroom_core::MenuAction::REBOOT: {
 		Serial.println("Menu: reboot");
-		// The strip has to be dark before the reset, or the operator
-		// watches it light up again on the way down.
-		ledstring_allOff();
-		delay(50);
-		Serial.flush();
-		rp2040.restart();
+		restartNow();
 		return;
 	}
 	default:

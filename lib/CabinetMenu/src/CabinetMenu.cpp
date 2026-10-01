@@ -313,7 +313,7 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 
 	// A message covers the list entirely. Not stacked on it: on sixteen
 	// columns there is nowhere to put a notice without hiding the thing
-	// the notice is about, and "Reboot to see all changes" is only
+	// the notice is about, and a notice about a restart is only
 	// meaningful on its own.
 	// A commit's confirmation. Its own screen rather than a mutated
 	// list row, because "4" replacing the name of a setting is not
@@ -334,8 +334,21 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		return v;
 	}
 	if (menuMessageVisible(s, nowMs)) {
-		place(v.row[0], 17, width, 0, "Reboot to see");
-		place(v.row[1], 17, width, 0, "all changes");
+		// A statement, not an instruction.
+		//
+		// This used to read "Reboot to see all changes", which was an
+		// instruction the firmware had no intention of carrying out --
+		// it saved, said so, and left the operator to find the Reboot
+		// row. A message that promises an action and does not do it is
+		// worse than no message, because the operator acts on it.
+		//
+		// It is now true: the shell restarts at the end of the window
+		// (see controls.cpp), so this is telling them what is about to
+		// happen rather than asking them to go and do it. Which also
+		// means the shell, not this file, owns the restart, and the
+		// duration it passes to menuMessage() is the delay.
+		place(v.row[0], 17, width, 0, "Saved, restart");
+		place(v.row[1], 17, width, 0, "coming up");
 		return v;
 	}
 

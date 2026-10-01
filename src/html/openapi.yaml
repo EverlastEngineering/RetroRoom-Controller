@@ -405,10 +405,25 @@ paths:
 
     post:
       tags: [admin]
-      summary: Wipe /wifi.json and reboot
+      summary: Wipe all saved state and reboot
       description: |
-        Removes `/wifi.json` from LittleFS and schedules a reboot.
-        On reboot, the device comes back up in SoftAP mode (no creds).
+        Removes every file the cabinet keeps on LittleFS -- the live
+        console config, both rolling backups, the last selected
+        console, and `/wifi.json` -- and schedules a reboot. The
+        backups are removed deliberately: the boot path prefers
+        `/consoles.json` then `.bak1` then `.bak2`, so leaving them
+        would mean the "reset" device came straight back up running
+        the config it was supposed to have forgotten.
+
+        On reboot the device comes up in SoftAP mode with no creds
+        and the built-in default config, which is the same state a
+        factory-fresh board is in. `GET /consoles.json` returns 204
+        again, because the file is genuinely gone rather than merely
+        emptied.
+
+        Shares its implementation with the serial channel's `RESET`
+        command, so the two cannot drift into disagreeing about what a
+        factory reset removes.
 
         Requires the `nonce` form field to match the most recently
         issued one (see `GET /factory-reset`). The nonce is rotated

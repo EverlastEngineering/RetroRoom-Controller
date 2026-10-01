@@ -19,6 +19,7 @@ const char* const kInstructions =
     "                 reading exactly CONFIG DONE\n"
     "  SETUP WIFI     prompts for the network name, then the password\n"
     "  RESET          erase everything and reboot\n"
+    "  REBOOT         change nothing, just restart\n"
     "\n"
     "Commands are case-insensitive. The password is shown as you type.\n";
 
@@ -155,6 +156,10 @@ bool SerialCmd::handleLine(CmdRequest* out) {
 	}
 	if (isWord(line_, "RESET")) {
 		out->action = CmdAction::Reset;
+		return true;
+	}
+	if (isWord(line_, "REBOOT")) {
+		out->action = CmdAction::Reboot;
 		return true;
 	}
 	// A blank line gets nothing at all. The most common accidental

@@ -113,6 +113,22 @@ void test_the_documented_commands_are_recognised(void) {
 	TEST_ASSERT_EQUAL(CmdAction::Reset, req.action);
 }
 
+// REBOOT and RESET are different verbs on purpose, and a protocol that
+// had only one of them would be a trap: RESET erases the config, the
+// credentials and both backups.
+void test_reboot_is_recognised_and_is_not_reset(void) {
+	cmd.begin();
+	typeLine(cmd, "i", &req);
+	TEST_ASSERT_TRUE(typeLine(cmd, "REBOOT", &req));
+	TEST_ASSERT_EQUAL(CmdAction::Reboot, req.action);
+	TEST_ASSERT_TRUE(typeLine(cmd, "reboot", &req));
+	TEST_ASSERT_EQUAL(CmdAction::Reboot, req.action);
+	// And it is documented, because a command nobody can find is not a
+	// command.
+	TEST_ASSERT_TRUE(typeLine(cmd, "?", &req));
+	TEST_ASSERT_TRUE(mentions(req.text, "REBOOT"));
+}
+
 // Case-insensitivity is a promise made on the instruction screen, so it
 // is pinned here rather than left to whoever types at the terminal.
 void test_commands_are_case_insensitive(void) {
@@ -471,6 +487,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_i_anywhere_but_the_start_is_just_a_character);
 	RUN_TEST(test_a_stray_i_inside_a_paste_cannot_enter_interactive_mode);
 	RUN_TEST(test_the_documented_commands_are_recognised);
+	RUN_TEST(test_reboot_is_recognised_and_is_not_reset);
 	RUN_TEST(test_commands_are_case_insensitive);
 	RUN_TEST(test_surrounding_whitespace_is_ignored);
 	RUN_TEST(test_an_unknown_command_is_one_terse_line_with_no_echo);

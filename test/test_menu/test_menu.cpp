@@ -594,8 +594,13 @@ static void test_a_message_covers_the_list_then_goes_away(void) {
         menuMessage(s, 1000, 500);
 
         MenuView v = menuView(s, m, 1100, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Reboot to see"), v.row[0]);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "all changes"), v.row[1]);
+        // What it *says* matters as much as that it shows. The shell
+        // restarts at the end of this window, so the notice tells the
+        // operator what is about to happen. It used to read "Reboot to
+        // see all changes", which was an instruction nothing carried
+        // out -- worse than silence, because the operator acts on it.
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Saved, restart"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "coming up"), v.row[1]);
 
         menuTick(s, 1600);
         TEST_ASSERT_FALSE(retroroom_core::menuMessageVisible(s, 1600));

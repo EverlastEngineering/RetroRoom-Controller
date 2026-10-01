@@ -15,9 +15,10 @@ R""""(
 </head>
 <body>
 <h2>Factory reset?</h2>
-<p>This will erase the saved WiFi credentials and reboot into the
-setup portal. The device will need to be reconfigured before it
-can join your network again.</p>
+<p>This will erase the saved console configuration, the saved WiFi
+credentials and the last selected console, then reboot into the setup
+portal. The cabinet will need to be reconfigured before it is usable
+again.</p>
 <form method="POST" action="/factory-reset">
   <input type="hidden" name="nonce" value="__NONCE__">
   <button type="submit" class="yes">Yes, erase and reboot</button>

@@ -86,6 +86,19 @@ extern bool network_isUp();
 // state machine to distinguish the "needs wifi config" (fast flash)
 // convention from the "online and happy" (slow blink) convention.
 extern bool network_inStaMode();
+// True when the radio was never started, or was started and could not
+// reach a saved network and is now on its own access point.
+//
+// NOT the same as `!network_inStaMode()`, and the difference matters at
+// exactly one moment: the end of setup(), before a join that is merely
+// slow has had its chance. A cabinet in that state is not unreachable,
+// it is undecided, and treating it as unreachable interrupts a healthy
+// device on every boot.
+//
+// Used by src/serialconfig.cpp to decide whether the serial
+// configuration channel should open itself. See the definition for what
+// is and is not reachable when this is true.
+extern bool network_isUnreachable();
 // True iff `network.disable` left the radio off. Distinct from "not
 // up": SoftAP mode and disabled mode both report network_isUp()
 // false, and conflating them makes a cabinet that is working exactly

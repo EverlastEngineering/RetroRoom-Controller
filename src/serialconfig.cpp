@@ -211,6 +211,16 @@ void act(const retroroom_core::CmdRequest& r) {
 	case retroroom_core::CmdAction::Reset:
 		acceptReset();
 		break;
+	case retroroom_core::CmdAction::Reboot:
+		// Deliberately not "save first". The operator has a menu row
+		// called Save and a `save` verb does not exist here; a REBOOT
+		// that silently wrote pending changes to flash would be a
+		// second, invisible way to commit them. The LCD menu makes you
+		// press Save, and the consequence of forgetting is a lost
+		// change, which is the recoverable direction.
+		reply("ok -- rebooting, nothing saved");
+		rebootAtMs = millis() + kRebootDelayMs;
+		break;
 	}
 }
 
@@ -235,11 +245,18 @@ void serialcmd_maybeAutoEnter() {
 	//     /setup -- so the web API genuinely cannot reach the config,
 	//     whatever the operator types at 192.168.4.1.
 	//
+	// Asked as "is the network unreachable" and deliberately NOT as
+	// "is it not in STA mode": at this point in the boot a cabinet
+	// with good credentials whose router is slow has not joined yet,
+	// and the second question would open the session on a healthy
+	// device every single boot. The first question knows the
+	// difference between "has not managed" and "has not finished
+	// trying".
+	//
 	// A cabinet that is configured and joined stays out of it and
 	// keeps its heartbeat: there is nothing wrong with it, and opening
 	// a session unprompted on a healthy device is noise.
-	if (consoleConfigIsUploaded() && !network_disabled() &&
-	    network_inStaMode()) {
+	if (consoleConfigIsUploaded() && !network_isUnreachable()) {
 		return;
 	}
 	interactive = true;
