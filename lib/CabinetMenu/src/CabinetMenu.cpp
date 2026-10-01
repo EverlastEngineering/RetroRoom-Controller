@@ -77,6 +77,46 @@ const char* listLabel(const Menu& m, int index) {
 	return m.items[index].label;
 }
 
+// Is row `index` of `m` a bool?
+//
+// Null-safe because a menu can be empty -- a config with no `menu`
+// array still has to render *something*, and the answer for "no row"
+// has to be "not a bool" rather than a dereference of nothing.
+bool rowIsBool(const Menu& m, int index) {
+	return m.items != nullptr && index >= 0 && index < m.count &&
+	       m.items[index].isBool;
+}
+
+// Write "<label>: <value>" into `out` at `col`, clipped to `width`.
+//
+// The one place a menu value becomes text. A bool has to be rendered
+// as a word in the editor *and* in the confirmation, and doing that in
+// two places is how one of them ends up saying "1" while the other
+// says "True" -- two rows of the same screen disagreeing about the
+// same setting.
+//
+// "True"/"False" rather than "1"/"0", because a row reading "New: 1"
+// beside a label called "WiFi off" is a genuinely bad row: the
+// operator has to read the label, remember which way round the number
+// is, and then trust it. A word next to the label needs nothing
+// remembered.
+//
+// The stored value is still 0/1. That is what the config field is and
+// what the shell clamps against; this is a rendering decision and
+// nothing more, which is also why no conversion can be half-applied on
+// the way to flash.
+void placeValue(char* out, int storage, int width, int col, const char* label,
+                int value, bool isBool) {
+	char buf[32];
+	if (isBool) {
+		std::snprintf(buf, sizeof(buf), "%s: %s", label,
+		             value ? "True" : "False");
+	} else {
+		std::snprintf(buf, sizeof(buf), "%s: %d", label, value);
+	}
+	place(out, storage, width, col, buf);
+}
+
 }  // namespace
 
 int menuWindowFirst(int selected, int total, int rows) {
@@ -278,17 +318,16 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 	if (width > 16) width = 16;
 
 	if (s.mode == MenuMode::EDIT) {
-		// "1:Current: 5" / "2:New: 5".
+		// "Current: 5" / "New: 5", or "Current: True" / "New: False"
+		// for a bool.
 		//
 		// No selection marker on either row. The labels already say
 		// which is which, and the one that moves when the knob turns is
 		// the one being edited -- a '>' on it would be a third way of
 		// saying the same thing.
-		char buf[17];
-		std::snprintf(buf, sizeof(buf), "Current: %d", s.current);
-		place(v.row[0], 17, width, 0, buf);
-		std::snprintf(buf, sizeof(buf), "New: %d", s.draft);
-		place(v.row[1], 17, width, 0, buf);
+		const bool isBool = rowIsBool(m, s.selected);
+		placeValue(v.row[0], 17, width, 0, "Current", s.current, isBool);
+		placeValue(v.row[1], 17, width, 0, "New", s.draft, isBool);
 		return v;
 	}
 
@@ -324,9 +363,10 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		// "Current: N" rather than a bare number or a "Saved" header: the
 		// word the operator has been reading for the last ten seconds
 		// now names the number they just chose, so the screen is
-		// recognisably the same one with a new value in it.
-		std::snprintf(buf, sizeof(buf), "Current: %d", s.saved);
-		place(v.row[0], 17, width, 0, buf);
+		// recognisably the same one with a new value in it. A bool says
+		// "Current: True" for the same reason.
+		placeValue(v.row[0], 17, width, 0, "Current", s.saved,
+		           rowIsBool(m, s.selected));
 		// Row 1 stays blank rather than echoing the value: one line
 		// saying it happened is enough, and a second line of it would
 		// be another thing to misread.

@@ -358,6 +358,60 @@ static void test_a_commit_writes_the_draft_and_shows_it_briefly(void) {
 							 "the label must come back after the moment");
 }
 
+// What a value looks like is separate from what it does, and the
+// existing bool test only covers the second.
+//
+// "New: 1" beside a label called "WiFi off" is a bad row: the operator
+// has to read the label, remember which way round the number is, and
+// then trust it. Both rows have to say it in words, and the
+// confirmation is a separate code path from the editor -- which is
+// exactly how one ends up saying "1" and the other "True".
+static void test_a_bool_renders_as_a_word_not_a_number(void) {
+	MenuItem toggle = {"WiFi off", "network.disable",
+	                   retroroom_core::MenuAction::NONE, true, 0, 1, 1};
+	MenuItem buf[4];
+	Menu m = menuWithActions(buf, 4, &toggle, 1);
+	MenuState s;
+	menuOpen(s);
+
+	// The editor. Current is 0, so the word is False.
+	menuSelect(s, m, 0);
+	MenuView v = menuView(s, m, 0, 2, 16);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: False"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "New: False"), v.row[1]);
+
+	// Turn it, and both rows change together. A bool has no gradient,
+	// so the only way to see which way it went is the word.
+	menuDetent(s, m, 1);
+	v = menuView(s, m, 100, 2, 16);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: False"), v.row[0]);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, "New: True"), v.row[1]);
+
+	// And the confirmation agrees with the editor, which is the part
+	// that is easy to get wrong: it is a different branch of menuView.
+	int written = -1;
+	TEST_ASSERT_TRUE(menuCommit(s, 1000, &written));
+	TEST_ASSERT_EQUAL_INT_MESSAGE(1, written, "the stored value is still 1");
+	v = menuView(s, m, 1100, 2, 16);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: True"), v.row[0]);
+}
+
+// A non-bool keeps its number. The other direction of the same risk:
+// "flashLed" or "Ring idle" as True/False would be nonsense, and a
+// change that helped bools by accident helping everything would be
+// worse than one that did nothing.
+static void test_a_non_bool_still_renders_as_a_number(void) {
+	MenuItem buf[8];
+	const Menu m = menu2(buf);
+	MenuState s;
+	menuOpen(s);
+	menuSelect(s, m, 5);
+	MenuView v = menuView(s, m, 0, 2, 16);
+	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: 5"), v.row[0]);
+	TEST_ASSERT_FALSE_MESSAGE(strstr(v.row[0], "True") != nullptr,
+	                          "a duration is not a boolean");
+}
+
 // A commit outside the editor is not a commit. Otherwise a stray click
 // in the list would write a value nobody chose.
 static void test_a_click_in_the_list_writes_nothing(void) {
@@ -743,6 +797,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_commit_writes_the_draft_and_shows_it_briefly);
 	RUN_TEST(test_a_click_in_the_list_writes_nothing);
 	RUN_TEST(test_a_bool_alternates);
+	RUN_TEST(test_a_bool_renders_as_a_word_not_a_number);
+	RUN_TEST(test_a_non_bool_still_renders_as_a_number);
 	// Rendering.
 	RUN_TEST(test_a_closed_menu_renders_nothing);
 	RUN_TEST(test_a_long_label_is_clipped_not_wrapped);
