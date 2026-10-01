@@ -416,6 +416,12 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 			// by default, because whether a setting benefits from live
 			// feedback is a judgement about the setting.
 			item.preview = (obj["preview"] | false);
+			// "visible": false keeps the setting in the config and off
+			// the LCD. Default true, so every document written before
+			// this key existed behaves exactly as it did -- an absent
+			// flag that defaulted to false would have emptied the menu
+			// of every cabinet in the field on a firmware update.
+			item.visible = (obj["visible"] | true);
 			result.menu.items.push_back(item);
 		}
 		// Re-aim every item at the strings as they now stand.

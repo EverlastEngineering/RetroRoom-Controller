@@ -89,128 +89,157 @@ R""""(
     "menu": [
         {
             "label": "Strip length",
-            "set": "led.totalLeds"
+            "set": "led.totalLeds",
+            "visible": true
         },
         {
             "label": "Travel time",
-            "set": "led.travelMs"
+            "set": "led.travelMs",
+            "visible": true
         },
         {
             "label": "Travel peak",
-            "set": "led.travelPeakWidth"
+            "set": "led.travelPeakWidth",
+            "visible": true
         },
         {
             "label": "Travel spark",
-            "set": "led.travelSparkLeds"
+            "set": "led.travelSparkLeds",
+            "visible": true
         },
         {
             "label": "Detents",
-            "set": "led.detentsPerStep"
+            "set": "led.detentsPerStep",
+            "visible": true
         },
         {
             "label": "Fast detents",
-            "set": "led.fastDetentsPerStep"
+            "set": "led.fastDetentsPerStep",
+            "visible": true
         },
         {
             "label": "Spin window",
-            "set": "led.fastSpinWindowMs"
+            "set": "led.fastSpinWindowMs",
+            "visible": true
         },
         {
             "label": "Settle lockout",
-            "set": "led.settleLockoutMs"
+            "set": "led.settleLockoutMs",
+            "visible": true
         },
         {
             "label": "Fill min",
-            "set": "led.fillMinLeds"
+            "set": "led.fillMinLeds",
+            "visible": true
         },
         {
             "label": "Fill delay",
-            "set": "led.fillRetreatDelayMs"
+            "set": "led.fillRetreatDelayMs",
+            "visible": true
         },
         {
             "label": "Fill step",
-            "set": "led.fillRetreatStepMs"
+            "set": "led.fillRetreatStepMs",
+            "visible": true
         },
         {
             "label": "Blob width",
-            "set": "led.blobWidth"
+            "set": "led.blobWidth",
+            "visible": true
         },
         {
             "label": "Pulse time",
-            "set": "led.pulseMs"
+            "set": "led.pulseMs",
+            "visible": true
         },
         {
             "label": "Pulse dim",
             "set": "led.pulseMinPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Pulse bright",
             "set": "led.pulseMaxPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Stack level",
             "set": "led.abovePct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Selected level",
             "set": "led.selfPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Context level",
             "set": "led.dimPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Fill level",
             "set": "led.fillPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Blob level",
             "set": "led.blobPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Browse from",
             "set": "led.browseFromPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Browse to",
             "set": "led.browseToPct",
+            "visible": true,
             "step": 5
         },
         {
             "label": "Explode",
-            "set": "led.explodeMs"
+            "set": "led.explodeMs",
+            "visible": true
         },
         {
             "label": "Ignite",
-            "set": "led.igniteMs"
+            "set": "led.igniteMs",
+            "visible": true
         },
         {
             "label": "Ring idle",
-            "set": "led.ringIdleMs"
+            "set": "led.ringIdleMs",
+            "visible": true
         },
         {
             "label": "Ring strike",
-            "set": "led.ringFlashMs"
+            "set": "led.ringFlashMs",
+            "visible": true
         },
         {
             "label": "Ring grace",
-            "set": "led.ringOffDelayMs"
+            "set": "led.ringOffDelayMs",
+            "visible": true
         },
         {
             "label": "Ring fade",
-            "set": "led.ringFadeMs"
+            "set": "led.ringFadeMs",
+            "visible": true
         },
         {
             "label": "Brightness",
             "set": "led.brightnessPct",
+            "visible": true,
             "min": 20,
             "max": 100,
             "step": 5,
@@ -218,20 +247,24 @@ R""""(
         },
         {
             "label": "Frame interval",
-            "set": "led.frameIntervalMs"
+            "set": "led.frameIntervalMs",
+            "visible": true
         },
         {
             "label": "Backlight",
-            "set": "lcd.backlightOffAfterMs"
+            "set": "lcd.backlightOffAfterMs",
+            "visible": true
         },
         {
             "label": "WiFi notice",
             "set": "network.showWIFIConnectionFailureMessage",
+            "visible": true,
             "type": "bool"
         },
         {
             "label": "WiFi off",
             "set": "network.disable",
+            "visible": true,
             "type": "bool"
         }
     ]

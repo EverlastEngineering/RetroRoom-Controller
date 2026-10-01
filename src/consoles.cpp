@@ -157,23 +157,37 @@ static retroroom_core::ParsedMenu menuDef;
 
 static void buildShellMenu() {
         shellMenuCount = 0;
-        for (size_t i = 0; i < menuDef.items.size() &&
-                           shellMenuCount < retroroom_core::kMaxMenuItems; ++i) {
-                shellMenuItems[shellMenuCount++] = menuDef.items[i];
+        // Counted separately from shellMenuCount so the overflow message
+        // below is about how many rows the operator *asked* to see.
+        // Counting every parsed row would make a config that hides half
+        // its settings report itself as overflowing a screen it fits on.
+        int visible = 0;
+        for (size_t i = 0; i < menuDef.items.size(); ++i) {
+                // `visible: false` is a statement about a 16x2 screen,
+                // not about whether the setting exists. The row is
+                // still in /consoles.json and still editable there --
+                // it just does not take up one of the forty slots.
+                if (!menuDef.items[i].visible) {
+                        continue;
+                }
+                ++visible;
+                if (shellMenuCount < retroroom_core::kMaxMenuItems) {
+                        shellMenuItems[shellMenuCount++] = menuDef.items[i];
+                }
         }
         // Say so when rows were left off. The cap exists to bound a
         // fixed array, and the array bound means a config declaring
         // more than the cap gets the first N and no indication -- a
         // setting that is in the file, adjustable in principle, and
         // simply not there. That is exactly the kind of silence this
-        // repo has spent a session removing elsewhere.
-        if (menuDef.items.size() >
-            static_cast<size_t>(retroroom_core::kMaxMenuItems)) {
-                Serial.print("menu: config declares ");
-                Serial.print(menuDef.items.size());
+        // repo has spent a session removing elsewhere. Hiding rows is
+        // the cure, so say that too.
+        if (visible > retroroom_core::kMaxMenuItems) {
+                Serial.print("menu: config shows ");
+                Serial.print(visible);
                 Serial.print(" items, only ");
                 Serial.print(retroroom_core::kMaxMenuItems);
-                Serial.println(" fit; the rest were dropped");
+                Serial.println(" fit; the rest were dropped. Set \"visible\": false on rows you do not want on the screen.");
         }
         struct {
                 const char* label;
@@ -193,6 +207,14 @@ static void buildShellMenu() {
                 item.lo = 0;
                 item.hi = 0;
                 item.step = 1;
+                // Explicit, though nothing reads it for an action row.
+                // The array is static, so a slot a settings row never
+                // reached is zero here, and "Save" would carry
+                // visible == false -- which happens to be true today and
+                // is exactly the kind of accident that is true until
+                // someone filters on it.
+                item.visible = true;
+                item.preview = false;
         }
 }
 

@@ -1372,6 +1372,99 @@ void test_every_config_field_has_a_menu_row_in_the_shipped_config(void) {
 	TEST_ASSERT_EQUAL(size_t(fields), r.menu.items.size());
 }
 
+// The shipped config states `visible` on every row rather than leaving
+// it to the default. Same reason it states every other setting: a
+// reader of the file should not have to know which keys have defaults,
+// and the shipped document is the one everybody copies from.
+//
+// It also means the shipped file is a worked example of the completed
+// shape -- every setting present, every menu row present and visible --
+// which is the document todo/open/2026-10-01_config-normalisation-and-menu-visibility.md
+// is asking completion to converge on.
+void test_the_shipped_config_states_visibility_on_every_row(void) {
+	// Parsed by hand rather than through loadFromJson(), because the
+	// thing under test is the *text*: loadFromJson() would substitute
+	// the default for a missing key and report the row as visible
+	// either way, which is exactly the thing that has to be caught.
+	const std::string doc(kFactoryConfigJson);
+	JsonDocument parsed;
+	TEST_ASSERT_FALSE_MESSAGE(deserializeJson(parsed, doc),
+	                          "the shipped config does not parse");
+	JsonArrayConst menu = parsed["menu"];
+	TEST_ASSERT_TRUE_MESSAGE(!menu.isNull(),
+	                          "the shipped config has no menu array");
+	TEST_ASSERT_GREATER_THAN_UINT(0, menu.size());
+	for (JsonVariantConst entry : menu) {
+		JsonObjectConst obj = entry.as<JsonObjectConst>();
+		TEST_ASSERT_FALSE_MESSAGE(obj.isNull(), "a menu row is not an object");
+		TEST_ASSERT_TRUE_MESSAGE(
+		    !obj["visible"].isNull(),
+		    "a shipped menu row does not say whether it is visible");
+		TEST_ASSERT_TRUE_MESSAGE(obj["visible"].as<bool>(),
+		                         "the shipped config ships a hidden row");
+	}
+}
+
+// A menu entry can be in the config and off the screen. That is the
+// whole point of "visible": the setting exists, is documented by its
+// own presence in the file, and takes up none of the forty rows.
+void test_a_menu_row_can_hide_itself(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Shown", "set": "led.detentsPerStep"},
+                {"label": "Hidden", "set": "led.ringIdleMs",
+                 "visible": false},
+                {"label": "Also shown", "set": "led.blobWidth",
+                 "visible": true}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        // Still parsed, still in the document, still a real setting. It
+        // is hidden from the screen and nothing else -- dropping it here
+        // would lose it from the config too.
+        TEST_ASSERT_EQUAL(3, static_cast<int>(r.menu.items.size()));
+        TEST_ASSERT_TRUE(r.menu.items[0].visible);
+        TEST_ASSERT_FALSE(r.menu.items[1].visible);
+        TEST_ASSERT_TRUE(r.menu.items[2].visible);
+        // And it is still fully editable in the file: hiding it must not
+        // narrow its range or lose its key.
+        TEST_ASSERT_EQUAL_STRING("led.ringIdleMs", r.menu.keys[1].c_str());
+        TEST_ASSERT_EQUAL(0, r.menu.items[1].lo);
+        TEST_ASSERT_EQUAL(600000, r.menu.items[1].hi);
+        // A row nobody can see is not a warning-worthy document.
+        TEST_ASSERT_EQUAL(size_t(0), r.warnings.size());
+}
+
+// Absent means visible. Every config written before the flag existed
+// has to keep behaving exactly as it did, and the failure mode of
+// getting this backwards is an empty menu on every cabinet in the
+// field the moment the firmware is updated.
+void test_a_menu_row_with_no_visible_key_is_visible(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Detents", "set": "led.detentsPerStep"},
+                {"label": "Ring", "set": "led.ringIdleMs", "min": 1000}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(2, static_cast<int>(r.menu.items.size()));
+        for (const retroroom_core::MenuItem& item : r.menu.items) {
+                TEST_ASSERT_TRUE_MESSAGE(item.visible, item.label);
+        }
+}
+
 // A menu longer than the shell's array is truncated. That is a ceiling
 // on a fixed allocation and cannot go away, so the number has to leave
 // room for the shipped menu and the suite has to notice if it stops
@@ -1492,6 +1585,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_bare_menu_key_is_normalised_to_its_block);
 	RUN_TEST(test_a_menu_cannot_offer_more_than_the_setting_allows);
 	RUN_TEST(test_a_config_with_no_menu_has_an_empty_one);
+	RUN_TEST(test_a_menu_row_can_hide_itself);
+	RUN_TEST(test_a_menu_row_with_no_visible_key_is_visible);
 	RUN_TEST(test_a_copied_menu_points_at_its_own_strings);
 	RUN_TEST(test_a_menu_survives_being_copied_twice);
 	// The writer.
@@ -1517,6 +1612,7 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_config_with_no_led_block_gets_the_defaults);
 	RUN_TEST(test_the_shipped_config_parses);
 	RUN_TEST(test_every_config_field_has_a_menu_row_in_the_shipped_config);
+	RUN_TEST(test_the_shipped_config_states_visibility_on_every_row);
 	RUN_TEST(test_the_shipped_menu_fits_the_shell_array);
 	RUN_TEST(test_the_shipped_config_states_every_led_field);
 	return UNITY_END();

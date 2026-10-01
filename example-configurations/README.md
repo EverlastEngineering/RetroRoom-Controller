@@ -238,7 +238,8 @@ the setting it edits cannot drift apart.
     "min": 20, "max": 100, "step": 5, "preview": true },
   { "label": "WiFi fail msg", "set": "network.showWIFIConnectionFailureMessage",
     "type": "bool" },
-  { "label": "WiFi off", "set": "network.disable", "type": "bool" }
+  { "label": "WiFi off", "set": "network.disable", "type": "bool" },
+  { "label": "Travel time", "set": "led.travelMs", "visible": false }
 ]
 ````
 
@@ -250,6 +251,20 @@ the setting it edits cannot drift apart.
 | `step` | how much one detent moves the value. Default 1. |
 | `type` | `"bool"` for an on/off toggle, which ignores `min`/`max`/`step`. |
 | `preview` | `true` applies the value **while the knob is turning** instead of on the click. Default `false`. |
+| `visible` | `false` keeps the row in this file and off the LCD. Default `true`. |
+
+`visible: false` is a statement about a sixteen-column screen, not
+about whether the setting exists. The row is still in the file and still
+editable there — it just takes up none of the forty slots the menu has,
+which is the point: someone reading their own config can see that
+`led.travelMs` is a thing and what it does, without it costing a row
+they would rather have on the screen. It is also the cure when the menu
+is longer than the screen, which the firmware says out loud on the
+serial log when it happens.
+
+Write it out. A file that omits `visible` behaves exactly as one that
+says `true`, and the shipped `src/factory-config.json` states it on
+every row so nobody has to know which keys have defaults.
 
 Which rows you get is entirely your choice: the firmware ships no menu
 of its own, so an operator who wants nothing adjustable gets nothing

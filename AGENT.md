@@ -226,7 +226,10 @@ pio test -d . -e test_native
 
 **A setting the menu can reach also needs** a row in the config's `menu`
 array — a line of JSON, because the menu resolves `set:` through the same
-field table, not a per-key switch in the firmware.
+field table, not a per-key switch in the firmware. `visible: false` keeps
+the row in the file and off the LCD; the shipped `src/factory-config.json`
+states `visible` on every row so the default is never doing work in the
+document everybody copies from.
 
 Settings bound at init (`led.totalLeds` goes into `FastLED.addLeds()`)
 must also be listed in `configFieldNeedsReboot()` in

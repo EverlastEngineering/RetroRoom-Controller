@@ -117,6 +117,23 @@ struct MenuItem {
 	// setting it.
 	bool preview;
 
+	// Show this row on the LCD. False means the setting exists, is in
+	// the config, and is deliberately not on the screen.
+	//
+	// The row is still parsed either way: `visible: false` is a
+	// statement about a 16x2 screen, not about whether the setting
+	// exists. Keeping it in the document is the entire point -- an
+	// operator reading their own /consoles.json can see that
+	// `led.brightnessPct` is a thing and what it does, without it
+	// costing one of the forty rows.
+	//
+	// Hiding a row also frees a slot, so a config with more settings
+	// than the screen can show gets the ones it wants on it.
+	//
+	// Absent means visible. Every config written before this flag
+	// existed has to keep behaving exactly as it did.
+	bool visible;
+
 	// A constructor, so a MenuItem is never half-built.
 	//
 	// The config parser assigned six of the seven fields and left
@@ -132,7 +149,8 @@ struct MenuItem {
 	// all seven still works, so the existing call sites are unaffected.
 	MenuItem(const char* label_ = nullptr, const char* key_ = nullptr,
 			 MenuAction action_ = MenuAction::NONE, bool isBool_ = false,
-			 int lo_ = 0, int hi_ = 0, int step_ = 1, bool preview_ = false)
+			 int lo_ = 0, int hi_ = 0, int step_ = 1, bool preview_ = false,
+			 bool visible_ = true)
 		: label(label_),
 		  key(key_),
 		  action(action_),
@@ -140,7 +158,8 @@ struct MenuItem {
 		  lo(lo_),
 		  hi(hi_),
 		  step(step_),
-		  preview(preview_) {}
+		  preview(preview_),
+		  visible(visible_) {}
 };
 
 // The parsed `menu` array. The shell owns the storage; the core only
