@@ -934,6 +934,64 @@ void test_brightness_cannot_exceed_the_supply(void) {
         TEST_ASSERT_EQUAL(0, r2.feel.brightnessPct);
 }
 
+// The regression: a copied menu must still know its own strings.
+//
+// ParsedMenu owns std::strings and points MenuItem at them with
+// `const char*`. A defaulted copy reallocates the strings to new
+// buffers and leaves every pointer aiming at the *source's*, so a
+// copied menu names nothing and every setting reads 0 -- which is
+// exactly what an operator saw: a blank first row and a value that
+// would not move.
+//
+// The test copies, lets the original go out of scope, and then reads the
+// copy, because a dangling pointer that happens to still contain the
+// old bytes would pass an assertion made in the same breath as the copy.
+static retroroom_core::ParsedMenu copiedMenu() {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30},
+                {"label": "Level", "set": "led.selfPct"}
+            ]
+        })";
+        return retroroom_core::loadFromJson(json).menu;
+}
+
+void test_a_copied_menu_points_at_its_own_strings(void) {
+        const retroroom_core::ParsedMenu m = copiedMenu();
+        // One scope further on from the parse that built them, and the
+        // strings are still the right ones.
+        TEST_ASSERT_EQUAL(2, static_cast<int>(m.items.size()));
+        TEST_ASSERT_EQUAL_STRING("Detents", m.items[0].label);
+        TEST_ASSERT_EQUAL_STRING("Level", m.items[1].label);
+        TEST_ASSERT_EQUAL_STRING("detentsPerStep", m.items[0].key);
+        TEST_ASSERT_EQUAL_STRING("selfPct", m.items[1].key);
+}
+
+// Copy *again*, so the copy is of a copy -- which is the case the
+// defaulted constructor was most wrong about, because the source was
+// already a temporary.
+void test_a_menu_survives_being_copied_twice(void) {
+        const retroroom_core::ParsedMenu once = copiedMenu();
+        const retroroom_core::ParsedMenu twice = once;
+        TEST_ASSERT_EQUAL_STRING("Detents", twice.items[0].label);
+        TEST_ASSERT_EQUAL_STRING("selfPct", twice.items[1].key);
+        // And the view it hands out is usable, which is what the shell
+        // actually asks for.
+        const retroroom_core::Menu v = twice.view();
+        TEST_ASSERT_EQUAL(2, v.count);
+        TEST_ASSERT_EQUAL_STRING("Detents", v.items[0].label);
+        // Which means the setting it names resolves.
+        const char* block = nullptr;
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField(
+            v.items[0].key, &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("led", block);
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -979,6 +1037,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_a_menu_entry_naming_nothing_real_is_skipped);
 	RUN_TEST(test_a_menu_cannot_offer_more_than_the_setting_allows);
 	RUN_TEST(test_a_config_with_no_menu_has_an_empty_one);
+	RUN_TEST(test_a_copied_menu_points_at_its_own_strings);
+	RUN_TEST(test_a_menu_survives_being_copied_twice);
 	// The writer.
 	RUN_TEST(test_saving_keeps_a_key_the_parser_never_heard_of);
 	RUN_TEST(test_saving_changes_only_what_it_was_told_to);

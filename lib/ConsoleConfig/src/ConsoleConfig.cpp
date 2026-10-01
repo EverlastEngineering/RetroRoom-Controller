@@ -367,13 +367,11 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 			item.step = isBool ? 1 : step;
 			result.menu.items.push_back(item);
 		}
-		// The strings may have been reallocated by now, so repoint every
-		// item at its own string. Cheap, once, and it removes the only
-		// way this can dangle.
-		for (std::size_t i = 0; i < result.menu.items.size(); ++i) {
-			result.menu.items[i].label = result.menu.labels[i].c_str();
-			result.menu.items[i].key = result.menu.keys[i].c_str();
-		}
+		// Re-aim every item at the strings as they now stand.
+		// ParsedMenu does this on every copy too, so there is one
+		// place that knows the relationship and no ordering to get
+		// right here.
+		result.menu.repoint();
 	}
 
 	// Top-level shelves block (optional). The physical extent of each

@@ -282,13 +282,60 @@ struct ParsedMenu {
     std::vector<std::string> labels;
     std::vector<std::string> keys;
     std::vector<MenuItem> items;
-    // The core's non-owning view of the same data. Valid as long as
-    // this struct is not assigned to.
+
+    // Re-aims every item at this struct's own strings. The parser calls
+    // this once it has finished building; the copy operations call it
+    // on themselves. One place knows the relationship, so there is no
+    // ordering to get right and no copy to forget.
+    void repoint() {
+        const std::size_t n =
+            items.size() < labels.size() ? items.size() : labels.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            items[i].label = labels[i].c_str();
+            items[i].key = i < keys.size() ? keys[i].c_str() : nullptr;
+        }
+    }
+
+    // The core's non-owning view of the same data. Valid until this
+    // struct is copied or assigned to, and not one moment longer.
     retroroom_core::Menu view() const {
         retroroom_core::Menu m;
         m.items = items.empty() ? nullptr : &items[0];
         m.count = static_cast<int>(items.size());
         return m;
+    }
+
+    // Copies repoint the items at *this* struct's strings.
+    //
+    // Written out rather than defaulted, because the compiler's copy
+    // is wrong here and wrong silently. MenuItem holds `const char*`
+    // into `labels` and `keys`; a defaulted copy reallocates those
+    // vectors to new buffers and leaves every pointer aiming at the
+    // source's. The shell does `menuDef = result.menu;` and `result`
+    // dies at the end of that function, so every label and key in the
+    // copy is left dangling -- which is what an operator sees as a menu
+    // row with no name and a setting that always reads 0.
+    //
+    // Owning strings beside non-owning views of them is the hazard; the
+    // cure is to make copying correct by construction rather than to
+    // document that you must not copy.
+    ParsedMenu() = default;
+    ParsedMenu(const ParsedMenu& other) { assignFrom(other); }
+    ParsedMenu& operator=(const ParsedMenu& other) {
+        if (this != &other) {
+            assignFrom(other);
+        }
+        return *this;
+    }
+    ParsedMenu(ParsedMenu&&) = default;
+    ParsedMenu& operator=(ParsedMenu&&) = default;
+
+private:
+    void assignFrom(const ParsedMenu& other) {
+        labels = other.labels;
+        keys = other.keys;
+        items = other.items;
+        repoint();
     }
 };
 
