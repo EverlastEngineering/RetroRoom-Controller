@@ -42,6 +42,8 @@ to reach for the remote.
   API for the console list.
 - Console list stored in LittleFS with rotating backups, so a bad write
   can't brick the config.
+- A configuration channel over the USB serial port, for the cases the
+  network cannot cover — see below.
 
 ## Development
 
@@ -52,6 +54,24 @@ policy and the platform gotchas. The helper scripts are in
 lines.
 
 For the API, the device serves its own OpenAPI spec at `/openapi`.
+
+### If you can't reach it over the network
+
+Everything above is HTTP, and HTTP needs a network. If the cabinet is
+on a network that is down, has a radio switched off (`network.disable`
+in the config), or is sitting in its own setup portal, open the USB
+serial port at 115200 and send a single `i`. The device answers with a
+list of what it will accept and stops its heartbeat until it is
+restarted.
+
+That channel is for configuration only — the config, the WiFi
+credentials, a reset, a restart. It is deliberately not a second way to
+drive the cabinet at runtime; lights and console selection are the web
+API's business.
+
+The protocol is in [`plans/serial-protocol.md`](plans/serial-protocol.md),
+and [`agent-script/e2e-serial.py`](agent-script/e2e-serial.py) is a
+worked client you can read or run.
 
 ## Still to do
 

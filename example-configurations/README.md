@@ -209,8 +209,23 @@ milder problem than a reference carrying a stale value.
   is machine-formatted and booleans come back as `0` / `1`; that is the
   same value, and nothing in the parser cares which one it read.
 
+## Taking a config off the device, and putting one back
 
-## The `menu` array
+Worth doing before you experiment with anything, and the only way that
+works when the cabinet has no usable network.
+
+`GET CONFIG` over the serial channel returns the config the cabinet is
+running, byte for byte, and the header says where it came from —
+`from flash` for yours, or `built-in default, nothing on flash` if it
+has never been configured. Either way you get a document you can edit,
+so the round trip is: take it, change it, `PUT CONFIG` it back,
+terminated by a line reading exactly `CONFIG DONE`.
+
+The channel is described in
+[`plans/serial-protocol.md`](../plans/serial-protocol.md), and the
+header and the newline rules matter — read that section before writing
+a client. A worked one is
+[`agent-script/e2e-serial.py`](../agent-script/e2e-serial.py).
 
 A long press on the rotary knob opens a menu whose contents the operator
 writes here. Each entry names a path into another block, so an item and
