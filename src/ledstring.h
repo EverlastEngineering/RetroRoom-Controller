@@ -49,6 +49,11 @@ extern void ledstring_init();
 //   - ledstring_init() at boot (once the first console is loaded)
 //   - controls_browseReset() when an abandoned browse is abandoned
 //     back to the selected console
+// Repaint the resting picture. Needed after a setting changes from
+// outside, because ledstring_loop() deliberately does nothing while
+// resting -- which means a live change would otherwise be invisible.
+extern void ledstring_repaint();
+
 extern void ledstring_setConsole(int idx);
 
 // Pump the in-flight animation, if there is one. Call from loop().

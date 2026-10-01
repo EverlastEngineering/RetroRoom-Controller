@@ -237,6 +237,23 @@ void menuMessage(MenuState& s, std::uint32_t nowMs,
 	s.messageUntilMs = nowMs + durationMs;
 }
 
+bool menuPreviewValue(const MenuState& s, const Menu& m, int* valueOut) {
+	if (s.mode != MenuMode::EDIT) {
+		return false;
+	}
+	if (s.selected < 0 || s.selected >= m.count) {
+		return false;
+	}
+	const MenuItem& item = m.items[s.selected];
+	if (!item.preview || item.action != MenuAction::NONE) {
+		return false;
+	}
+	if (valueOut != nullptr) {
+		*valueOut = s.draft;
+	}
+	return true;
+}
+
 bool menuActionNeedsReboot(const MenuState& s) {
 	return s.pendingNeedsReboot;
 }

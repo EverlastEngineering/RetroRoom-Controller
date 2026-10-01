@@ -171,3 +171,45 @@ milder problem than a reference carrying a stale value.
   by the `shelf` its consoles carry. The commit's explosion is clamped to
   it. Absent, the bound is the whole strip.
 - **`irCodes`**, **`consoleNames`**, **`lcd`** — unchanged.
+
+
+## The `menu` array
+
+A long press on the rotary knob opens a menu whose contents the operator
+writes here. Each entry names a path into another block, so an item and
+the setting it edits cannot drift apart.
+
+````json
+"menu": [
+  { "label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30 },
+  { "label": "Brightness", "set": "led.brightnessPct",
+    "min": 20, "max": 100, "step": 5, "preview": true }
+]
+````
+
+| key | meaning |
+|---|---|
+| `label` | what the row says. Clipped to 16 columns, never wrapped. |
+| `set` | the setting this edits, as `<block>.<field>`. |
+| `min` / `max` | the range the menu offers. May be **narrower** than the field's own range, never wider. |
+| `step` | how much one detent moves the value. Default 1. |
+| `type` | `"bool"` for an on/off toggle, which ignores `min`/`max`/`step`. |
+| `preview` | `true` applies the value **while the knob is turning** instead of on the click. Default `false`. |
+
+### `preview`
+
+Whether a setting should be applied as it is turned rather than when
+the operator clicks is a judgement about the *setting*, not about the
+code, so it is a per-item flag rather than a list in the firmware.
+
+Brightness is the case that earns it: you cannot tell what 30 looks
+like without seeing it, and otherwise finding out costs a round trip
+through save and reboot. `detentsPerStep` very much must **not** have
+it — a threshold that changes mid-turn invalidates the detent gate's
+accumulated position, so the knob would lurch partway through the very
+gesture that is setting it.
+
+A previewed value is applied through exactly the same path as a
+committed one and is recorded as pending in the same way, so clicking
+afterwards is still the thing that makes it stick, and `Go Back` or a
+reboot still discards it.

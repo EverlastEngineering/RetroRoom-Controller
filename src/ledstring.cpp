@@ -629,6 +629,19 @@ void ledstring_init() {
 // ledstring_browseProgress() / ledstring_selectEffect() for the animated
 // states that replaced the single detent-per-console paint.
 
+// Repaint the resting picture now.
+//
+// ledstring_loop() is a no-op in RESTING, on purpose: an idle strip has
+// nothing to animate and re-sending the same frame forever is time taken
+// from everything else. That is also why a setting changed from the
+// config menu would otherwise appear to do nothing -- the value is
+// applied, but nothing asks the strip to redraw it.
+void ledstring_repaint() {
+	if (mode == StripMode::RESTING) {
+		paintResting(currentConsoleIndex);
+	}
+}
+
 void ledstring_setConsole(int idx) {
 	// Resting paint for a console we are not animating toward. Also the
 	// escape hatch that cancels whatever animation was running, which is

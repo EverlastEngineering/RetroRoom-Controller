@@ -341,7 +341,27 @@ void rotarySelectorISR() {
 // place that decides who owns the knob, instead of the browse quietly
 // carrying on underneath the menu and both reacting to the same turn.
 void controls_menuDetent(int direction) {
-	menuDetent(menuState, CabinetMenu(), direction);
+	const retroroom_core::Menu m = CabinetMenu();
+	menuDetent(menuState, m, direction);
+
+	// Some settings the config marks "preview" are applied as they are
+	// turned rather than on the click. Brightness is the one that earns
+	// it: you cannot tell what 30 looks like without seeing it, and
+	// otherwise finding out costs a round trip through save and reboot.
+	//
+	// The same applyConfigValue() the commit uses, so a previewed value
+	// and a committed one cannot end up in different places, and it is
+	// recorded as pending like any other, so committing is still an
+	// explicit act.
+	int draft = 0;
+	if (menuPreviewValue(menuState, m, &draft) && m.count > 0 &&
+		menuState.selected >= 0 && menuState.selected < m.count) {
+		if (applyConfigValue(m.items[menuState.selected].key, draft)) {
+			// ledstring_loop() is a no-op while resting, so nothing
+			// would redraw the strip at the new level.
+			ledstring_repaint();
+		}
+	}
 }
 
 void controls_menuClick() {

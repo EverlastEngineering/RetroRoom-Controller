@@ -365,6 +365,10 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 			item.lo = isBool ? 0 : lo;
 			item.hi = isBool ? 1 : hi;
 			item.step = isBool ? 1 : step;
+			// "preview": apply while turning rather than on commit. Off
+			// by default, because whether a setting benefits from live
+			// feedback is a judgement about the setting.
+			item.preview = (obj["preview"] | false);
 			result.menu.items.push_back(item);
 		}
 		// Re-aim every item at the strings as they now stand.

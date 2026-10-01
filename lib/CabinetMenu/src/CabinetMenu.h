@@ -92,6 +92,19 @@ struct MenuItem {
 	int lo;
 	int hi;
 	int step;
+	// Apply the draft while the operator is turning, rather than
+	// waiting for the click.
+	//
+	// Per item, and off by default, because "should this setting be
+	// visible as I turn it" is a judgement about the setting and not
+	// about the code. Brightness wants it -- the whole difficulty is
+	// that you cannot tell what 30 looks like and it costs a
+	// round-trip through save and reboot to find out otherwise.
+	// detentsPerStep very much does not: a threshold that changes
+	// mid-turn invalidates the detent gate's accumulated position, so
+	// the knob would lurch partway through the very gesture that is
+	// setting it.
+	bool preview;
 
 	// A constructor, so a MenuItem is never half-built.
 	//
@@ -108,14 +121,15 @@ struct MenuItem {
 	// all seven still works, so the existing call sites are unaffected.
 	MenuItem(const char* label_ = nullptr, const char* key_ = nullptr,
 			 MenuAction action_ = MenuAction::NONE, bool isBool_ = false,
-			 int lo_ = 0, int hi_ = 0, int step_ = 1)
+			 int lo_ = 0, int hi_ = 0, int step_ = 1, bool preview_ = false)
 		: label(label_),
 		  key(key_),
 		  action(action_),
 		  isBool(isBool_),
 		  lo(lo_),
 		  hi(hi_),
-		  step(step_) {}
+		  step(step_),
+		  preview(preview_) {}
 };
 
 // The parsed `menu` array. The shell owns the storage; the core only
@@ -212,6 +226,17 @@ bool menuMessageVisible(const MenuState& s, std::uint32_t nowMs);
 // raises the confirmation, by asking configFieldNeedsReboot() whether
 // any setting it changed is init-bound.
 bool menuActionNeedsReboot(const MenuState& s);
+
+// The draft to apply *right now*, if the item being edited is one the
+// config asked to preview. False for everything else, so the default
+// stays "a setting changes when you commit it, not while you turn it".
+//
+// The core decides only *whether* to preview -- it has no idea what a
+// setting is or where its storage lives, so it hands back a number and
+// the shell applies it through the same setLedFeelValue() the commit
+// uses. One path, so a previewed value and a committed value cannot
+// end up in different places.
+bool menuPreviewValue(const MenuState& s, const Menu& m, int* valueOut);
 
 // A click in the editor. Writes the draft through `valueOut` and
 // returns to the list, showing the new value for kMenuSavedMs.

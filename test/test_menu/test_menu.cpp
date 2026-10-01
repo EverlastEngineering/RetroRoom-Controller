@@ -42,6 +42,11 @@ using retroroom_core::menuWindowFirst;
 using retroroom_core::kMenuGoBackLabel;
 using retroroom_core::kMenuSavedMs;
 
+// A setting the config asks to preview, and one it does not.
+static const MenuItem kPreviewItem = {"Brightness", "brightnessPct",
+                                      retroroom_core::MenuAction::NONE,
+                                      false, 20, 100, 5, true};
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -661,6 +666,58 @@ static void test_the_prompt_marks_the_chosen_row(void) {
                                  "the marker must move to the chosen row");
 }
 
+// A setting the config marks "preview" is applied as it is turned. The
+// core decides only *whether* -- it hands back a number and the shell
+// applies it -- so these tests are about the decision, not about
+// anything to do with storage.
+static void test_a_previewed_setting_offers_its_draft_while_turning(void) {
+        MenuItem buf[8];
+        const Menu m = menuWithActions(buf, 8, &kPreviewItem, 1);
+        MenuState s;
+        menuOpen(s);
+        menuSelect(s, m, 40);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(retroroom_core::MenuMode::EDIT),
+                             static_cast<int>(s.mode));
+
+        int draft = -1;
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::menuPreviewValue(s, m, &draft),
+            "a preview item must offer its draft while being turned");
+        menuDetent(s, m, 1);
+        TEST_ASSERT_TRUE(retroroom_core::menuPreviewValue(s, m, &draft));
+        TEST_ASSERT_EQUAL_INT_MESSAGE(45, draft, "the draft must track the knob");
+}
+
+// ...and one that does not is silent, so detentsPerStep cannot change
+// the gate's threshold underneath the turn that is setting it.
+static void test_an_ordinary_setting_offers_nothing_while_turning(void) {
+        MenuItem buf[8];
+        const Menu m = menuWithActions(buf, 8, &kItems[0], 1);
+        MenuState s;
+        menuOpen(s);
+        menuSelect(s, m, 5);
+
+        int draft = -1;
+        TEST_ASSERT_FALSE_MESSAGE(
+            retroroom_core::menuPreviewValue(s, m, &draft),
+            "changing the threshold mid-turn would reset the detent gate");
+        menuDetent(s, m, 1);
+        TEST_ASSERT_FALSE(retroroom_core::menuPreviewValue(s, m, &draft));
+}
+
+// Previewing is for the editor. In the list there is no draft, and a
+// confirm prompt has nothing to preview.
+static void test_nothing_is_previewed_outside_the_editor(void) {
+        MenuItem buf[8];
+        const Menu m = menuWithActions(buf, 8, &kPreviewItem, 1);
+        MenuState s;
+        menuOpen(s);
+        int draft = -1;
+        TEST_ASSERT_FALSE(retroroom_core::menuPreviewValue(s, m, &draft));
+        s.mode = retroroom_core::MenuMode::CONFIRM;
+        TEST_ASSERT_FALSE(retroroom_core::menuPreviewValue(s, m, &draft));
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -689,6 +746,10 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_prompt_names_the_consequence);
 	RUN_TEST(test_the_prompt_only_scrolls_its_own_two_rows);
 	RUN_TEST(test_the_prompt_marks_the_chosen_row);
+	// Preview: a setting applied while it is turned.
+	RUN_TEST(test_a_previewed_setting_offers_its_draft_while_turning);
+	RUN_TEST(test_an_ordinary_setting_offers_nothing_while_turning);
+	RUN_TEST(test_nothing_is_previewed_outside_the_editor);
 	RUN_TEST(test_backing_out_of_the_prompt_chooses_nothing);
 	RUN_TEST(test_confirming_returns_the_action_and_its_reboot_flag);
 	RUN_TEST(test_go_back_is_immediate);
