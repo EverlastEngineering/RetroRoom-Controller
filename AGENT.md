@@ -160,8 +160,23 @@ including one you remember from a previous session.
 ```sh
 ./agent-script/pio-build.sh          # firmware compile check
 ./agent-script/ledstring-sim.sh      # replay the LED string animations
+./agent-script/led-feel-check.sh     # configs still agree with the defaults
 pio test -d . -e test_native         # host unit tests
 ```
+
+**Run `led-feel-check.sh` before committing anything that touched
+`LedFeel`, a default, or a config file.** It is the ritual that was
+asked for and then forgotten: the `led` block exists in
+`defaultLedFeel()`, in the config a fresh cabinet runs, and in seven
+example configs, and copies drift silently. They had — three fields
+were missing from the two configs that claim to be complete, and
+nothing noticed until a test asked.
+
+It fails on a config missing a field or naming one the code does not
+have, and only *reports* a differing value, because
+`led.totalLeds` is 118 in the configs (the fitted length) against 512
+in the code (the build capacity) and that difference is deliberate.
+`--verbose` prints every value.
 
 Pure decision logic belongs in `lib/` (no Arduino/FastLED dependencies)
 precisely so it is testable on the host. If you write logic that touches

@@ -1,6 +1,13 @@
 #include <ConsoleConfig.h>
 #include <unity.h>
 
+// The shipped-config test below reads the raw document to see which
+// keys are *present*, which means it needs a parser of its own rather
+// than the LoadResult. -DARDUINOJSON_ENABLE_ARDUINO=0 is already set
+// for this environment by platformio.ini, so no Arduino headers are
+// pulled in by this.
+#include <ArduinoJson.h>
+
 #include <string>
 
 using retroroom_core::Console;
@@ -1384,6 +1391,60 @@ void test_the_shipped_menu_fits_the_shell_array(void) {
 	}
 }
 
+// The last of the anti-drift work, and the one that was still open.
+//
+// The shipped config is called "all options" and it is the file a
+// fresh cabinet runs. If it omits a field, that field silently takes
+// defaultLedFeel()'s value -- which is invisible until the two
+// disagree, and it did: `ringOffDelayMs`, `ringFadeMs` and
+// `brightnessPct` were missing from *both* the shipped config and
+// example6, in files whose whole claim is that they are complete.
+//
+// So: every field in the registry must be *stated*. Presence, and not
+// value, and the difference matters. `result.feel` has defaults filled
+// in for absent fields, so comparing the parsed result cannot tell a
+// stated field from a missing one -- hence the raw document.
+//
+// Value-equality with the defaults was tried and dropped: the file
+// deliberately differs in at least one place. `led.totalLeds` is 118
+// because that is how long the fitted string is (pin-map-chart.md),
+// while defaultLedFeel() says 512 because that is the build capacity.
+// Asserting equality would need an exception list, and an exception
+// list is a list that grows. What the file *is* held to is completeness
+// and range -- and range is already covered, because the parser clamps
+// out-of-range values and the "warns about nothing" assertion in
+// test_the_shipped_config_parses would catch it.
+void test_the_shipped_config_states_every_led_field(void) {
+	// Parse the raw document rather than the LoadResult, because the
+	// thing under test is which keys are *present*.
+	JsonDocument doc;
+	DeserializationError err = deserializeJson(doc, kFactoryConfigJson);
+	TEST_ASSERT_FALSE_MESSAGE(err, err.c_str());
+	const JsonObjectConst led = doc["led"];
+	TEST_ASSERT_FALSE_MESSAGE(led.isNull(), "shipped config has no led block");
+
+	int blocks = 0;
+	const retroroom_core::ConfigBlock* blockTable =
+	    retroroom_core::configBlocks(&blocks);
+	int checked = 0;
+	for (int b = 0; b < blocks; ++b) {
+		if (std::string(blockTable[b].prefix) != "led") {
+			continue;
+		}
+		for (int f = 0; f < blockTable[b].count; ++f) {
+			++checked;
+			TEST_ASSERT_TRUE_MESSAGE(
+			    led.containsKey(blockTable[b].fields[f].key),
+			    blockTable[b].fields[f].key);
+		}
+	}
+	// Guard against the loop above quietly testing nothing, which is
+	// what would happen if the block prefix were ever renamed.
+	TEST_ASSERT_TRUE_MESSAGE(checked > 25,
+	                         "expected to check every led field; the "
+	                         "registry walk found too few");
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -1457,5 +1518,6 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_shipped_config_parses);
 	RUN_TEST(test_every_config_field_has_a_menu_row_in_the_shipped_config);
 	RUN_TEST(test_the_shipped_menu_fits_the_shell_array);
+	RUN_TEST(test_the_shipped_config_states_every_led_field);
 	return UNITY_END();
 }

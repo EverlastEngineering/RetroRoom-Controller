@@ -74,39 +74,10 @@ R""""(
         "igniteMs": 200,
         "ringIdleMs": 5000,
         "ringFlashMs": 120,
-        "frameIntervalMs": 8,
-        "colors": {
-            "stack": [
-                12,
-                28,
-                40
-            ],
-            "leaving": [
-                20,
-                34,
-                48
-            ],
-            "fill": [
-                16,
-                40,
-                56
-            ],
-            "travel": [
-                64,
-                40,
-                8
-            ],
-            "proposal": [
-                64,
-                40,
-                8
-            ],
-            "selected": [
-                48,
-                36,
-                24
-            ]
-        }
+        "ringOffDelayMs": 300,
+        "ringFadeMs": 300,
+        "brightnessPct": 100,
+        "frameIntervalMs": 8
     },
     "lcd": {
         "backlightOffAfterMs": 2000
