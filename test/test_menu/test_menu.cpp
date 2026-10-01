@@ -339,8 +339,12 @@ static void test_a_commit_writes_the_draft_and_shows_it_briefly(void) {
 	// other row is untouched, which is what makes it obvious the value
 	// belongs to the marked item and not to the list.
 	MenuView v = menuView(s, m, 1100, 2, 16);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">7"), v.row[0]);
-	TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Level"), v.row[1]);
+        // A confirmation of its own: the "Current:" line the operator was
+        // just reading, carrying the value they chose, nothing below it.
+        // It used to replace the row's *label* with a bare number, so the
+        // setting appeared to lose its name for a second.
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, "Current: 7"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, ""), v.row[1]);
 
 	// And it reverts to the label on its own once the moment passes.
 	menuTick(s, 1000 + kMenuSavedMs + 1);
@@ -506,9 +510,9 @@ static void test_the_prompt_names_the_consequence(void) {
         s.pendingNeedsReboot = true;
         menuSelect(s, m, 0);
         v = menuView(s, m, 0, 2, 16);
-        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Save+Reboot"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Save & Reboot"), v.row[0]);
         // rowIs() trims the padding, so the comparison above is against
-        // the text and not the filled row: ">Save+Reboot" is thirteen
+        // the text and not the filled row: ">Save & Reboot" is thirteen
         // columns. ">Save + Reboot" would be exactly sixteen and fit
         // with nothing to spare, which is the kind of tight fit that
         // breaks silently the next time somebody rewords it.
@@ -595,6 +599,68 @@ static void test_a_message_covers_the_list_then_goes_away(void) {
                                  "the list must come back under the message");
 }
 
+// The confirmation screen scrolls two rows, not the whole menu. Reported
+// as "it takes three extra detents to get back up": the clamp was
+// against the menu's length, so turning up from the top of a two-row
+// prompt silently walked the three rows underneath it before returning.
+static void test_the_prompt_only_scrolls_its_own_two_rows(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        menuSelect(s, m, 0);
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(retroroom_core::MenuMode::CONFIRM),
+                             static_cast<int>(s.mode));
+
+        // Down to the second row, and no further.
+        menuDetent(s, m, 1);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, s.selected, "one row down");
+        menuDetent(s, m, 1);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, s.selected,
+                                      "a two-row prompt has nowhere further to go");
+        // And back up in one, not three.
+        menuDetent(s, m, -1);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, s.selected,
+                                      "one row up, not a walk back through the "
+                                      "items below the prompt");
+        menuDetent(s, m, -1);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, s.selected, "and it stays at the top");
+}
+
+// The marker belongs to the selected row in the prompt too, and neither
+// row carries a number.
+static void test_the_prompt_marks_the_chosen_row(void) {
+        MenuItem buf[8];
+        const Menu m = systemMenu(buf, kItems, 2);
+        MenuState s;
+        menuOpen(s);
+        menuDetent(s, m, 1);
+        menuDetent(s, m, 1);
+        s.pendingNeedsReboot = true;
+        menuSelect(s, m, 0);
+
+        MenuView v = menuView(s, m, 0, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, ">Save & Reboot"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Go Back"), v.row[1]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, " Go Back") == false ||
+                                 v.row[1][0] == ' ',
+                                 "the unselected row must not carry the marker");
+
+        // Move down: the marker follows.
+        menuDetent(s, m, 1);
+        v = menuView(s, m, 0, 2, 16);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 0, " Save & Reboot"), v.row[0]);
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, ">Go Back"), v.row[1]);
+        // rowIs() trims the panel padding, so the comparison above is
+        // against the text: ">Go Back" is eight columns and would still
+        // read the same with a "2:" in front. Asserting the width here
+        // only proved the row was padded.
+        TEST_ASSERT_TRUE_MESSAGE(rowIs(v, 1, ">Go Back"),
+                                 "the marker must move to the chosen row");
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -621,6 +687,8 @@ int main(int argc, char** argv) {
 	// Actions: the rows that do something other than edit a setting.
 	RUN_TEST(test_an_action_row_cannot_be_edited);
 	RUN_TEST(test_the_prompt_names_the_consequence);
+	RUN_TEST(test_the_prompt_only_scrolls_its_own_two_rows);
+	RUN_TEST(test_the_prompt_marks_the_chosen_row);
 	RUN_TEST(test_backing_out_of_the_prompt_chooses_nothing);
 	RUN_TEST(test_confirming_returns_the_action_and_its_reboot_flag);
 	RUN_TEST(test_go_back_is_immediate);

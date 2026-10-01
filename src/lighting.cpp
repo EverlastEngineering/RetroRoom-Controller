@@ -49,9 +49,7 @@ CRGB leds[NUM_RING_LEDS];
 // it is a brown-out when the strip is fully lit.
 static const uint8_t kBrightnessBase = 150;
 
-// The last scale actually pushed to FastLED, so the (comparatively
-// expensive) call happens on a change rather than every tick.
-static uint8_t lastBrightnessScale = 0;
+
 
 // How bright the dim base fill is at full level -- DarkBlue's blue
 // channel, written as a number so the relationship to CRGB::DarkBlue is
@@ -82,11 +80,18 @@ namespace {
 // cached copy of a ledFeel value is a value the config menu cannot
 // change -- the same mistake as the browse gate's detent thresholds,
 // and the reason those now arrive per call.
+// led.brightnessPct as a 0..255 multiplier, applied to the pixels this
+// file writes.
+//
+// It is deliberately NOT FastLED's setBrightness(). That sets one
+// global mScale which the RP2040 PIO backend does not appear to
+// honour -- brightnessPct was saved, survived a reboot, and the LEDs
+// did not move. Scaling where the levels become pixels is one line, is
+// the same shape as the strip's, and does not depend on how a
+// particular backend happens to treat mScale.
 uint8_t ledBrightnessScale() {
-	const uint32_t scaled =
-		(static_cast<uint32_t>(kBrightnessBase) *
-		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u;
-	return static_cast<uint8_t>(scaled > 255u ? 255u : scaled);
+	return static_cast<uint8_t>(
+		(static_cast<uint32_t>(255) * static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
 }
 
 // The config's `led` block as the core wants it. Read fresh on every use
@@ -118,8 +123,9 @@ void pushPaint(const RingPaint& p) {
 	if (hasPushed && samePaint(p, lastPushed)) {
 		return;
 	}
+	const uint8_t scale = ledBrightnessScale();
 	const uint8_t base = static_cast<uint8_t>(
-		(static_cast<uint32_t>(kBaseBlue) * p.baseLevel) / 255);
+		(static_cast<uint32_t>(kBaseBlue) * p.baseLevel * scale) / (255u * 255u));
 	for (int i = 0; i < NUM_RING_LEDS; ++i) {
 		leds[i] = CRGB(0, 0, base);
 	}
@@ -128,7 +134,9 @@ void pushPaint(const RingPaint& p) {
 		if (idx < 0 || idx >= NUM_RING_LEDS) {
 			continue;
 		}
-		leds[idx] = CRGB(p.highlightLevel, p.highlightLevel, p.highlightLevel);
+		const uint8_t hot = static_cast<uint8_t>(
+			(static_cast<uint32_t>(p.highlightLevel) * scale) / 255u);
+		leds[idx] = CRGB(hot, hot, hot);
 	}
 	FastLED.show();
 	lastPushed = p;
@@ -195,7 +203,7 @@ void lighting_init() {
 	// parameter name). We use RR_FASTLED_DATA_PIN, defined in lighting.h
 	// to the numeric pin number from configuration.h.
 	FastLED.addLeds<WS2812B, LED_RING_DATA_PIN, GRB>(leds, NUM_RING_LEDS);
-	FastLED.setBrightness(ledBrightnessScale());
+	FastLED.setBrightness(kBrightnessBase);
 	// Clear the ring at boot. The previous boot-time R/G/B smoke test was
 	// removed on session/merge-pico-json (per user request); the LED will
 	// stay dark until something drives it.

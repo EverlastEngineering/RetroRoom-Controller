@@ -269,11 +269,19 @@ void pushFrame(const retroroom_core::StripFrame& frame) {
 	// reentrant -- the paint functions are only ever called from loop().
 	static retroroom_core::StripPixel px[retroroom_core::kLedStripCapacity];
 	retroroom_core::computeStripFrame(frame, px);
+	// One global scale, applied here where the levels become pixels --
+	// after every role percentage, so the balance the bench work
+	// established is preserved and only the overall level moves. See
+	// ledBrightnessScale() in src/lighting.cpp for why this is not
+	// FastLED's setBrightness().
+	const uint8_t scale = static_cast<uint8_t>(
+		(static_cast<uint32_t>(255) *
+		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
 	for (int i = 0; i < ledFeel.totalLeds; ++i) {
 		const retroroom_core::LedColor c = retroroom_core::resolvePixel(frame, px[i]);
-		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r),
-							  static_cast<uint8_t>(c.g),
-							  static_cast<uint8_t>(c.b));
+		selectedLeds[i] = CRGB(static_cast<uint8_t>(c.r * scale / 255),
+							  static_cast<uint8_t>(c.g * scale / 255),
+							  static_cast<uint8_t>(c.b * scale / 255));
 	}
 	FastLED.show();
 	// Time the work, not the wait. FastLED.show() is synchronous on the

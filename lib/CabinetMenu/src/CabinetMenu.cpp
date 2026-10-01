@@ -65,19 +65,15 @@ void place(char* out, int storage, int width, int col, const char* text) {
 	}
 }
 
-// The label for one list row, or the saved value while the
-// just-committed value is still on screen.
-const char* listLabel(const MenuState& s, const Menu& m, int index,
-					  bool showingSaved) {
-	static char valueText[12];
-	if (showingSaved && index == s.selected) {
-		// In the label's place, right-aligned. There is no room for
-		// "label = value" on sixteen columns, and the row is already
-		// marked with '>' so there is no ambiguity about which item it
-		// belongs to.
-		std::snprintf(valueText, sizeof(valueText), "%d", s.saved);
-		return valueText;
-	}
+// The label for one list row.
+//
+// A just-committed value used to be substituted *here*, so the row
+// read as a bare number for a second and then got its name back. That
+// is a confirmation the operator has to infer, and it looks broken
+// because the thing that vanishes is the thing they were looking for.
+// The value now gets its own screen; see the saved-value branch in
+// menuView.
+const char* listLabel(const Menu& m, int index) {
 	return m.items[index].label;
 }
 
@@ -119,7 +115,16 @@ void menuDetent(MenuState& s, const Menu& m, int direction) {
 		return;
 	}
 	const int total = totalEntries(m);
-	if (s.mode == MenuMode::LIST || s.mode == MenuMode::CONFIRM) {
+	if (s.mode == MenuMode::CONFIRM) {
+		// Two rows, not the whole menu. Clamping against the *menu's*
+		// length here meant turning up from the top of a two-row prompt
+		// silently walked through the three items below it before coming
+		// back -- the confirmation was scrolling a list it is not
+		// showing. Reported as "it takes three extra detents to get back".
+		s.selected = clampInt(s.selected + direction, 0, 1);
+		return;
+	}
+	if (s.mode == MenuMode::LIST) {
 		// Clamp, never wrap. A knob that wraps the ends of a menu has
 		// silently changed a setting on its way to somewhere the
 		// operator was not looking.
@@ -276,26 +281,41 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		// "Save+Reboot" are the same decision told honestly, and the
 		// operator finds out the restart before they commit to it rather
 		// than after.
-		//
-		// Thirteen columns, not sixteen: "1:>Save+Reboot" is exactly
-		// sixteen and would fit with nothing to spare, which is the
-		// kind of tight fit that breaks silently the next time somebody
-		// rewords it.
 		char buf[17];
-		std::snprintf(buf, sizeof(buf), ">%s", s.pending == MenuAction::REBOOT
+		std::snprintf(buf, sizeof(buf), s.selected == 0 ? ">%s" : " %s", s.pending == MenuAction::REBOOT
 										   ? "Reboot"
-										   : (s.pendingNeedsReboot ? "Save+Reboot"
+										   : (s.pendingNeedsReboot ? "Save & Reboot"
 																  : "Save"));
 		place(v.row[0], 17, width, 0, buf);
 		place(v.row[1], 17, width, 0, s.selected == 0 ? " Go Back"
-													   : "2:>Go Back");
+													   : ">Go Back");
 		return v;
 	}
+	const bool savedVisible = showingSaved(nowMs, s.savedUntilMs);
+
 
 	// A message covers the list entirely. Not stacked on it: on sixteen
 	// columns there is nowhere to put a notice without hiding the thing
 	// the notice is about, and "Reboot to see all changes" is only
 	// meaningful on its own.
+	// A commit's confirmation. Its own screen rather than a mutated
+	// list row, because "4" replacing the name of a setting is not
+	// something the operator reads as "that worked" -- it reads as the
+	// menu having lost its labels.
+	if (savedVisible) {
+		char buf[17];
+		// "Current: N" rather than a bare number or a "Saved" header: the
+		// word the operator has been reading for the last ten seconds
+		// now names the number they just chose, so the screen is
+		// recognisably the same one with a new value in it.
+		std::snprintf(buf, sizeof(buf), "Current: %d", s.saved);
+		place(v.row[0], 17, width, 0, buf);
+		// Row 1 stays blank rather than echoing the value: one line
+		// saying it happened is enough, and a second line of it would
+		// be another thing to misread.
+		place(v.row[1], 17, width, 0, "");
+		return v;
+	}
 	if (menuMessageVisible(s, nowMs)) {
 		place(v.row[0], 17, width, 0, "Reboot to see");
 		place(v.row[1], 17, width, 0, "all changes");
@@ -304,7 +324,6 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 
 	const int total = totalEntries(m);
 	const int first = menuWindowFirst(s.selected, total, rows);
-	const bool savedVisible = showingSaved(nowMs, s.savedUntilMs);
 
 	for (int r = 0; r < rows; ++r) {
 		const int index = first + r;
@@ -323,7 +342,7 @@ MenuView menuView(const MenuState& s, const Menu& m, std::uint32_t nowMs,
 		// can act on.
 		std::snprintf(buf, sizeof(buf), "%s%s",
 							  index == s.selected ? ">" : " ",
-							  listLabel(s, m, index, savedVisible));
+							  listLabel(m, index));
 		place(v.row[r], 17, width, 0, buf);
 	}
 	return v;
