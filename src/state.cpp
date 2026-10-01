@@ -59,18 +59,25 @@ void flashLed() {
 }
 
 void flashLedTick() {
-	// On-board LED blink driver. Two cadences picked automatically
+	// On-board LED blink driver. Three cadences picked automatically
 	// by network state:
 	//   fast flash (500 ms on / 500 ms off): "needs wifi config" --
 	//     SoftAP / captive-portal mode or no wifi configured. The
 	//     operator can tell at a glance that the device hasn't
-	//     joined a network yet.
+	//     joined a network yet. This is a *request for attention*, so
+	//     it must only fire when there is something to attend to.
 	//   slow blink (250 ms on / 2750 ms off, ~3 s period): "online
 	//     and happy" -- STA mode with an IP, server running, waiting
 	//     for UI commands. Replaces the legacy 1 Hz heartbeat from
 	//     main.cpp::loop(); slow + asymmetric makes the heartbeat
 	//     visually distinct from the "needs config" flash while
 	//     still being a clear "alive" signal.
+	//   a disabled network gets the slow blink too. A cabinet with
+	//     `network.disable` set is not a cabinet that failed to join
+	//     anything, and blinking at the "needs config" rate would be
+	//     reporting a fault on a device that is working exactly as
+	//     configured. The fast flash means "there is something for
+	//     you to do here", and there is not.
 	// The /ledOn / /ledOff / /flash handlers set `flash = false`
 	// when the operator takes manual control; this driver then
 	// idles and the LED follows whatever setLed() last wrote.
@@ -82,7 +89,7 @@ void flashLedTick() {
 		return;
 	}
 	const unsigned long halfPeriodMs =
-		network_inStaMode() ? 2750UL : 500UL;
+		(network_inStaMode() || network_disabled()) ? 2750UL : 500UL;
 	if (millis() - lastBlink < halfPeriodMs) {
 		return;
 	}
@@ -131,7 +138,12 @@ void heartbeatTick() {
 	Serial.print(" total=");
 	Serial.print(HowManyConsoles());
 	Serial.print(" mode=");
-	Serial.print(network_inStaMode() ? "sta" : "ap");
+	// Three values, not two. "off" means the radio was never started
+	// because the config said not to, which is a different fact from
+	// "the join did not happen" -- and a postmortem log is exactly
+	// where someone will later need to tell those apart.
+	Serial.print(network_disabled() ? "off"
+	                                : (network_inStaMode() ? "sta" : "ap"));
 	Serial.println();
 #endif // HAS_WIFI
 }

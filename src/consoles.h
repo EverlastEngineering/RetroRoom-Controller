@@ -51,6 +51,24 @@ extern uint32_t currentConsoleSelectedAtMs;
 // 0 means "never off". Consumed by src/display.cpp. RAM-only --
 // reloaded from the config on every boot.
 extern uint32_t lcdBacklightOffAfterMs;
+// Whether a failed WiFi join should put "No WIFI, Look" / "For
+// RetroRoom AP" on the LCD for a couple of seconds before the SoftAP
+// comes up. Populated from `network.showWIFIConnectionFailureMessage`
+// in /consoles.json (default true), readable and writable through
+// applyConfigValue() like any other setting, and consulted by
+// src/network.cpp. RAM-only -- reloaded on every boot.
+extern bool showWifiConnectionFailureMessage;
+// Whether the radio is left off entirely, from `network.disable` in
+// /consoles.json (default false). Read by src/network.cpp before it
+// touches the radio, and by src/state.cpp so the on-board LED and the
+// heartbeat report "off" rather than a network problem the operator
+// asked for.
+//
+// Boot-time only: the radio is consulted once, before anything is
+// brought up, so a change takes effect on the next restart -- which
+// the menu prompt says, because configFieldNeedsReboot() declares it.
+// RAM-only -- reloaded on every boot.
+extern bool networkDisabled;
 
 void addConsole(const Console& console);
 int HowManyConsoles();

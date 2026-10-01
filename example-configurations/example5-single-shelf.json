@@ -53,6 +53,7 @@
         "igniteMs": 200
     },
     "menu": [
-        { "label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30 }
+        { "label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30 },
+        { "label": "WiFi off", "set": "network.disable", "type": "bool" }
     ]
 }

@@ -290,12 +290,52 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 		}
 	}
 
-	// Top-level menu array (optional). The operator's own settings menu:
-	// each entry names a `led` key, so adding an adjustable setting is a
-	// line of JSON rather than a firmware change.
+	// Top-level network block (optional). Two fields today, and both
+	// are bools rather than numbers with a unit -- so they are stored
+	// as ints in the shared field table, which is what lets the menu's
+	// "type": "bool" treat them like any other 0/1 setting instead of
+	// needing to know what they mean.
 	//
-	// Entries are validated against the shared field table, and one that
-	// does not name a real `led` key is dropped with a warning rather
+	// Read through the registry rather than by hand, so the range the
+	// parser enforces is the same one the menu offers and the same one
+	// the writer clamps to. Three places to state "0 or 1" is three
+	// places to disagree.
+	JsonObjectConst netObj = doc["network"];
+	if (!netObj.isNull()) {
+		struct {
+			const char* jsonKey;
+			const char* path;
+			bool* target;
+		} const kBools[] = {
+			{"showWIFIConnectionFailureMessage",
+			 "network.showWIFIConnectionFailureMessage",
+			 &result.showWifiConnectionFailureMessage},
+			{"disable", "network.disable", &result.networkDisabled},
+		};
+		for (const auto& b : kBools) {
+			JsonVariantConst v = netObj[b.jsonKey];
+			if (v.isNull()) {
+				continue;
+			}
+			const LedField* def = findConfigField(b.path, nullptr);
+			int on = v.as<int>();
+			if (def != nullptr && (on < def->lo || on > def->hi)) {
+				result.warnings.push_back(
+					std::string("network.") + b.jsonKey +
+					" was not 0 or 1; clamped");
+				on = on < def->lo ? def->lo : def->hi;
+			}
+			*b.target = (on != 0);
+		}
+	}
+
+	// Top-level menu array (optional). The operator's own settings menu:
+	// each entry names a path into one of the other blocks, so adding an
+	// adjustable setting is a line of JSON rather than a firmware
+	// change.
+	//
+	// Entries are validated against the shared field registry, and one
+	// that does not name a real setting is dropped with a warning rather
 	// than taking the whole menu down. A menu is the thing an operator
 	// edits by hand, so a typo in it is likely, and a cabinet whose
 	// menu vanished because of one is worse than a menu with one entry
@@ -314,23 +354,30 @@ LoadResult loadFromJson(const char* json, std::size_t len) {
 					"menu entry needs both \"label\" and \"set\"; skipped");
 				continue;
 			}
-			// The `led` prefix is stripped so the JSON says
-			// "led.detentsPerStep" and the table, which is keyed on the
-			// bare field name, can be asked directly. Writing the prefix
-			// in the config is the clearer thing for the operator to
-			// read, so the parser does the unwrapping rather than making
-			// them remember which half of the path the table knows.
-			std::string field = key;
-			if (field.compare(0, 4, "led.") == 0) {
-				field = field.substr(4);
-			}
-			const LedField* def = findLedField(field.c_str());
-			if (def == nullptr) {
+			// Resolved through the same registry every other client
+			// uses, and stored normalised to "<block>.<field>".
+			//
+			// It used to strip a literal "led." prefix and look the
+			// bare key up in findLedField(), which meant a menu could
+			// only ever edit the strip -- while the documentation and
+			// the `lcd` block both said otherwise. The two disagreed,
+			// and the code was the one that was wrong.
+			//
+			// Normalising rather than keeping whatever the operator
+			// typed is what makes the key safe to hand straight to
+			// applyConfigValue() and to the writer: "detentsPerStep"
+			// and "led.detentsPerStep" mean the same setting but write
+			// back differently, and only the long form says which
+			// block was meant.
+			const char* block = nullptr;
+			const LedField* def = findConfigField(key, &block);
+			if (def == nullptr || block == nullptr) {
 				result.warnings.push_back(
 					std::string("menu entry \"") + label +
-					"\" names an unknown setting \"" + field + "\"; skipped");
+					"\" names an unknown setting \"" + key + "\"; skipped");
 				continue;
 			}
+			const std::string field = std::string(block) + "." + def->key;
 			// `min`/`max` narrow what the menu offers and default to the
 			// field's own range. They are allowed to be narrower and NOT
 			// wider: a menu that offers values the file would refuse is

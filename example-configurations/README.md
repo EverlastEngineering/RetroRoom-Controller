@@ -170,7 +170,44 @@ milder problem than a reference carrying a stale value.
 - **`shelves[]`** — optional. `{id, fromLed, toLed}`, inclusive, keyed
   by the `shelf` its consoles carry. The commit's explosion is clamped to
   it. Absent, the bound is the whole strip.
-- **`irCodes`**, **`consoleNames`**, **`lcd`** — unchanged.
+- **`irCodes`**, **`consoleNames`** — unchanged.
+- **`lcd`** — `backlightOffAfterMs`: how long the panel stays lit after
+  the last input, in ms. `0` never turns it off.
+- **`network`** — two switches, both optional and both defaulting to
+  off/on as noted.
+
+  `showWIFIConnectionFailureMessage`, default `true`: when the cabinet
+  ends up on its own access point instead of a saved network, it says
+  so on the panel for a few seconds.
+
+  Two cases, two messages. A saved network that would not join reads
+  `Wifi Join Failed` / `Check Network!`. A cabinet with no saved
+  network at all — a fresh one, or one just factory-reset — reads
+  `WIFI Not Set Up` / `RetroRoom-Setup`, and the second line is the
+  actual SSID.
+
+  Set it to `false` on a cabinet that lives on a bench and is never
+  expected to reach a router, where the message would be on screen at
+  every single boot and stop being read.
+
+  `disable`, default `false`: leave the radio off. No scan, no join, no
+  SoftAP, no server — the cabinet runs as a self-contained appliance,
+  and boots faster because the blocking channel scan is skipped. The
+  on-board LED uses its healthy slow blink rather than the
+  "needs WiFi config" fast flash, and `mode` reads `off` in
+  `/state.json`, because a cabinet that was told to do this is working
+  and should not look like it is faulting.
+
+  > **The switch is one-way, and the knob is the way back.** There is
+  > no HTTP to re-enable it over, because a disabled network is not
+  > serving HTTP. Turn it off and the cabinet is only reconfigurable
+  > from its own menu — which is why it is worth adding the row below
+  > *before* you need it. It takes effect on the next restart, and the
+  > menu's save prompt says so.
+
+  Either spelling reads the same. After a save from the menu the file
+  is machine-formatted and booleans come back as `0` / `1`; that is the
+  same value, and nothing in the parser cares which one it read.
 
 
 ## The `menu` array
@@ -183,18 +220,27 @@ the setting it edits cannot drift apart.
 "menu": [
   { "label": "Detents", "set": "led.detentsPerStep", "min": 1, "max": 30 },
   { "label": "Brightness", "set": "led.brightnessPct",
-    "min": 20, "max": 100, "step": 5, "preview": true }
+    "min": 20, "max": 100, "step": 5, "preview": true },
+  { "label": "WiFi fail msg", "set": "network.showWIFIConnectionFailureMessage",
+    "type": "bool" },
+  { "label": "WiFi off", "set": "network.disable", "type": "bool" }
 ]
 ````
 
 | key | meaning |
 |---|---|
 | `label` | what the row says. Clipped to 16 columns, never wrapped. |
-| `set` | the setting this edits, as `<block>.<field>`. |
+| `set` | the setting this edits, as `<block>.<field>`. Any block works — `led.*`, `lcd.*`, `network.*`. A bare key with no prefix means `led`. |
 | `min` / `max` | the range the menu offers. May be **narrower** than the field's own range, never wider. |
 | `step` | how much one detent moves the value. Default 1. |
 | `type` | `"bool"` for an on/off toggle, which ignores `min`/`max`/`step`. |
 | `preview` | `true` applies the value **while the knob is turning** instead of on the click. Default `false`. |
+
+Which rows you get is entirely your choice: the firmware ships no menu
+of its own, so an operator who wants nothing adjustable gets nothing
+adjustable. See `todo/open/2026-09-30_menu-lock-down-mode.md` for why
+that is the design rather than an omission — a built-in row would be a
+setting somebody in the room can always reach.
 
 ### `preview`
 

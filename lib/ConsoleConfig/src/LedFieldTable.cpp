@@ -103,23 +103,50 @@ const LedField kLcdFields[] = {
 const int kLcdFieldCount =
     static_cast<int>(sizeof(kLcdFields) / sizeof(kLcdFields[0]));
 
+// ---- the network block -------------------------------------------------
+//
+// A third block of the same shape, and the reason the registry exists
+// rather than a `led` switch statement. Nothing here is a LedFeel
+// member and nothing here is about the strip; the ranges are 0..1
+// because both fields are bools, and the menu's "type": "bool" sugar
+// maps onto that range the same way it does for any other 0/1 field.
+const LedField kNetworkFields[] = {
+    {"showWIFIConnectionFailureMessage", nullptr, 0, 1},
+    {"disable", nullptr, 0, 1},
+};
+
+const int kNetworkFieldCount =
+    static_cast<int>(sizeof(kNetworkFields) / sizeof(kNetworkFields[0]));
+
 // "led" first, always: it is the block a bare key means, and it is the
 // one the parser's own readInt loop walks.
 const ConfigBlock kBlocks[] = {
     {"led", kFields, kFieldCount},
     {"lcd", kLcdFields, kLcdFieldCount},
+    {"network", kNetworkFields, kNetworkFieldCount},
 };
 
 const int kBlockCount = static_cast<int>(sizeof(kBlocks) / sizeof(kBlocks[0]));
 
-// The one field whose change cannot take effect without a restart.
-// totalLeds is handed to FastLED.addLeds() at init, so the strip
-// controller stays bound to the old length however many times the value
-// is written afterwards. Everything else is read per frame, per tick or
-// per call, which is the whole reason the other two "read the config
-// too early" bugs this session had to be fixed at all.
-bool isTotalLeds(const LedField* field) {
-    return field != nullptr && field->member == &LedFeel::totalLeds;
+// The fields whose change cannot take effect without a restart, and
+// why each one cannot. Both are properties of *when* the value is
+// read, not of what it is, so they live here rather than in a list
+// somewhere in the shell: totalLeds is handed to FastLED.addLeds() at
+// init, so the strip controller stays bound to the old length however
+// many times the value is written afterwards; network.disable is
+// consulted once, before the radio is touched, because the whole
+// point of it is that no server is left running that could be told to
+// go away. Everything else is read per frame, per tick or per call,
+// which is the whole reason the other two "read the config too early"
+// bugs this session had to be fixed at all.
+bool needsRestart(const LedField* field) {
+    if (field == nullptr) {
+        return false;
+    }
+    if (field->member == &LedFeel::totalLeds) {
+        return true;
+    }
+    return std::strcmp(field->key, "disable") == 0;
 }
 
 }  // namespace
@@ -251,7 +278,7 @@ const LedField* findConfigField(const char* path, const char** blockOut) {
 }
 
 bool configFieldNeedsReboot(const LedField* field) {
-    return isTotalLeds(field);
+    return needsRestart(field);
 }
 
 }  // namespace retroroom_core

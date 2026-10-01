@@ -5,6 +5,162 @@ This file records architectural decisions and notable changes to RetroRoom-Contr
 Entries are added to the top of this file by the `log_add` MCP tool. Use the `log_read` MCP tool to view recent entries.
 
 <!-- insert-below -->
+## 2026-09-30T00:00:00.000Z — The WiFi bring-up is a state machine the main loop resolves, and a menu entry names a path rather than a strip key
+
+**Context:** `network_init()` ended in a blocking wait:
+
+```cpp
+while (WiFi.status() != WL_CONNECTED && (millis() - start) < kStaTimeoutSec * 1000UL) {
+    delay(500);
+}
+```
+
+`setup()` calls `network_init()` as its last act, so the cabinet sat
+with the knob, the strip, the ring, the LCD and the menu all frozen for
+up to twenty seconds on every boot where the router was slow or absent —
+and ten was typical. The wait bought nothing. `WiFi.begin()` has already
+put the CYW43 into associating; the radio does the work on its own
+schedule, and every line after the loop was reachable from a loop tick.
+
+Underneath it sat a second question the loop's shape could not answer:
+when the join fails, the cabinet drops onto its own access point, and
+from the front of the cabinet that is indistinguishable from a cabinet
+that is switched off.
+
+**Decision:**
+
+1. **The bring-up is a two-phase state machine, not a call that
+   finishes.** `network_init()` calls `WiFi.begin()`, records
+   `staConnectStartedAtMs`, sets `BringupPhase::Connecting` and returns.
+   `network_loop()` — first thing in it, before the DNS pump — evaluates
+   the same predicate the `while` did, inverted, with no `delay()`, and
+   on either exit calls `finishStaBringup()`, which is the old function's
+   second half unchanged. The split moved *when* the tail runs, not what
+   it decides.
+
+   `finishStaBringup()` re-asks `WiFi.status()` once more on purpose: a
+   radio can associate between the last poll and that call, and
+   preferring the success path means a cabinet that made it in time
+   serves the UI rather than silently dropping to an access point.
+
+2. **The SoftAP says so, and the announcement is a config setting.**
+   `network.showWIFIConnectionFailureMessage`, default true, puts a
+   two-line notice on the panel for two seconds. It is shown at the one
+   moment someone is standing there: boot.
+
+   The default is the interesting part: a cabinet that quietly falls
+   back to an access point nobody has heard of *looks* switched off,
+   and two seconds of message is cheap. It exists to be turned **off**
+   for a bench cabinet that would otherwise show it at every boot, where
+   a message that is always there stops being read.
+
+   There are **two** messages, because there are two different
+   situations and only one of them is a failure. The first build wired
+   the notice to the join timeout alone, and a factory-reset cabinet —
+   which has no saved network and so takes the other branch entirely —
+   said nothing at all. Found on hardware, not by reading the code:
+   `net: no /wifi.json; will start SoftAP` is the branch that goes
+   straight to `startApPortal()`, and it never reached the notice.
+
+   | | line 1 | line 2 |
+   |---|---|---|
+   | saved network, would not join | `Wifi Join Failed` | `Check Network!` |
+   | no saved network at all | `WIFI Not Set Up` | `RetroRoom-Setup` |
+
+   The second row's line 2 is `kApSsid` itself, not a copy of it, so
+   it cannot drift from the SSID the radio is advertising. That is the
+   whole reason the two rows differ: the first row's original wording
+   told the operator to look for "RetroRoom AP", a network that does
+   not exist, when the SSID is `RetroRoom-Setup`. Every line has to fit
+   16 columns without scrolling — `display_show_status()` pins both
+   rows and truncates rather than wrapping — so the SSID sitting one
+   character under the limit is the first thing to break if the AP is
+   renamed.
+
+   The hold was 2 s and is now 5 (`kWifiNoticeMs`). Two seconds is
+   enough to read a line you are already looking at, and this is a line
+   nobody is looking at — the operator is at a cabinet, not at a
+   screen. It also has to survive being missed once: look away for the
+   two seconds it takes to pick up a controller, and a two-second
+   message is gone. Five is still short enough not to feel like a
+   fault, because the cabinet is usable throughout.
+
+   The two seconds is a deadline, not a `delay()`. Blocking there would
+   re-introduce the exact stall this entry is about; `network_loop()`
+   repaints the live view when it passes, guarded on a non-empty
+   console list because `CurrentConsole()` dereferences `operator[]` on
+   a zero-size vector and a factory-fresh device has neither WiFi nor a
+   console config. (In that one case the notice simply stays up, which
+   for the unconfigured message is the right outcome anyway — it is the
+   only thing on the panel worth knowing.)
+
+3. **A menu entry names a path into any block.** `set` is
+   `<block>.<field>` — `led.*`, `lcd.*`, `network.*` — which is what the
+   documentation had always claimed and what the parser did not do: it
+   stripped a literal `led.` prefix and looked the bare key up in
+   `findLedField()`, so a menu could only ever edit the strip. Code and
+   docs disagreed and the code was wrong. It resolves through
+   `findConfigField()` and is **stored normalised to the long form**,
+   because the key is handed straight to `applyConfigValue()` and to the
+   writer, and a bare key is ambiguous about which block it means.
+
+   That normalisation is also a bug fix the menu could not have reached
+   on its own: `configSave()` was building its edit paths from
+   `field->key` alone, so an `lcd` or `network` setting saved from a menu
+   would have been written into the `led` block — where it parses, means
+   nothing, and leaves the cabinet quietly running the old value. Only
+   the long form says which block was meant. `test_saving_a_non_led_setting_lands_in_its_own_block`
+   holds it, and asserts on the serialised text as well as the re-parse,
+   because a setting the parser ignores parses just fine.
+
+4. **A bool is a 0/1 in the same registry, and says so through
+   `type: "bool"`.** The registry holds every setting as an `int` with a
+   range so one table can describe a duration and a flag. The file
+   accepts `true` / `false` and the writer emits `0` / `1`; both parse,
+   which is why a config written as `true` comes back as `0` after a
+   menu save without anything breaking. Documented rather than
+   special-cased: making the writer emit JSON booleans would mean the
+   writer guessing at a field's type from its range.
+
+5. **`network.disable` is a third state, not a flavour of "not up".**
+   Both radio functions ask before they touch the CYW43 — the scan
+   first, because a blocking 2–4 s `scanNetworks()` is the single
+   largest cost in a disabled cabinet's boot, and then the init. The
+   check lives inside the two functions rather than at the call site in
+   `main.cpp` so there is exactly one place that knows, and so a call
+   site cannot get the ordering wrong.
+
+   Introducing it forced two honesty fixes that were not optional. The
+   on-board LED picks its cadence from `network_inStaMode()`, and a
+   disabled cabinet would otherwise fast-blink — the one rate that
+   means *there is something for you to do here* — on a device that is
+   working exactly as configured. Disabled now takes the healthy slow
+   blink, the same as STA. And `mode` in `/state.json`, `/wifi` and
+   the heartbeat gained an `off`, because "ap" is a claim that a SoftAP
+   is running, and on a disabled cabinet nothing is listening.
+
+   Declared as needing a restart, which the registry already supports
+   per field. It has to: the radio is consulted once, before anything
+   is up, so a change cannot apply until the next boot. The
+   alternative — a live toggle that tore the server down — is a
+   different and much larger piece of work, and the failure mode of not
+   building it is a menu prompt that says "restart to apply".
+
+6. **The switch gets no built-in menu row, and that is the point.**
+   The request was for it in the default menu items. The firmware
+   ships no menu at all, deliberately: lock-down *is* an empty menu,
+   and a hardcoded row is a setting somebody in the room can always
+   reach no matter what the operator's config says. See
+   `todo/open/2026-09-30_menu-lock-down-mode.md`. The row therefore
+   lives in the example configs and in the README, to be copied in
+   where wanted.
+
+   Which matters more than usual here, because the switch is one-way:
+   a disabled network is not serving HTTP, so there is nothing to
+   re-enable it over. The knob is the only way back — which is an
+   argument for the row existing *before* you need it, and an argument
+   against baking it in where it cannot be removed.
+
 ## 2026-09-30T03:58:32.000Z — The selector ring moves to a pure core, and its brightness stops being history
 
 **Context:** `led.ringFlashMs` was set to 120 ms and to 640 ms on the

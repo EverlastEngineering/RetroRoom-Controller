@@ -539,7 +539,11 @@ void test_the_menu_array_parses(void) {
         LoadResult r = retroroom_core::loadFromJson(json);
         TEST_ASSERT_TRUE(r.ok);
         TEST_ASSERT_EQUAL(2, static_cast<int>(r.menu.items.size()));
-        TEST_ASSERT_EQUAL_STRING("detentsPerStep", r.menu.keys[0].c_str());
+        // Stored as the long form, whatever the operator wrote. The
+        // menu hands this key straight to applyConfigValue() and to the
+        // writer, and a bare key is ambiguous about which block it means.
+        TEST_ASSERT_EQUAL_STRING("led.detentsPerStep", r.menu.keys[0].c_str());
+        TEST_ASSERT_EQUAL_STRING("led.ringIdleMs", r.menu.keys[1].c_str());
         TEST_ASSERT_FALSE(r.menu.items[0].isBool);
         // The menu's own narrower range, which is allowed.
         TEST_ASSERT_EQUAL(1, r.menu.items[0].lo);
@@ -863,6 +867,17 @@ void test_config_paths_resolve_across_blocks(void) {
         TEST_ASSERT_EQUAL_STRING("led", block);
         TEST_ASSERT_TRUE(retroroom_core::findConfigField("lcd.backlightOffAfterMs", &block) != nullptr);
         TEST_ASSERT_EQUAL_STRING("lcd", block);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("network.showWIFIConnectionFailureMessage", &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("network", block);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("network.disable", &block) != nullptr);
+        TEST_ASSERT_EQUAL_STRING("network", block);
+        // A field that exists in one block must not resolve in another.
+        // "network.disable" in particular is the sort of name a
+        // hand-written menu entry could plausibly get wrong by omitting
+        // the prefix, and a bare key silently resolving to `led` would
+        // make it a no-op rather than a visible mistake.
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("led.disable", &block) == nullptr);
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("lcd.disable", &block) == nullptr);
         // Bare means the first block.
         TEST_ASSERT_TRUE(retroroom_core::findConfigField("detentsPerStep", &block) != nullptr);
         TEST_ASSERT_EQUAL_STRING("led", block);
@@ -870,12 +885,279 @@ void test_config_paths_resolve_across_blocks(void) {
         // an entry naming a setting nobody wrote.
         TEST_ASSERT_TRUE(retroroom_core::findConfigField("led.nope", &block) == nullptr);
         TEST_ASSERT_TRUE(retroroom_core::findConfigField("nope.detentsPerStep", &block) == nullptr);
+        // A real field under a block it does not belong to. The registry
+        // answers per block, not globally, so this is the case that keeps
+        // "lcd.brightnessPct" from quietly editing the strip.
+        TEST_ASSERT_TRUE(retroroom_core::findConfigField("lcd.brightnessPct", &block) == nullptr);
         TEST_ASSERT_TRUE(retroroom_core::findConfigField("", &block) == nullptr);
 }
 
-// Exactly one setting needs a restart, and the property lives with the
-// field so the menu prompt, the API response and the docs cannot
-// disagree about which.
+// The WiFi-failure notice is on unless a config says otherwise. The
+// case for that default is visibility: a cabinet that quietly drops
+// onto an access point nobody has ever heard of looks, from the front
+// of the cabinet, like a cabinet that is switched off.
+void test_the_wifi_failure_notice_is_shown_unless_told_otherwise(void) {
+        const char* base = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ])";
+        // Absent block: the default.
+        std::string json(base);
+        json += "}";
+        LoadResult r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_TRUE_MESSAGE(r.showWifiConnectionFailureMessage,
+                                 "a cabinet that cannot say why it is offline "
+                                 "is the one that needs saying");
+
+        // Present and off.
+        json = std::string(base) +
+               R"(, "network": {"showWIFIConnectionFailureMessage": false}})";
+        r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_FALSE(r.showWifiConnectionFailureMessage);
+
+        // Present and on, which has to survive the round trip through a
+        // bool-shaped int -- the field is a 0/1 in the registry so the
+        // menu can treat it as one.
+        json = std::string(base) +
+               R"(, "network": {"showWIFIConnectionFailureMessage": true}})";
+        r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_TRUE(r.showWifiConnectionFailureMessage);
+}
+
+// The radio can be switched off entirely, which is a different thing
+// from failing to switch it on. Default off-the-switch, so a config
+// that has never heard of the field behaves exactly as it did.
+void test_the_network_is_enabled_unless_the_config_says_otherwise(void) {
+        const char* base = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ])";
+        std::string json(base);
+        json += "}";
+        LoadResult r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_FALSE_MESSAGE(r.networkDisabled,
+                                 "a cabinet must not come up with no radio "
+                                 "because nobody mentioned the field");
+
+        // Absent the `network` block entirely -- also on.
+        json = std::string(base) +
+               R"(, "network": {"showWIFIConnectionFailureMessage": false}})";
+        r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_FALSE(r.networkDisabled);
+        TEST_ASSERT_FALSE(r.showWifiConnectionFailureMessage);
+
+        json = std::string(base) + R"(, "network": {"disable": true}})";
+        r = retroroom_core::loadFromJson(json.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_TRUE(r.networkDisabled);
+        // And the notice setting is independent: turning the radio off
+        // does not quietly turn the notice on, and vice versa. They
+        // read as a pair in the file and would be easy to conflate.
+        TEST_ASSERT_TRUE(r.showWifiConnectionFailureMessage);
+}
+
+// One-shot operator control. Not a failure, not a health check, not a
+// factory reset: the cabinet is finished and the radio is off.
+void test_disabling_the_network_survives_a_menu_save(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "network": {"disable": false}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"network.disable", 1},
+        };
+        std::string out, error;
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::applyConfigEdits(json, edits, 1, &out, &error),
+            error.c_str());
+        // The whole point of the round trip: the file the operator can
+        // no longer reach over HTTP has to carry the switch that turns
+        // it back on, in a form the parser will read.
+        LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_TRUE(r.networkDisabled);
+}
+
+// A bool is 0 or 1, and a value that is neither is a typo. Clamped
+// and *reported*, like every other clamp in this file: a setting that
+// quietly becomes something other than what the file said is the bug
+// this file has spent its life fixing.
+void test_the_wifi_failure_notice_clamps_and_says_so(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "network": {"showWIFIConnectionFailureMessage": 7}
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_TRUE(r.showWifiConnectionFailureMessage);
+        TEST_ASSERT_TRUE_MESSAGE(!r.warnings.empty(),
+                                 "a clamp nobody hears about is the bug it "
+                                 "replaced");
+
+        const char* negative = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "network": {"showWIFIConnectionFailureMessage": -3}
+        })";
+        LoadResult n = retroroom_core::loadFromJson(negative);
+        TEST_ASSERT_TRUE(n.ok);
+        TEST_ASSERT_FALSE(n.showWifiConnectionFailureMessage);
+        TEST_ASSERT_TRUE(!n.warnings.empty());
+
+        // Same treatment for the radio switch, because it is parsed by
+        // the same loop and would otherwise be the one bool in the file
+        // that accepted nonsense quietly.
+        const char* badDisable = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "network": {"disable": 5}
+        })";
+        LoadResult d = retroroom_core::loadFromJson(badDisable);
+        TEST_ASSERT_TRUE(d.ok);
+        TEST_ASSERT_TRUE(d.networkDisabled);
+        TEST_ASSERT_TRUE_MESSAGE(!d.warnings.empty(),
+                                 "a clamp nobody hears about is the bug it "
+                                 "replaced");
+}
+
+// A menu item can edit any block, not just the strip. This is what
+// makes the WiFi notice -- and the LCD timeout -- adjustable without a
+// firmware change, which is the whole reason the field is in the
+// registry rather than in a `if (key == ...)` chain.
+void test_a_menu_entry_can_name_a_setting_in_any_block(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "WiFi fail msg", "set": "network.showWIFIConnectionFailureMessage",
+                 "type": "bool"},
+                {"label": "Backlight", "set": "lcd.backlightOffAfterMs"},
+                {"label": "WiFi off", "set": "network.disable", "type": "bool"}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE_MESSAGE(r.ok, r.error.c_str());
+        TEST_ASSERT_EQUAL_MESSAGE(3, static_cast<int>(r.menu.items.size()),
+                                  r.warnings.empty() ? "" : r.warnings[0].c_str());
+        TEST_ASSERT_EQUAL_STRING("network.showWIFIConnectionFailureMessage",
+                                 r.menu.keys[0].c_str());
+        // "type": "bool" resolves to the same 0/1 the field's own range
+        // declares, rather than the menu inventing a range.
+        TEST_ASSERT_TRUE(r.menu.items[0].isBool);
+        TEST_ASSERT_EQUAL(0, r.menu.items[0].lo);
+        TEST_ASSERT_EQUAL(1, r.menu.items[0].hi);
+        TEST_ASSERT_EQUAL_STRING("lcd.backlightOffAfterMs", r.menu.keys[1].c_str());
+        TEST_ASSERT_FALSE(r.menu.items[1].isBool);
+        // The switch that turns the radio off is an ordinary menu row
+        // by the time it reaches here. That is not an accident of the
+        // implementation -- it is the only way back once the network is
+        // gone, since "re-enable it over HTTP" is not available on a
+        // device that is not serving HTTP.
+        TEST_ASSERT_EQUAL_STRING("network.disable", r.menu.keys[2].c_str());
+        TEST_ASSERT_TRUE(r.menu.items[2].isBool);
+}
+
+// A bare key in a menu is normalised to the long form. "detentsPerStep"
+// and "led.detentsPerStep" name the same setting, and the difference
+// only shows up when the value is written back -- at which point a bare
+// key has to have been decided on already.
+void test_a_bare_menu_key_is_normalised_to_its_block(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "menu": [
+                {"label": "Detents", "set": "detentsPerStep"}
+            ]
+        })";
+        LoadResult r = retroroom_core::loadFromJson(json);
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_EQUAL(1, static_cast<int>(r.menu.items.size()));
+        TEST_ASSERT_EQUAL_STRING("led.detentsPerStep", r.menu.keys[0].c_str());
+}
+
+// A setting saved from a menu goes back into the block it came from.
+// The bare-key form is what a caller gets from anything that reports a
+// pending change, and writing "backlightOffAfterMs" unqualified would
+// put an LCD setting inside `led` -- where it would parse, mean nothing,
+// and quietly disagree with the value the cabinet is running.
+void test_saving_a_non_led_setting_lands_in_its_own_block(void) {
+        const char* json = R"({
+            "irCodes": {"Video": "0x430"},
+            "consoles": [
+                {"id": "NES", "tvInput": "Video", "selectorPosition": 1,
+                 "ledPosition": 1, "ledWidth": 1}
+            ],
+            "led": {"detentsPerStep": 5},
+            "lcd": {"backlightOffAfterMs": 2000},
+            "network": {"showWIFIConnectionFailureMessage": true}
+        })";
+        const retroroom_core::ConfigEdit edits[] = {
+            {"network.showWIFIConnectionFailureMessage", 0},
+            {"lcd.backlightOffAfterMs", 45000},
+        };
+        std::string out, error;
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::applyConfigEdits(json, edits, 2, &out, &error),
+            error.c_str());
+        retroroom_core::LoadResult r = retroroom_core::loadFromJson(out.c_str());
+        TEST_ASSERT_TRUE(r.ok);
+        TEST_ASSERT_FALSE(r.showWifiConnectionFailureMessage);
+        TEST_ASSERT_EQUAL(45000u, r.lcdBacklightOffAfterMs);
+        // And the strip was not touched, which is the half that would
+        // break silently: an LCD value written into `led` is ignored by
+        // the parser, so the cabinet would keep running the old one.
+        TEST_ASSERT_EQUAL(5, r.feel.detentsPerStep);
+        // The literal text, because "did it write it to the right
+        // object" is the question and a re-parse cannot fully answer
+        // it -- a setting the parser ignores parses just fine.
+        //
+        // The value comes back as 0 rather than `false`: the registry
+        // holds settings as ints so one table can describe a bool and a
+        // duration, and the writer writes what the table holds. Both
+        // spellings parse, which is why the file can be written
+        // `true` and come back `0` without anything breaking.
+        TEST_ASSERT_TRUE_MESSAGE(out.find("\"showWIFIConnectionFailureMessage\": 0") !=
+                                     std::string::npos,
+                                 out.c_str());
+        TEST_ASSERT_TRUE_MESSAGE(out.find("\"backlightOffAfterMs\": 45000") !=
+                                     std::string::npos,
+                                 out.c_str());
+        TEST_ASSERT_TRUE_MESSAGE(out.find("\"detentsPerStep\": 5") != std::string::npos,
+                                 out.c_str());
+}
+
+// Exactly the settings that need a restart, and the property lives
+// with the field so the menu prompt, the API response and the docs
+// cannot disagree about which.
 void test_only_the_strip_length_needs_a_reboot(void) {
         TEST_ASSERT_TRUE_MESSAGE(
             retroroom_core::configFieldNeedsReboot(
@@ -885,6 +1167,23 @@ void test_only_the_strip_length_needs_a_reboot(void) {
             retroroom_core::findConfigField("led.detentsPerStep", nullptr)));
         TEST_ASSERT_FALSE(retroroom_core::configFieldNeedsReboot(
             retroroom_core::findConfigField("lcd.backlightOffAfterMs", nullptr)));
+        // The WiFi notice is read when the join resolves, which is
+        // after the config is loaded -- so unlike totalLeds it does not
+        // need a restart, and a menu that said it did would send the
+        // operator to reboot for nothing.
+        TEST_ASSERT_FALSE(retroroom_core::configFieldNeedsReboot(
+            retroroom_core::findConfigField(
+                "network.showWIFIConnectionFailureMessage", nullptr)));
+        // The network switch is the opposite case, and saying so is
+        // load-bearing. Turning the radio off is a *boot-time* decision:
+        // once it is off there is no server left running that could be
+        // told to start one. A menu that saved this and claimed no
+        // restart was needed would show the operator a switched-off
+        // toggle and a cabinet still online.
+        TEST_ASSERT_TRUE_MESSAGE(
+            retroroom_core::configFieldNeedsReboot(
+                retroroom_core::findConfigField("network.disable", nullptr)),
+            "disabling the network cannot take effect until the next boot");
 }
 
 // brightnessPct is the master scale for both strips, and 100 has to
@@ -968,8 +1267,11 @@ void test_a_copied_menu_points_at_its_own_strings(void) {
         TEST_ASSERT_EQUAL(2, static_cast<int>(m.items.size()));
         TEST_ASSERT_EQUAL_STRING("Detents", m.items[0].label);
         TEST_ASSERT_EQUAL_STRING("Level", m.items[1].label);
-        TEST_ASSERT_EQUAL_STRING("detentsPerStep", m.items[0].key);
-        TEST_ASSERT_EQUAL_STRING("selfPct", m.items[1].key);
+        // The long form, which is what a copied menu has to preserve:
+        // these are non-owning pointers, and the thing they point at is
+        // the path the shell hands to applyConfigValue().
+        TEST_ASSERT_EQUAL_STRING("led.detentsPerStep", m.items[0].key);
+        TEST_ASSERT_EQUAL_STRING("led.selfPct", m.items[1].key);
 }
 
 // Copy *again*, so the copy is of a copy -- which is the case the
@@ -979,7 +1281,7 @@ void test_a_menu_survives_being_copied_twice(void) {
         const retroroom_core::ParsedMenu once = copiedMenu();
         const retroroom_core::ParsedMenu twice = once;
         TEST_ASSERT_EQUAL_STRING("Detents", twice.items[0].label);
-        TEST_ASSERT_EQUAL_STRING("selfPct", twice.items[1].key);
+        TEST_ASSERT_EQUAL_STRING("led.selfPct", twice.items[1].key);
         // And the view it hands out is usable, which is what the shell
         // actually asks for.
         const retroroom_core::Menu v = twice.view();
@@ -1035,6 +1337,8 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_the_new_ring_timings_default);
 	RUN_TEST(test_the_menu_array_parses);
 	RUN_TEST(test_a_menu_entry_naming_nothing_real_is_skipped);
+	RUN_TEST(test_a_menu_entry_can_name_a_setting_in_any_block);
+	RUN_TEST(test_a_bare_menu_key_is_normalised_to_its_block);
 	RUN_TEST(test_a_menu_cannot_offer_more_than_the_setting_allows);
 	RUN_TEST(test_a_config_with_no_menu_has_an_empty_one);
 	RUN_TEST(test_a_copied_menu_points_at_its_own_strings);
@@ -1043,6 +1347,11 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_saving_keeps_a_key_the_parser_never_heard_of);
 	RUN_TEST(test_saving_changes_only_what_it_was_told_to);
 	RUN_TEST(test_saving_creates_a_setting_and_a_block_that_were_absent);
+	RUN_TEST(test_saving_a_non_led_setting_lands_in_its_own_block);
+	RUN_TEST(test_the_wifi_failure_notice_is_shown_unless_told_otherwise);
+	RUN_TEST(test_the_wifi_failure_notice_clamps_and_says_so);
+	RUN_TEST(test_the_network_is_enabled_unless_the_config_says_otherwise);
+	RUN_TEST(test_disabling_the_network_survives_a_menu_save);
 	RUN_TEST(test_saving_clamps_to_the_field_range);
 	RUN_TEST(test_saving_refuses_what_it_cannot_do);
 	RUN_TEST(test_the_lcd_clamp_is_reported);

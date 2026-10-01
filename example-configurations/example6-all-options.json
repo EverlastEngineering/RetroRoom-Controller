@@ -106,5 +106,9 @@
     },
     "lcd": {
         "backlightOffAfterMs": 2000
+    },
+    "network": {
+        "showWIFIConnectionFailureMessage": true,
+        "disable": false
     }
 }

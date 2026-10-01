@@ -54,14 +54,21 @@
 #include <Arduino.h>
 #include <string>
 
+// Bring the radio up. Returns as soon as WiFi.begin() has been called --
+// it does NOT wait for the join. network_loop() finishes the job: it
+// watches for WL_CONNECTED or the timeout and then starts either the
+// STA server or the SoftAP, so the cabinet stays responsive to the knob,
+// the strip and the LCD while the router is being found.
 extern void network_init();
 // Run a synchronous wifi scan and cache the results so /scan.json can
 // serve them later. MUST be called before network_init() on first boot
 // (or before any AP-mode bring-up on reboot) -- the CYW43 can't scan
 // while a client is associated with the SoftAP.
 extern void network_scan_cache();
-// Per-loop pump. Currently just feeds the captive-portal DNS server.
-// Cheap; safe to call on every iteration of main.cpp::loop().
+// Per-loop pump. Resolves the pending WiFi join (the second half of
+// network_init()), restores the LCD after the WiFi-failure notice, and
+// feeds the captive-portal DNS server. Cheap; safe to call on every
+// iteration of main.cpp::loop().
 extern void network_loop();
 // Broadcast a string to all connected WebSocket clients. No-op if no
 // clients are connected. Safe to call from any context (main loop or
@@ -79,6 +86,12 @@ extern bool network_isUp();
 // state machine to distinguish the "needs wifi config" (fast flash)
 // convention from the "online and happy" (slow blink) convention.
 extern bool network_inStaMode();
+// True iff `network.disable` left the radio off. Distinct from "not
+// up": SoftAP mode and disabled mode both report network_isUp()
+// false, and conflating them makes a cabinet that is working exactly
+// as configured blink and log like a fault. src/state.cpp uses this to
+// pick the healthy cadence and the "off" heartbeat mode.
+extern bool network_disabled();
 
 #endif // HAS_WIFI
 #endif

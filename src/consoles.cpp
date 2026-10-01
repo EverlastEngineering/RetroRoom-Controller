@@ -2,6 +2,7 @@
 
 #include <ConsoleConfig.h>
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -87,6 +88,18 @@ int pendingSaveIndex = 0;
 // on every boot, warm or cold -- same lifetime as currentConsoleIndex).
 uint32_t currentConsoleSelectedAtMs = 0;
 uint32_t lcdBacklightOffAfterMs = 30000;  // default; overwritten by consoleDefinitions()
+// Whether a failed WiFi join is announced on the LCD before the
+// SoftAP comes up. Default true; overwritten by consoleDefinitions()
+// from `network.showWIFIConnectionFailureMessage`. Read by
+// src/network.cpp at the moment the join resolves, which is why it is
+// a plain global rather than something the network stack pulls from
+// the config itself.
+bool showWifiConnectionFailureMessage = true;
+// Whether the radio is left off entirely. Read by src/network.cpp
+// before it touches the radio, and by src/state.cpp to keep the
+// on-board LED and the heartbeat from reporting a network problem
+// that the operator asked for.
+bool networkDisabled = false;
 std::vector<Console> consoles;
 // The shelf extents from the config's optional `shelves` block. Empty
 // is the normal case and is not an error.
@@ -184,6 +197,38 @@ PendingChange pending[kMaxPending];
 int pendingCount = 0;
 bool pendingOverflow = false;
 
+// Clamp to the field's declared range, exactly as the parser would.
+// The blocks that are not bound to a LedFeel have no set-by-key helper
+// to do this for them, and the alternative -- each branch remembering
+// its own bounds -- is how the writer and the parser end up disagreeing
+// about what a value means.
+int clampToField(const retroroom_core::LedField* field, int value) {
+        int next = value;
+        if (next < field->lo) next = field->lo;
+        if (next > field->hi) next = field->hi;
+        return next;
+}
+
+// "<block>.<field>" for a resolved field.
+//
+// The long form is what the menu stores and what the writer consumes,
+// because a bare key resolves to the *first* block -- so writing back
+// "backlightOffAfterMs" would put an LCD setting inside `led`. The
+// buffer is the caller's; the longest path in the registry is far
+// shorter than this, and the function refuses rather than truncates if
+// that ever stops being true.
+const char* fieldPath(const retroroom_core::LedField* field, const char* block,
+                      char* buf, std::size_t len) {
+        if (field == nullptr || block == nullptr) {
+                return nullptr;
+        }
+        int n = snprintf(buf, len, "%s.%s", block, field->key);
+        if (n < 0 || static_cast<std::size_t>(n) >= len) {
+                return nullptr;
+        }
+        return buf;
+}
+
 }  // namespace
 
 bool applyConfigValue(const char* path, int value) {
@@ -193,7 +238,7 @@ bool applyConfigValue(const char* path, int value) {
         const char* block = nullptr;
         const retroroom_core::LedField* field =
                 retroroom_core::findConfigField(path, &block);
-        if (field == nullptr) {
+        if (field == nullptr || block == nullptr) {
                 return false;
         }
         // Storage is per block: only `led` is bound to a LedFeel. A
@@ -204,10 +249,15 @@ bool applyConfigValue(const char* path, int value) {
                         return false;
                 }
         } else if (std::strcmp(block, "lcd") == 0) {
-                int next = value;
-                if (next < field->lo) next = field->lo;
-                if (next > field->hi) next = field->hi;
-                lcdBacklightOffAfterMs = static_cast<uint32_t>(next);
+                lcdBacklightOffAfterMs =
+                        static_cast<uint32_t>(clampToField(field, value));
+        } else if (std::strcmp(block, "network") == 0) {
+                int next = clampToField(field, value);
+                if (std::strcmp(field->key, "disable") == 0) {
+                        networkDisabled = next != 0;
+                } else {
+                        showWifiConnectionFailureMessage = next != 0;
+                }
         } else {
                 return false;
         }
@@ -216,12 +266,20 @@ bool applyConfigValue(const char* path, int value) {
         // path means changing the same setting twice keeps one entry at
         // the latest value, so a set of edits is a set of *final*
         // values and never a replay.
+        //
+        // The recorded value is read back through configValueOf()
+        // rather than being the value that was asked for: a setting
+        // clamped on the way in has to be recorded clamped, or the
+        // pending set and the running cabinet disagree about what the
+        // operator is looking at until they save.
+        char full[64];
+        const char* fullPath = fieldPath(field, block, full, sizeof(full));
+        if (fullPath == nullptr) {
+                return false;
+        }
         for (int i = 0; i < pendingCount; ++i) {
                 if (pending[i].field == field) {
-                        pending[i].value = retroroom_core::ledFeelGet(ledFeel, field->key, value);
-                        if (block && std::strcmp(block, "lcd") == 0) {
-                                pending[i].value = static_cast<int>(lcdBacklightOffAfterMs);
-                        }
+                        pending[i].value = configValueOf(fullPath, value);
                         return true;
                 }
         }
@@ -231,7 +289,7 @@ bool applyConfigValue(const char* path, int value) {
         }
         pending[pendingCount].field = field;
         pending[pendingCount].block = block;
-        pending[pendingCount].value = value;
+        pending[pendingCount].value = configValueOf(fullPath, value);
         ++pendingCount;
         return true;
 }
@@ -243,8 +301,18 @@ int configValueOf(const char* path, int fallback) {
         if (field == nullptr) {
                 return fallback;
         }
-        if (block != nullptr && std::strcmp(block, "lcd") == 0) {
+        if (block == nullptr) {
+                return fallback;
+        }
+        if (std::strcmp(block, "lcd") == 0) {
                 return static_cast<int>(lcdBacklightOffAfterMs);
+        }
+        if (std::strcmp(block, "network") == 0) {
+                const char* key = field->key;
+                if (std::strcmp(key, "disable") == 0) {
+                        return networkDisabled ? 1 : 0;
+                }
+                return showWifiConnectionFailureMessage ? 1 : 0;
         }
         return retroroom_core::ledFeelGet(ledFeel, field->key, fallback);
 }
@@ -267,10 +335,16 @@ int configPendingCount() {
 }
 
 const char* configPendingPath(int i) {
+        static char buf[64];
         if (i < 0 || i >= pendingCount) {
                 return nullptr;
         }
-        return pending[i].field->key;
+        // The long form, "<block>.<field>", for the same reason the
+        // menu stores it that way: a bare key is ambiguous about which
+        // block it belongs to, and the one thing an API caller does
+        // with a path is send it back.
+        const char* path = fieldPath(pending[i].field, pending[i].block, buf, sizeof(buf));
+        return path;
 }
 
 int configPendingValue(int i) {
@@ -285,8 +359,21 @@ retroroom_store::SaveResult configSave() {
                 return retroroom_store::SaveResult::Ok;  // nothing to do is success
         }
         retroroom_core::ConfigEdit edits[kMaxPending];
+        // One buffer per edit because ConfigEdit holds a `const char*`
+        // and applyConfigEdits() reads them all at once. A std::string
+        // array would heap; a single scratch buffer would leave every
+        // entry pointing at the last one written.
+        char paths[kMaxPending][64];
         for (int i = 0; i < pendingCount; ++i) {
-                edits[i].path = pending[i].field->key;
+                const char* path = fieldPath(pending[i].field, pending[i].block,
+                                             paths[i], sizeof(paths[i]));
+                if (path == nullptr) {
+                        // Cannot happen with the registry as it stands;
+                        // if it ever does, the honest answer is to not
+                        // save rather than to save a truncated path.
+                        return retroroom_store::SaveResult::WriteFailed;
+                }
+                edits[i].path = path;
                 edits[i].value = pending[i].value;
         }
         // Whatever the cabinet is running from: the file if there is
@@ -447,6 +534,12 @@ void consoleDefinitions() {
 	Serial.println(" LEDs");
 
 	lcdBacklightOffAfterMs = result.lcdBacklightOffAfterMs;  // RAM-only; loaded per boot
+	// Same lifetime, same reason. The network stack reads this when a
+	// WiFi join resolves, which is after the config is loaded but well
+	// after the stack is brought up -- which is exactly why it is a
+	// global the stack reads rather than something it parses.
+	showWifiConnectionFailureMessage = result.showWifiConnectionFailureMessage;
+	networkDisabled = result.networkDisabled;  // same lifetime, same reason
 	for (const auto& c : result.consoles) {
 		addConsole(c);
 	}

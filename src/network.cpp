@@ -10,9 +10,17 @@
 //      (open, no password) and serve /setup. User POSTs creds; we
 //      write to LittleFS and restart via ESP.restart() equivalent
 //      (rp2040.restart() / watchdog_reboot()).
-//   4. If creds are present, WiFi.begin(ssid, pass); wait up to 20 s
-//      for connection. On failure, fall back to SoftAP.
-//   5. Once connected, AsyncWebServer serves /, /script.js, /ledOn,
+//   4. If creds are present, WiFi.begin(ssid, pass) and return. The join
+//      itself is not waited for: network_loop() polls for it, and when
+//      the radio either associates or runs out of time it calls
+//      finishStaBringup() -- the rest of what this function used to do
+//      after a blocking while-loop. The cabinet is fully live (knob,
+//      strip, ring, LCD, menu) throughout the wait.
+//   5. Both SoftAP entry points put a two-line notice on the LCD for
+//      two seconds, unless `network.showWIFIConnectionFailureMessage`
+//      is off. Different wording per case: a saved network that would
+//      not join, versus no saved network at all.
+//   6. Once connected, AsyncWebServer serves /, /script.js, /ledOn,
 //      /ledOff, /flash, /healthcheck, /state.json, and /ws. broadcast
 //      SocketMessage() pushes events to all WS clients.
 
@@ -36,6 +44,11 @@
 #include "main.h"
 #include "display.h"
 #include "consoleconfig_store.h"
+// For the console list (CurrentConsole() to repaint the panel after the
+// WiFi-failure notice) and for the `network` config setting the notice
+// is gated on. Explicit rather than inherited through main.h: this
+// file uses both, and a transitive include is not a dependency.
+#include "consoles.h"
 #if defined(HAS_LEDS)
 #include "ledstring.h"
 #endif
@@ -55,6 +68,80 @@ constexpr const char* kHostname      = "RetroRoom";  // DHCP hostname -> RetroRo
                                                        // CYW43 default "PicoW").
 constexpr uint8_t     kStaTimeoutSec = 20;
 constexpr uint8_t     kScanCacheMax  = 24; // CYW43 returns at most 24 per scan
+
+// How long a WiFi notice stays on the LCD, and what the two SoftAP
+// entry points say.
+//
+// The hold was 2 s and is now 5. Two seconds is enough to read a line
+// you are already looking at, and this is a line nobody is looking at:
+// the operator is at a cabinet, not at a screen, and the message is
+// the only thing telling them why the thing they are holding is not on
+// their network. It also has to survive being missed once -- look away
+// for the two seconds it takes to pick up a controller, and a two
+// second message is gone. Five is still short enough that it does not
+// feel like a fault: the cabinet is usable the whole time, and the
+// live view comes straight back when the hold ends.
+//
+// It is shown at the one moment someone is standing there: boot.
+//
+// There are two messages, not one, because there are two genuinely
+// different situations and only one of them is a failure:
+//
+//   - We had a saved network and could not reach it. The radios work;
+//     the router is not answering. The operator's problem is
+//     "where did it go", so the line names the check to run.
+//   - We have no saved network at all -- a fresh cabinet, or one that
+//     was factory-reset. Nothing has failed here; the operator's
+//     problem is "how do I set it up", so the second line is the SSID
+//     verbatim. An operator told to look for one name who finds
+//     another has been sent looking for something that does not exist.
+//
+// The second line of the unconfigured message is kApSsid itself rather
+// than a copy of it, so it cannot drift from the SSID the radio is
+// actually advertising. Every line here has to fit LCD_COLS without
+// scrolling -- display_show_status() pins both rows and an over-long
+// line is simply cut off -- so this is checked by eye, and the SSID
+// sitting one character under the limit is the one that will break
+// first if the AP is ever renamed.
+constexpr unsigned long kWifiNoticeMs = 5000;
+constexpr const char* kWifiJoinFailedLine1 = "Wifi Join Failed";
+constexpr const char* kWifiJoinFailedLine2 = "Check Network!";
+constexpr const char* kWifiUnconfiguredLine1 = "WIFI Not Set Up";
+
+// The WiFi bring-up is a two-phase state machine, and the phase is
+// what lets the cabinet be usable while it runs.
+//
+// Phase 1 (network_init) reads the credentials, calls WiFi.begin() and
+// returns. Phase 2 (network_loop, the first thing it does) polls the
+// status the same condition the old blocking loop used, and on
+// either exit -- connected, or out of time -- calls
+// finishStaBringup(), which is the rest of what the old function did
+// after the loop.
+//
+// It used to be one function with `while (WiFi.status() !=
+// WL_CONNECTED && elapsed < 20 s) delay(500);` in the middle, which
+// held the entire cabinet -- knob, strip, ring, LCD, menu -- for up to
+// twenty seconds on every boot where the router was slow or absent.
+// Ten was typical. That is a long time to be told nothing, and the
+// wait bought nothing: the CYW43 associates in the background either
+// way, and every line after the loop was reachable from a loop tick.
+enum class BringupPhase : uint8_t {
+    Idle,        // network_init() has not run, or found no module
+    Connecting,  // WiFi.begin() has been called; the join is in flight
+    Resolved,    // the bring-up is over, for whatever reason
+};
+BringupPhase bringupPhase = BringupPhase::Idle;
+// millis() when WiFi.begin() was called. The timeout is measured from
+// here rather than from "whenever the first loop tick happened to run",
+// so a slow boot does not eat into the window the router was given.
+unsigned long staConnectStartedAtMs = 0;
+// When the last progress dot went out, so the dots are spaced by time
+// rather than by loop iteration -- a fast loop would otherwise print
+// a dot every tick.
+unsigned long staConnectLastDotMs = 0;
+// Non-zero while a WiFi notice is on the panel; holds the deadline at
+// which the live view comes back. See kWifiNoticeMs.
+unsigned long wifiNoticeUntilMs = 0;
 
 struct CachedNet {
     String  ssid;
@@ -132,6 +219,7 @@ bool                 scanCacheReady = false;
 
 static void startApPortal();
 static void startStaServer();
+static void showWifiNotice(const char* line1, const char* line2);
 static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
                       AwsEventType type, void* arg, uint8_t* data, size_t len);
 
@@ -144,6 +232,13 @@ void network_loop();
 bool network_isUp() { return networkUp; }
 bool network_inStaMode() { return networkUp && !inApMode; }
 
+// True when `network.disable` turned the radio off, which is a third
+// state rather than a flavour of "not up". It has to be distinguishable
+// from SoftAP mode because the two look identical from here -- both
+// leave network_isUp() false -- and the LED and the heartbeat both use
+// the difference to avoid reporting a fault the operator asked for.
+bool network_disabled() { return networkDisabled; }
+
 // network_scan_cache -- synchronous STA-mode scan, must be called
 // BEFORE the AP comes up. The CYW43 radio cannot scan while a client
 // is associated with the SoftAP, so this is the only safe window.
@@ -154,6 +249,19 @@ bool network_inStaMode() { return networkUp && !inApMode; }
 // the captive portal back, they'd have to power-cycle (we don't
 // tear down STA->AP in the current build).
 void network_scan_cache() {
+	// A cabinet with the radio switched off has nothing to scan for,
+	// and WiFi.scanNetworks() is a blocking 2-4 s. The check lives
+	// here rather than at the call site in main.cpp so that "disabled"
+	// is decided in exactly one place -- the two functions below are
+	// the only ones that touch the radio, and both ask.
+	//
+	// main.cpp still calls this unconditionally, and that is
+	// deliberate: a call site that had to know about the setting is a
+	// call site that can get the ordering wrong.
+	if (networkDisabled) {
+		Serial.println("net: network disabled by config; skipping scan");
+		return;
+	}
 	// Need STA-only mode for the scan; cyw43_arch_enable_sta_mode()
 	// is what scanNetworks() does internally, but we set it
 	// explicitly here so the AP doesn't get briefly brought up
@@ -561,8 +669,11 @@ static void onStateJson(AsyncWebServerRequest* req) {
 	doc["flash"]   = flash;
 	doc["uptimeMs"]           = (unsigned long)millis();
 	doc["selectedAtUptimeMs"] = (unsigned long)currentConsoleSelectedAtMs;
-	const char* mode = inApMode ? "ap" : "sta";
-	doc["mode"]    = mode;
+	// A third value alongside "sta" and "ap". "off" is not a flavour
+	// of "ap": the radio was never started, so a caller that saw "ap"
+	// would go looking for a SoftAP to connect to and find the device
+	// had deliberately not put one up.
+	doc["mode"]    = networkDisabled ? "off" : (inApMode ? "ap" : "sta");
 	String out;
 	serializeJson(doc, out);
 	req->send(200, "application/json", out);
@@ -570,8 +681,14 @@ static void onStateJson(AsyncWebServerRequest* req) {
 
 static void onWifiJson(AsyncWebServerRequest* req) {
 	StaticJsonDocument<256> doc;
-	doc["mode"] = inApMode ? "ap" : "sta";
-	if (inApMode) {
+	doc["mode"] = networkDisabled ? "off" : (inApMode ? "ap" : "sta");
+	if (networkDisabled) {
+		// No IP and no SSID, because there is no interface to have
+		// either. Reporting the SoftAP SSID here would be a lie on a
+		// device that is not running one.
+		doc["ip"]   = "";
+		doc["ssid"] = "";
+	} else if (inApMode) {
 		doc["ip"]   = WiFi.softAPIP().toString();
 		doc["ssid"] = kApSsid;
 	} else {
@@ -1074,20 +1191,92 @@ static void onWsEvent(AsyncWebSocket* srv, AsyncWebSocketClient* cli,
 
 // ---------- entry point ----------
 
+// The tail of the bring-up, run from network_loop() once the join has
+// either succeeded or run out of time. Everything it does is what the
+// second half of the old network_init() did, unchanged -- the split
+// moved *when* this runs, not what it decides.
+static void finishStaBringup() {
+	bringupPhase = BringupPhase::Resolved;
+
+	// The same condition the blocking loop exited on, asked once more
+	// from main-loop context. A radio can associate between the last
+	// poll and this call, and preferring the success path means a
+	// cabinet that made it in time serves the UI rather than silently
+	// dropping to an access point.
+	if (WiFi.status() == WL_CONNECTED) {
+		inApMode  = false;
+		networkUp = true;
+		Serial.print("net: joined after ");
+		Serial.print(millis() - staConnectStartedAtMs);
+		Serial.print(" ms, IP = ");
+		Serial.println(WiFi.localIP());
+		Serial.print("net: RSSI = ");
+		Serial.print(WiFi.RSSI());
+		Serial.println(" dBm");
+
+		// Make sure the captive-portal DNS server isn't running. It's
+		// only started by startApPortal() so this is a no-op in the
+		// normal STA flow, but defensive against a future STA->AP
+		// fallback transition.
+		dnsServer.stop();
+
+		startStaServer();
+		return;
+	}
+
+	Serial.println("net: STA connect timed out; falling back to SoftAP");
+	showWifiNotice(kWifiJoinFailedLine1, kWifiJoinFailedLine2);
+	startApPortal();
+}
+
 void network_init() {
 	Serial.println("net: network_init()");
+
+	// The radio stays off. Checked before anything else here, and
+	// before WiFi.status() -- asking the CYW43 anything is a radio
+	// access, and the whole point of the setting is that there is
+	// none.
+	//
+	// No SoftAP either. Falling back to one would leave the cabinet
+	// advertising a network nobody asked for, holding a DHCP lease and
+	// answering a captive portal, which is the thing being turned off.
+	if (networkDisabled) {
+		Serial.println("net: network disabled by config; radio left off");
+		// Resolved, not a phase of its own. Nothing in network_loop()
+		// does anything differently for a cabinet that never started
+		// the radio than for one that finished starting it, and a
+		// value nothing branches on is a value that will quietly go
+		// stale. "Is the radio disabled" is answered by
+		// network_disabled(), which reads the setting rather than
+		// reconstructing it from here.
+		bringupPhase = BringupPhase::Resolved;
+		return;
+	}
 
 	// Sanity-check the CYW43 module is alive. If WiFi.status() is
 	// WL_NO_MODULE the CYW43 firmware didn't load.
 	if (WiFi.status() == WL_NO_MODULE) {
 		Serial.println("net: CYW43 module not responding!");
+		bringupPhase = BringupPhase::Idle;
 		return;
 	}
 
 	String ssid, pass;
 	bool haveCreds = loadWifiCreds(ssid, pass);
 
+	// No credentials is not a slow case, it is a decision, and the
+	// decision needs no waiting: the SoftAP comes up now and the
+	// cabinet carries on being a cabinet.
+	//
+	// It does still get said out loud. Without this the cabinet is on
+	// its own access point with nothing on the panel to say so, and
+	// from the front of the cabinet that is the same picture as a
+	// cabinet that is switched off -- which is the confusion this
+	// notice exists to remove, and a fresh device is the case that
+	// needs it most.
 	if (!haveCreds) {
+		bringupPhase = BringupPhase::Resolved;
+		showWifiNotice(kWifiUnconfiguredLine1, kApSsid);
 		startApPortal();
 		return;
 	}
@@ -1102,33 +1291,62 @@ void network_init() {
 	WiFi.setHostname(kHostname);
 	WiFi.begin(ssid.c_str(), pass.c_str());
 
-	unsigned long start = millis();
-	while (WiFi.status() != WL_CONNECTED && (millis() - start) < kStaTimeoutSec * 1000UL) {
-		delay(500);
-		Serial.print(".");
-	}
-	Serial.println();
+	// Hand the rest to the main loop. WiFi.begin() has already put the
+	// CYW43 into associating; from here the radio does its work on its
+	// own schedule and every line after the old blocking loop was
+	// reachable from a loop tick. What this buys is that the knob, the
+	// strip, the ring, the LCD and the menu are all live while the
+	// router is being found.
+	staConnectStartedAtMs = millis();
+	staConnectLastDotMs  = staConnectStartedAtMs;
+	bringupPhase         = BringupPhase::Connecting;
+	Serial.println("net: joining in the background; the cabinet is live while we wait");
+}
 
-	if (WiFi.status() != WL_CONNECTED) {
-		Serial.println("net: STA connect timed out; falling back to SoftAP");
-		startApPortal();
+// Put a two-line WiFi notice on the panel for kWifiNoticeMs, unless
+// the operator has turned that off. Called from both SoftAP entry
+// points, which are in different functions and have genuinely
+// different things to say -- see the constants above.
+//
+// It used to be called from the timeout path only, and a factory-reset
+// cabinet therefore said nothing at all while sitting on its own access
+// point. That is the exact confusion the setting was added to remove:
+// from the front of the cabinet, "on a network nobody can name" and
+// "switched off" are the same picture.
+//
+// Gated on `network.showWIFIConnectionFailureMessage` rather than
+// hard-wired, because a cabinet on a bench that is permanently
+// unconfigured would otherwise say this at every single boot, and a
+// message that is always there stops being read. Default is on.
+//
+// The restore is a deadline rather than a delay(): the cabinet is
+// usable again the moment the SoftAP is up, and blocking here would
+// re-introduce the very stall this whole change is about. network_loop
+// puts the live view back when the deadline passes.
+//
+// display_show_status() is an inline no-op on a build without an LCD
+// (display.h), so this needs no HAS_LCD of its own -- which is right,
+// because the *decision* to fall back to SoftAP has nothing to do with
+// whether there is a panel to tell anyone about it on.
+static void showWifiNotice(const char* line1, const char* line2) {
+	if (!showWifiConnectionFailureMessage) {
+		Serial.println("net: WiFi notice suppressed by config");
 		return;
 	}
-
-	inApMode  = false;
-	networkUp = true;
-	Serial.print("net: connected, IP = ");
-	Serial.println(WiFi.localIP());
-	Serial.print("net: RSSI = ");
-	Serial.print(WiFi.RSSI());
-	Serial.println(" dBm");
-
-	// Make sure the captive-portal DNS server isn't running. It's only
-	// started by startApPortal() so this is a no-op in the normal STA
-	// flow, but defensive against a future STA->AP fallback transition.
-	dnsServer.stop();
-
-	startStaServer();
+	// Logged even when the panel took it, and deliberately so. "I didn't
+	// see the message" is a question about two different things -- the
+	// code decided to show it, or the code decided to show it and the
+	// panel never did -- and the answer is a line either way. Whether
+	// the LCD was actually found at boot is reported separately by
+	// display_init(), so between the two there is no case this leaves
+	// unexplained.
+	Serial.print("net: notice \"");
+	Serial.print(line1);
+	Serial.print("\" / \"");
+	Serial.print(line2);
+	Serial.println("\"");
+	display_show_status(line1, line2);
+	wifiNoticeUntilMs = millis() + kWifiNoticeMs;
 }
 
 // Blank the operator-facing outputs so a pending reboot reads as a
@@ -1158,6 +1376,62 @@ static void showRebootingState() {
 }
 
 void network_loop() {
+	// The other half of network_init(). First thing in the loop, and
+	// the only thing here that touches WiFi.status().
+	//
+	// This is the old blocking loop's exit condition, inverted: the
+	// `while` used to keep going while the radio had *not* associated
+	// and time was left, and the body slept 500 ms per pass. Here the
+	// loop keeps going while the radio has *not* associated and time is
+	// left -- the same predicate, evaluated without the sleep -- and
+	// hands the decision to finishStaBringup() the moment it is false.
+	//
+	// Nothing else in the loop has to know this exists, and nothing
+	// before it in loop() is gated on it: the LCD, the strip, the ring
+	// and the menu all run whether the radio has found a router yet or
+	// not, which is the entire point.
+	if (bringupPhase == BringupPhase::Connecting) {
+		if (WiFi.status() == WL_CONNECTED) {
+			Serial.println();
+			finishStaBringup();
+		} else if ((unsigned long)(millis() - staConnectStartedAtMs) >=
+		           (unsigned long)kStaTimeoutSec * 1000UL) {
+			Serial.println();
+			finishStaBringup();
+		} else if ((unsigned long)(millis() - staConnectLastDotMs) >= 2000UL) {
+			// The old loop printed a dot every 500 ms; this is every
+			// two seconds, because the loop body is now every few
+			// milliseconds and a dot per tick would be a dot-fest.
+			staConnectLastDotMs = millis();
+			Serial.print(".");
+			Serial.flush();
+		}
+	}
+
+	// The WiFi notice has had its two seconds. Put the live view
+	// back.
+	//
+	// display_show_status() holds whatever it was given until the next
+	// display_show_console(), so something has to undo it or the
+	// cabinet sits on a message about a network problem that was
+	// resolved -- or, more to the point, on one that is still true
+	// (the cabinet is on its own AP) but which the operator has long
+	// since read. Repainting from CurrentConsole() is the same call
+	// selectConsole() makes, so the panel lands on the same thing it
+	// would have shown had the notice never happened.
+	//
+	// Guarded on a non-empty console list: with no config uploaded,
+	// CurrentConsole() dereferences operator[] on a zero-size vector,
+	// and a boot with neither WiFi nor a console config is a real
+	// state for a factory-fresh device.
+	if (wifiNoticeUntilMs && (long)(millis() - wifiNoticeUntilMs) >= 0) {
+		wifiNoticeUntilMs = 0;
+		if (!consoles.empty()) {
+			display_show_console(CurrentConsole().name.c_str(),
+			                     CurrentConsole().tagline.c_str());
+		}
+	}
+
 	// Auto-restart the DNS catch-all if the debug suspension has
 	// expired. The operator hit /debug/dns-off, the 60 s window is up,
 	// we put things back the way they were. Only does work while the

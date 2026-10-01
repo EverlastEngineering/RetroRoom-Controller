@@ -395,6 +395,30 @@ struct LoadResult {
 	// (validation shouldn't be a hard error -- operators with weird
 	// configs shouldn't have their devices bricked).
 	std::uint32_t lcdBacklightOffAfterMs = 30000;
+	// Top-level `network` config. One field today: whether the LCD
+	// announces a failed WiFi join before the SoftAP comes up.
+	//
+	// Default true. The case for the default is that the alternative
+	// is invisible: a cabinet that quietly drops onto an access point
+	// the operator has never heard of is indistinguishable, from the
+	// front of the cabinet, from one that is switched off. Two seconds
+	// of a message is a cheap way to say which network it joined.
+	//
+	// RAM-only in the shell, re-read at the moment the join resolves,
+	// so turning it off takes effect on the *next* boot rather than
+	// needing a reboot prompt from the menu.
+	bool showWifiConnectionFailureMessage = true;
+	// Top-level `network.disable`: leave the radio off entirely. No
+	// scan, no STA join, no SoftAP, no server -- the cabinet runs as a
+	// self-contained appliance.
+	//
+	// Default false, so nothing changes for a config that has never
+	// heard of the field. The failure is deliberately one-way: a
+	// disabled network cannot be re-enabled over HTTP, because there
+	// is no HTTP. The knob is the way back, which is why the field is
+	// addressable from the menu and why the menu prompt declares it as
+	// needing a restart.
+	bool networkDisabled = false;
 	// The operator-editable menu, from a top-level `menu` array. Empty
 	// when the config declares none, which is a menu with only "Go Back"
 	// in it -- see todo/open/2026-09-30_menu-lock-down-mode.md for why
