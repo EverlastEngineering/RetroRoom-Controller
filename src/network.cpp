@@ -52,6 +52,9 @@
 #include "serialconfig.h"
 #if defined(HAS_LEDS)
 #include "ledstring.h"
+// For kPlaylistCount, so GET /lights can say how many palettes there
+// are without the shell having to forward a constant.
+#include <LightShow.h>
 #endif
 #include <ConsoleConfig.h>
 
@@ -794,6 +797,18 @@ static void onLightsGet(AsyncWebServerRequest* req) {
 	out += nightMode() ? "true" : "false";
 	out += ",\"brightness\":";
 	out += String((unsigned)ledFeel.brightnessPct);
+	// The light show's state, here rather than on its own endpoint,
+	// because "is the strip showing waves" is the same question as
+	// "what is the strip doing" and nobody should have to ask two.
+	out += ",\"show\":{\"running\":";
+	out += ledstring_lightShowActive() ? "true" : "false";
+	out += ",\"palette\":";
+	out += String(ledstring_lightShowPalette());
+	out += ",\"paletteName\":\"";
+	out += ledstring_lightShowPaletteName();
+	out += "\",\"paletteCount\":";
+	out += String((int)retroroom_core::kPlaylistCount);
+	out += "}";
 	out += ",\"persisted\":false}";
 	req->send(200, "application/json", out);
 }
@@ -815,8 +830,55 @@ static void onLightsOff(AsyncWebServerRequest* req) {
 	req->send(200, "application/json", "OK\n");
 }
 
+// The cyclical light show, ported from FastLED's colorwaves example.
+// See lib/LightShow for the wave and src/ledstring.cpp for the mode.
+//
+//   GET /lights/show          start it
+//   GET /lights/show/off      stop it, back to the resting paint
+//   GET /lights/show/next     next palette in the playlist
+//   GET /lights/show/prev     previous palette
+//
+// Plain GETs, like the rest of /lights, because the API is a set of
+// switches somebody hits from a browser bar or a phone. No body, no
+// verbs, nothing that has to be quoted correctly in a URL.
+//
+// The show owns the strip while it runs. Anything that wants the strip
+// back says so first -- a knob detent, a click, a commit -- so there is
+// no "stop" gesture to forget, and nothing on the strip is lying about
+// which console it is showing.
+static void onLightShowOn(AsyncWebServerRequest* req) {
+	const bool started = ledstring_startLightShow();
+	req->send(200, "application/json",
+	          started ? "{\"show\":\"started\"}\n"
+	                  : "{\"show\":\"already running\"}\n");
+}
+
+static void onLightShowOff(AsyncWebServerRequest* req) {
+	ledstring_stopLightShow();
+	req->send(200, "application/json", "{\"show\":\"stopped\"}\n");
+}
+
+static void onLightShowNext(AsyncWebServerRequest* req) {
+	ledstring_lightShowNext();
+	String out = "{\"show\":\"next\",\"palette\":";
+	out += String(ledstring_lightShowPalette());
+	out += ",\"paletteName\":\"";
+	out += ledstring_lightShowPaletteName();
+	out += "\"}\n";
+	req->send(200, "application/json", out);
+}
+
+static void onLightShowPrev(AsyncWebServerRequest* req) {
+	ledstring_lightShowPrev();
+	String out = "{\"show\":\"prev\",\"palette\":";
+	out += String(ledstring_lightShowPalette());
+	out += ",\"paletteName\":\"";
+	out += ledstring_lightShowPaletteName();
+	out += "\"}\n";
+	req->send(200, "application/json", out);
+}
+
 static void startStaServer() {
-	// Wire routes.
 	server.on("/", HTTP_GET, onRoot);
 	server.on("/script.js", HTTP_GET, onScriptJs);
 	// /openapi serves a Swagger UI page that loads /openapi.yaml from
@@ -851,6 +913,10 @@ static void startStaServer() {
 	server.on("/lights", HTTP_GET, onLightsGet);
 	server.on("/lights/on", HTTP_GET, onLightsOn);
 	server.on("/lights/off", HTTP_GET, onLightsOff);
+	server.on("/lights/show", HTTP_GET, onLightShowOn);
+	server.on("/lights/show/off", HTTP_GET, onLightShowOff);
+	server.on("/lights/show/next", HTTP_GET, onLightShowNext);
+	server.on("/lights/show/prev", HTTP_GET, onLightShowPrev);
 
 	// /consoles.json GET: route registration. The handler itself
 	// (onConsolesJsonGet) lives in the STA-mode section above so

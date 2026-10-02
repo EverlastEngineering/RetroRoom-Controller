@@ -34,6 +34,17 @@ to reach for the remote.
   strip reads as the stack filled down to your choice. Every timing and
   brightness is a `#define` in [`src/configuration.h`](src/configuration.h)
   — the feel can be retuned without touching the logic.
+- A **cyclical light show** on the console strip: colour waves driven by
+  four phase oscillators, moving through a cross-fading playlist of
+  cpt-city gradient palettes. A port of FastLED's
+  `colorwaveswithpalettes.ino`; the wave is
+  [`lib/LightShow`](lib/LightShow), and it is started from the web API.
+  It is **exclusive** — while it runs, the strip is the show, and any
+  knob turn or click gives the strip straight back to being a console
+  display.
+- **Night mode**: a double-click of the encoder paints the *selected*
+  console's window black, leaving the browse and the commit animations
+  alone. Not saved, gone on a restart. See below.
 - 16×2 I²C LCD showing the console name and a per-console tagline,
   with a backlight that dims when the box is idle.
 - IR blaster to switch the TV to the matching input.

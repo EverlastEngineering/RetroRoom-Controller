@@ -384,22 +384,14 @@ paths:
   /lights:
     get:
       tags: [cabinet]
-      summary: Night mode state
+      summary: What the strip is doing
       description: |
-        Whether night mode is on. Held in memory: not written to flash,
-        not in the menu, and gone on a restart.
+        Night mode, the brightness the config asks for, and whether the
+        cyclical light show currently owns the strip.
 
-        That is the point of it, and why it is an endpoint rather than
-        a menu row. A knob gesture or a URL that quietly edited
-        `led.colors.selected` would need a save, a prompt and an undo,
-        and "turn it off for the evening" deserves none of that.
-
-        Night mode paints the *selected* console's window black and
-        leaves every other role alone, so the browse, the travel and
-        the commit animation stay visible. It is not a brightness
-        level: `led.brightnessPct` is the config setting for that, and
-        there is deliberately no endpoint that changes it behind the
-        menu's back.
+        `show` is here rather than only on its own endpoint because "is
+        the strip showing waves" is the same question as "what is the
+        strip doing", and nobody should have to ask it twice.
       responses:
         "200":
           description: Current state
@@ -410,14 +402,103 @@ paths:
                 properties:
                   nightMode: { type: boolean, example: false, description: True while the selected window is painted black. }
                   brightness: { type: integer, example: 100, description: The config's `led.brightnessPct`, reported for reference. }
+                  show: { $ref: "#/components/schemas/LightShowState" }
                   persisted: { type: boolean, example: false, description: Always false. A runtime mode is never written to flash. }
       examples:
         followingConfig:
           summary: Lights as configured
-          value: { nightMode: false, brightness: 100, persisted: false }
+          value:
+            nightMode: false
+            brightness: 100
+            show: { running: false, palette: -1, paletteName: "?", paletteCount: 31 }
+            persisted: false
         dimmedForTheEvening:
           summary: Night mode, not saved
-          value: { nightMode: true, brightness: 100, persisted: false }
+          value:
+            nightMode: true
+            brightness: 100
+            show: { running: false, palette: -1, paletteName: "?", paletteCount: 31 }
+            persisted: false
+
+  /lights/show:
+    get:
+      tags: [cabinet]
+      summary: Start the cyclical light show
+      description: |
+        Hands the GP21 strip to a colour-wave show: hue waves driven by
+        four phase oscillators, moving through a cross-fading playlist
+        of cpt-city gradient palettes. A port of FastLED's
+        `colorwaveswithpalettes.ino` example; the wave and the palettes
+        are `lib/LightShow`.
+
+        **The show is exclusive.** While it runs the strip *is* the
+        show: a commit does not twinkle over it, a browse does not draw
+        on top of it, and night mode has nothing to black because the
+        show writes colours rather than levels. It ends the moment the
+        operator asks for a console again — a knob detent in any
+        direction, a click, or any commit route (`/next`, `/prev`, the
+        hardware buttons, the WebSocket). There is no separate "stop"
+        gesture because reaching for the knob already is that gesture.
+
+        The frame rate is the config's `led.frameIntervalMs`, and the
+        whole thing is scaled by `led.brightnessPct`, so both settings
+        mean here what they mean everywhere else. The palette dwell is a
+        constant, not a setting — see `src/ledstring.cpp` for why.
+
+        Not persisted, and not in the config menu: it is a runtime
+        thing, and a menu row for it would mean a save.
+      responses:
+        "200":
+          description: Started, or already running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  show:
+                    type: string
+                    enum: [started, "already running"]
+                    example: started
+
+  /lights/show/off:
+    get:
+      tags: [cabinet]
+      summary: Stop the light show
+      description: |
+        Hands the strip back to the resting paint for the selected
+        console. A no-op if the show is not running.
+      responses:
+        "200": { description: Stopped }
+
+  /lights/show/next:
+    get:
+      tags: [cabinet]
+      summary: Next palette in the playlist
+      description: |
+        Steps forward through the playlist, wrapping at the end, and
+        restarts the cross-fade. A no-op if the show is not running —
+        changing the palette of a show that is not playing is not a
+        thing worth an error message.
+      responses:
+        "200":
+          description: The new palette
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaletteChoice"
+
+  /lights/show/prev:
+    get:
+      tags: [cabinet]
+      summary: Previous palette in the playlist
+      description: As `/lights/show/next`, backwards, wrapping.
+      responses:
+        "200":
+          description: The new palette
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaletteChoice"
 
   /lights/on:
     get:
@@ -437,7 +518,6 @@ paths:
       responses:
         "200": { description: OK }
 
-  /factory-reset:
     get:
       tags: [admin]
       summary: Serve the factory-reset confirmation page
@@ -595,6 +675,43 @@ components:
             `millis()` at the moment the current console was
             selected by /next or /prev. Advances on every cycle;
             the harness compares it to prove motion really happened.
+
+    LightShowState:
+      type: object
+      required: [running, palette, paletteName, paletteCount]
+      properties:
+        running:
+          type: boolean
+          description: True while the show owns the strip.
+        palette:
+          type: integer
+          description: |
+            Playlist index, or -1 if the show has never started. A
+            different answer from a name, so a client can tell "off" from
+            "on, first palette".
+        paletteName:
+          type: string
+          description: The cpt-city palette's name, or `"?"` outside the table.
+          example: es_rivendell_15_gp
+        paletteCount:
+          type: integer
+          description: How many palettes the playlist holds.
+
+    PaletteChoice:
+      type: object
+      required: [show, palette, paletteName]
+      properties:
+        show:
+          type: string
+          enum: [next, prev]
+        palette:
+          type: integer
+          description: The new playlist index.
+        paletteName:
+          type: string
+          example: rgi_15_gp
+
+    /factory-reset:
 
     ConsoleConfig:
       type: object

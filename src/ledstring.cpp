@@ -13,7 +13,23 @@
 
 #include <LedStringPaint.h>
 #include <ConsoleConfig.h>  // for retroroom_core::Console (led_position, led_width)
+#include <LightShow.h>      // the cyclical light show's core, below
 #include "consoles.h"        // for CurrentConsole() — held in src/consoles.cpp
+
+// The light show's internals. They live at the bottom of this file,
+// beside the public ledstring_*LightShow*() entry points and the comment
+// explaining why the show is exclusive, but ledstring_loop() -- which is
+// above them -- reaches two of them. Declared here so the show's
+// commentary stays with the show and the loop's stays with the loop,
+// rather than moving a hundred lines of either.
+//
+// At file scope, not in the anonymous namespace the modes live in: the
+// definitions are further down and are not in it, and a declaration in
+// one unnamed namespace that the definition is not in is a *second*
+// function rather than a forward declaration -- which reads as an
+// ambiguous overload rather than as the mistake it is.
+void paintLightShow(uint32_t nowMs);
+extern uint32_t lightShowLastFrameMs;
 
 // Independent of the ring's CRGB leds[NUM_LEDS] in src/lighting.cpp.
 // The buffer is sized at the *build* capacity, not the configured
@@ -61,6 +77,7 @@ enum class StripMode {
 	TRAVEL,   // the step completed: the scripted move onto the target
 	PREVIEW,  // the travel finished: the target pulsing
 	SELECTING,  // a commit: twinkle, then settle
+	LIGHTSHOW,  // the cyclical light show owns the strip
 };
 
 // The commit's two halves, from the config's `led` block.
@@ -585,8 +602,7 @@ void ledstring_allOff() {
 	// ledstring_loop() tick would repaint over the blank and the
 	// operator would see the strip light up again on its way down to
 	// the reboot.
-	mode = StripMode::RESTING;
-	fill_solid(selectedLeds, ledFeel.totalLeds,
+	mode = StripMode::RESTING;	fill_solid(selectedLeds, ledFeel.totalLeds,
 			  LEDSTRING_OFF_COLOR);
 	FastLED.show();
 }
@@ -739,6 +755,19 @@ void ledstring_loop() {
 	}
 	case StripMode::RESTING:
 		break;
+	case StripMode::LIGHTSHOW:
+		// Its own clock, on the config's own interval. The switch above
+		// already gated this on ledFeel.frameIntervalMs, and
+		// lightShowLastFrameMs is only here so a change to that setting
+		// mid-show takes effect on the next frame rather than needing a
+		// restart -- the same live-read rule as every other ledFeel
+		// value in this file.
+		if ((uint32_t)(now - lightShowLastFrameMs) >=
+		    (uint32_t)ledFeel.frameIntervalMs) {
+			lightShowLastFrameMs = now;
+			paintLightShow(now);
+		}
+		break;
 	}
 }
 
@@ -774,6 +803,14 @@ void ledstring_browseSnap(int from, int to) {
 }
 
 void ledstring_browseClear() {
+	// A browse taking the strip back ends the light show first. It is
+	// the same "the operator has decided what the strip is doing" event
+	// as a detent, and routing both through here means there is one
+	// place where the show gives way rather than two that have to
+	// remember about each other.
+	if (mode == StripMode::LIGHTSHOW) {
+		ledstring_stopLightShow();
+	}
 	mode = StripMode::RESTING;
 	// The run is gone with the browse, so there is nothing left to give
 	// back. The read side re-checks the mode anyway; clearing it here
@@ -809,8 +846,144 @@ const char* ledstring_modeName() {
 	case StripMode::TRAVEL: return "TRAVEL";
 	case StripMode::PREVIEW: return "PREVIEW";
 	case StripMode::SELECTING: return "SELECTING";
+	case StripMode::LIGHTSHOW: return "LIGHTSHOW";
 	}
 	return "?";
+}
+
+// ---- the light show ----------------------------------------------------
+//
+// lib/LightShow does the wave; this is the shell around it. The strip
+// has exactly one owner at a time and it is this file, which is the
+// whole reason the show is a StripMode rather than a second thing that
+// also calls FastLED.show(). Two writers for one buffer is a bug
+// waiting for the frame where they disagree.
+//
+// LIGHTSHOW is EXCLUSIVE. It is not a background layer under the browse
+// and it does not decorate the resting paint; while it runs, the strip
+// is the show. Which means:
+//
+//   - a commit does not twinkle over it,
+//   - a browse does not draw on top of it,
+//   - night mode, which blacks the SELECTED role, has nothing to black,
+//     because there is no role -- the show writes colours, not levels.
+//
+// So every one of those paths has to leave first, and the leaving is
+// one function, ledstring_stopLightShow(). The alternative -- layering
+// a wave under a twinkle -- is a bigger thing than it sounds and is not
+// what anybody asks for at two in the morning.
+static retroroom_core::LightShowState lightShowState;
+uint32_t lightShowLastFrameMs = 0;
+
+// One global scale, same shape and same reason as the one in
+// pushFrame(). The show writes full-brightness colours and is dimmed
+// here, so `led.brightnessPct` and night mode still mean what they say.
+uint8_t lightShowScale() {
+	return static_cast<uint8_t>(
+		(static_cast<uint32_t>(255) *
+		 static_cast<uint32_t>(ledFeel.brightnessPct)) / 100u);
+}
+
+retroroom_core::LightShowConfig lightShowConfig() {
+	retroroom_core::LightShowConfig c;
+	// The strip's own frame interval, so a cabinet that tuned it for its
+	// power budget does not tune it twice. Read live, like every other
+	// ledFeel value in this file.
+	c.frameIntervalMs = ledFeel.frameIntervalMs;
+	// Not config. The original's SECONDS_PER_PALETTE was 10 "for a
+	// demo, 20-120 is better for deployment" -- a number the sketch had
+	// no opinion about beyond that. Left as a constant here for the same
+	// reason: making it an option means a registry field, a menu row, a
+	// factory-config entry and an OpenAPI schema for a value nobody has
+	// asked to change. It is the one thing in this feature most likely to
+	// want promoting, and it is one line to promote.
+	c.paletteDwellMs = 10000;
+	c.paletteFadeMs = 1200;
+	return c;
+}
+
+void paintLightShow(uint32_t nowMs) {	// The core's Rgb is not FastLED's CRgb, and is deliberately not
+	// made to be -- lib/LightShow has no dependency on FastLED and that
+	// is what lets it be tested on the host. Convert here, once per
+	// pixel, where the buffer meets the wire.
+	retroroom_core::Rgb wave[retroroom_core::kLedStripCapacity];
+	retroroom_core::computeColorWaveFrame(lightShowState, lightShowConfig(),
+	                                      ledFeel.totalLeds, nowMs, wave);
+	const uint8_t scale = lightShowScale();
+	for (int i = 0; i < ledFeel.totalLeds; ++i) {
+		selectedLeds[i] = CRGB(
+			static_cast<uint8_t>(wave[i].r * scale / 255),
+			static_cast<uint8_t>(wave[i].g * scale / 255),
+			static_cast<uint8_t>(wave[i].b * scale / 255));
+	}
+	FastLED.show();
+}
+
+bool ledstring_startLightShow(void) {
+	if (mode == StripMode::LIGHTSHOW) {
+		return false;
+	}
+	lightShowReset(&lightShowState, millis());
+	lightShowLastFrameMs = millis();
+	// Any half-finished browse is gone: the strip was mid-animation a
+	// moment ago and now it is not. The browse *cursor* is untouched --
+	// where the operator had got to is still where it is -- but the
+	// pixels it was drawing are not.
+	fillRetreatInProgress = false;
+	mode = StripMode::LIGHTSHOW;
+	// Straight to the wire rather than waiting a frame interval, so a
+	// caller that has just turned it on sees something immediately.
+	paintLightShow(millis());
+	Serial.print("lightshow: on, palette ");
+	Serial.print(retroroom_core::lightShowPaletteName(lightShowState.playlistIndex));
+	Serial.print(" (");
+	Serial.print(lightShowState.playlistIndex);
+	Serial.print("/");
+	Serial.print(retroroom_core::kPlaylistCount);
+	Serial.println(")");
+	return true;
+}
+
+void ledstring_stopLightShow(void) {
+	if (mode != StripMode::LIGHTSHOW) {
+		return;
+	}
+	mode = StripMode::RESTING;
+	// Back to the resting paint rather than black. The show is over, not
+	// the cabinet: leaving the strip dark would be the wrong ending for
+	// a gesture that was supposed to be temporary.
+	paintResting(currentConsoleIndex);
+	Serial.println("lightshow: off");
+}
+
+bool ledstring_lightShowActive(void) {
+	return mode == StripMode::LIGHTSHOW;
+}
+
+void ledstring_lightShowNext(void) {
+	if (!ledstring_lightShowActive()) {
+		return;
+	}
+	lightShowNextPalette(&lightShowState);
+	Serial.print("lightshow: palette ");
+	Serial.println(retroroom_core::lightShowPaletteName(lightShowState.playlistIndex));
+}
+
+void ledstring_lightShowPrev(void) {
+	if (!ledstring_lightShowActive()) {
+		return;
+	}
+	lightShowPrevPalette(&lightShowState);
+	Serial.print("lightshow: palette ");
+	Serial.println(retroroom_core::lightShowPaletteName(lightShowState.playlistIndex));
+}
+
+int ledstring_lightShowPalette(void) {
+	return lightShowState.playlistIndex;
+}
+
+const char* ledstring_lightShowPaletteName(void) {
+	return retroroom_core::lightShowPaletteName(lightShowState.playlistIndex);
 }
 
 void ledstring_selectEffect(int idx) {

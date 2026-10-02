@@ -144,6 +144,44 @@ const char* ledstring_modeName();
 // Called from selectConsole(), so it covers every commit path: the
 // rotary click, NEXT/PREV buttons, /next, /prev, and the WebSocket
 // console message. It cancels any browse animation already in flight.
+// ---- light show -------------------------------------------------------
+
+// Hand the strip to the cyclical light show, or take it back.
+//
+// EXCLUSIVE, and deliberately so. While it runs the strip is the show:
+// a commit does not twinkle over it, a browse does not draw on top of
+// it, and night mode has nothing to black because the show writes
+// colours rather than levels. Anything that wants the strip says so
+// first, and everything that already had it calls the stop.
+//
+// What stops it:
+//   - a knob detent, in any direction (src/controls.cpp)
+//   - a knob click, and the double-click on top of it
+//   - a commit from any route -- /next, /prev, the buttons, the
+//     WebSocket -- because all of them go through
+//     controls_browseReset() -> ledstring_browseClear()
+//   - ledstring_stopLightShow(), i.e. the URL
+//
+// The rule is "the operator asking for a console ends the show",
+// because that is the only way the operator can ask for a console
+// while one is running. There is no fourth gesture for "stop the
+// lights" because reaching for the knob already is that gesture.
+//
+// Returns false if the show was already running -- so a caller can tell
+// "I started it" from "it was already on" without asking twice.
+extern bool ledstring_startLightShow();
+extern void ledstring_stopLightShow();
+extern bool ledstring_lightShowActive();
+// Step the palette. No-ops when the show is not running, because
+// changing the palette of a show that is not playing is not a thing
+// worth an error message.
+extern void ledstring_lightShowNext();
+extern void ledstring_lightShowPrev();
+// Which playlist entry is up, and its cpt-city name. "?" when the show
+// has never started, which is a different answer from a name.
+extern int ledstring_lightShowPalette();
+extern const char* ledstring_lightShowPaletteName();
+
 extern void ledstring_selectEffect(int idx);
 
 // Blank every pixel on the GP21 strip and push the frame to the wire.

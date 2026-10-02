@@ -439,6 +439,15 @@ void rotarySelectorPressed() {
 		return;
 	}
 
+	// A click is a commit, and a commit means the strip is a console
+	// display again. The show also gives way on a click that completes
+	// nothing, for the same reason it gives way on a detent: the
+	// operator reached for the knob, and reaching for the knob is the
+	// answer to "what is this doing".
+	if (ledstring_lightShowActive()) {
+		ledstring_stopLightShow();
+	}
+
 	// The config menu owns the click while it is open -- it opens the
 	// editor, or commits the one being edited, or leaves on "Go Back".
 	// Returning here is the whole point: a click that reached
@@ -752,6 +761,15 @@ void rotaryEncoderTick() {
 
 	int newPos = encoder->getPosition();
 	if (pos != newPos) {
+		// Reaching for the knob is how the operator asks for a
+		// console, so a detent is a detent is the strip going back to
+		// being a console display. The show gives way here rather than
+		// in the browse paths, because a turn that does not complete a
+		// step never reaches those and would leave the strip showing
+		// waves while the operator is plainly browsing.
+		if (ledstring_lightShowActive()) {
+			ledstring_stopLightShow();
+		}
 		// A detent. This is the only place the double-click's "no turns
 		// in between" gets its answer, so it has to be here and nowhere
 		// else.
