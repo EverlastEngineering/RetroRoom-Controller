@@ -111,7 +111,60 @@ the config menu's back is a second writer for one number. It was
 removed with the override it came with, so if anything still calls it,
 it will 404.
 
-## 4. Also worth a look, from earlier in this work
+## 4. The cyclical light show
+
+**What changed:** the GP21 console strip can be handed to a colour-wave
+show — four phase oscillators moving through a cross-fading playlist of
+cpt-city gradient palettes. A port of FastLED's `colorwaveswithpalettes.ino`
+into [`lib/LightShow`](../lib/LightShow), reachable from the web API and
+from nowhere else.
+
+```
+GET /lights/show          start
+GET /lights/show/off      stop
+GET /lights/show/next     next palette
+GET /lights/show/prev     previous palette
+GET /lights               reports the state
+```
+
+**The thing to check is that it gives way.** The show is exclusive: a
+commit does not twinkle over it, a browse does not draw on top of it,
+and night mode has nothing to black. So:
+
+- Start the show, then **turn the knob one detent** — including less
+  than a full step. The strip must go straight back to the resting
+  paint. The stop is in `rotaryEncoderTick()`, not only in the browse
+  paths, precisely so a partial turn counts.
+- Start it, then **click**. Same.
+- Start it, then `GET /next`. Same, via a different route — worth
+  checking separately, because the next/prev buttons, `/next`, `/prev`
+  and the WebSocket all reach it through `controls_browseReset()` and I
+  have only reasoned about that path, not seen it.
+- Start it and **leave it alone for two palettes** (about 20 s). The
+  cross-fade should be visible as a fade, not a cut, and the wave should
+  keep moving throughout. A frozen wave is the one failure that a host
+  test cannot see.
+- `GET /lights/show/next` and `/prev` while it runs. The log line should
+  name a palette: `lightshow: palette es_rivendell_15_gp`.
+- Turn the brightness down in the menu **while the show is running**. It
+  should dim on the next frame, not on a restart.
+
+**Watch out for:**
+- **The first frame.** If the show starts with a hue jump or a flash, the
+  clock was not seeded — `lightShowReset()` takes `millis()` and the
+  first delta has to be one frame interval, not the time since boot.
+- **Frame rate.** `led.frameIntervalMs` governs it, defaulting to 8 ms.
+  If the wave looks like a strobe, the frame is late rather than fast.
+- **Power.** This is a full-brightness animation on 118 pixels, which
+  the cabinet's supply was not sized for. The show is scaled by
+  `led.brightnessPct` and it is worth watching the brown-out LED.
+- **The trailing smear.** The wave blends over the previous frame, which
+  is the original's look. It is asserted as a contract in the tests, not
+  as a look, so nothing will stop you changing it — but if it looks
+  wrong, that is the first thing to look at.
+- **`GET /lights` needs a network**, like the rest of `/lights`.
+
+## 5. Also worth a look, from earlier in this work
 
 - **A save that needs a restart now restarts on its own.** Turn a
   setting that `configFieldNeedsReboot()` covers (`led.totalLeds`, or
