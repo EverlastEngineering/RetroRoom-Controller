@@ -136,6 +136,9 @@ void heartbeatTick() {
 	}
 	constexpr unsigned long kHeartbeatIntervalMs = 2000UL;
 	static unsigned long lastBeat = 0;
+	// The loop count as of the previous beat, so the printed rate is
+	// over the interval the uptime above reports rather than since boot.
+	static uint32_t lastLoopTickCount = 0;
 	const unsigned long now = millis();
 	if (now - lastBeat < kHeartbeatIntervalMs) {
 		return;
@@ -161,6 +164,17 @@ void heartbeatTick() {
 	// where someone will later need to tell those apart.
 	Serial.print(network_disabled() ? "off"
 	                                : (network_inStaMode() ? "sta" : "ap"));
+	// The loop rate, and the one number that explains most "the input
+	// does not work" reports. The rotary selector is polled rather than
+	// interrupt-driven, so this is the rate the button is sampled at: a
+	// press shorter than an iteration is a press that never happened,
+	// and the debounce eats a press that only just spans one.
+	Serial.print(" loop=");
+	Serial.print(loopTickCount - lastLoopTickCount);
+	Serial.print("/s");
+	// Reset after printing rather than at the top, so the number is the
+	// count over exactly the interval the uptime above reports.
+	lastLoopTickCount = loopTickCount;
 	Serial.println();
 #endif // HAS_WIFI
 }

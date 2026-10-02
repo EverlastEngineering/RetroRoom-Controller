@@ -128,8 +128,23 @@ static uint32_t settleLockoutUntilMs = 0;
 // menu. The library owns the timing; nothing here counts presses.
 //
 // The window has to sit under the 900 ms hold or the two gestures
-// overlap. 300 ms is the usual double-click window.
-constexpr uint32_t kDoubleClickMs = 300;
+// overlap, and it has to be wide enough for a thumb on a knob.
+//
+// 300 ms was a mouse's idea of a double-click and was too tight. Being
+// too tight does not fail obviously: the pair simply never registers,
+// and the gesture reads as broken rather than as mistimed. 500 ms is
+// where most UI toolkits settled for the same reason, and it still
+// leaves 400 ms between the end of a double-click and the point at
+// which a press would count as a hold.
+//
+// The other half of the tolerance is that a press is measured when
+// loop() samples the pin, and the sample after a commit lands late --
+// selectConsole() drives the latch, the panel and the IR blaster, and
+// IRremote's send() blocks for the length of the code. A second click
+// landing inside that window is not seen at all. Every press logs its
+// own timing below, precisely so that case is visible in a log rather
+// than inferred from nothing happening.
+constexpr uint32_t kDoubleClickMs = 500;
 
 // millis() of the previous press, or 0 when there is no pending first
 // press. 0 rather than a bool so "no press pending" and "pressed at
@@ -374,15 +389,42 @@ void rotarySelectorPressed() {
 	// event and cannot be a double-click by construction. The window
 	// is well under the 900 ms hold anyway.
 	const uint32_t now = millis();
+	// Taken BEFORE lastPressAtMs is overwritten below. The diagnostic at
+	// the bottom of this function needs the gap between this press and
+	// the previous one, and reading it afterwards would report the gap
+	// as zero every single time -- which is worse than not logging it,
+	// because a log that always says zero looks like evidence.
+	const uint32_t sinceLast =
+		lastPressAtMs == 0 ? 0 : (uint32_t)(now - lastPressAtMs);
 	const bool completesDoubleClick =
 		!knobTurnedSincePress && lastPressAtMs != 0 &&
-		(uint32_t)(now - lastPressAtMs) < kDoubleClickMs;
+		sinceLast < kDoubleClickMs;
 	// Read before the clear. doubleClicked() fires from the same
 	// release as this function, just after it, and wants to know
 	// whether the knob turned during the pair.
 	doubleClickHadTurn = knobTurnedSincePress;
 	lastPressAtMs = now;
 	knobTurnedSincePress = false;
+
+	// Every press says when it was and how far it was from the last
+	// one. This is the only instrumentation the knob has, and a gesture
+	// that "does not work" is the failure that needs it most: without
+	// the delta there is no way to tell a too-narrow window from a
+	// swallowed edge from a callback that never ran, and all three look
+	// identical from the outside. The pair flag is what the sequence
+	// callback is about to decide, and printing it here means the
+	// answer is in the log even on the ticks where the sequence does
+	// not fire.
+	//
+	// Clamped at 1000: a longer gap is not "9999", it is two unrelated
+	// presses, and printing the real number would put a six-digit value
+	// in a line that is supposed to be readable at a glance.
+	Serial.print("rotary: press +");
+	Serial.print(sinceLast < 1000 ? (unsigned)sinceLast : (unsigned)0);
+	Serial.print("ms pair=");
+	Serial.print(completesDoubleClick ? 1 : 0);
+	Serial.print(" turn=");
+	Serial.println(doubleClickHadTurn ? 1 : 0);
 
 	if (completesDoubleClick) {
 		return;

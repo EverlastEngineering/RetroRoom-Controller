@@ -19,6 +19,10 @@
 // number of consoles loaded so the user can confirm the JSON parser
 // succeeded without having to look at the WS or run any test.
 
+// loop()'s iteration count, reported in the heartbeat as `loop=<n>/s`.
+// See state.h for why it is worth having.
+uint32_t loopTickCount = 0;
+
 void setup() {
 	// Give the host USB-CDC driver a full second to enumerate and attach
 	// to /dev/cu.usbmodem* before we touch USB at all. On the RP2350
@@ -198,6 +202,13 @@ void setup() {
 }
 
 void loop() {
+	// Counted here and reported by the heartbeat, because the loop rate
+	// is the sampling rate for every polled input on the cabinet -- most
+	// of all the rotary selector, whose presses shorter than one
+	// iteration do not happen at all. It cost a register and an
+	// increment; the alternative was guessing why a gesture misbehaves.
+	++loopTickCount;
+
 	// Track the rotary encoder for console switching.
 	rotaryEncoderTick();
 
