@@ -173,6 +173,15 @@ bool knobTurnedSincePress = false;
 // A copy of knobTurnedSincePress taken by the press handler, because
 // doubleClicked() runs *after* it on the same release and the live flag
 // has already been cleared by then.
+//
+// What it measures is "did the knob move between the previous press and
+// this one" -- which is not the same as "has the operator browsed at
+// all". A browse that ended before the first press is not between the
+// two, so browse-then-double-click does toggle night mode, and the
+// first press commits the console the browse landed on. That is the
+// behaviour that falls out of asking the gesture question at the place
+// where it can still be answered, and it is what an operator who
+// browses and then double-clicks is asking for anyway.
 static bool doubleClickHadTurn = false;
 
 // Night mode on or off. See src/consoles.h for what it is and is not.
@@ -737,17 +746,38 @@ void touchReleaseDetected() {
 
 
 void rotaryEncoderTick() {
-	// Any detent at all counts as "the operator turned the knob", which
-	// is all the double-click needs to know. Deliberately not "the
-	// browse acted on it": a turn that the gate swallowed still
-	// happened, and the operator still turned the thing.
-	knobTurnedSincePress = true;
 	static int pos = 0;
 
 	encoder->tick(); // just call tick() to check the state.
 
 	int newPos = encoder->getPosition();
 	if (pos != newPos) {
+		// A detent. This is the only place the double-click's "no turns
+		// in between" gets its answer, so it has to be here and nowhere
+		// else.
+		//
+		// It used to be the line ABOVE the encoder was even read --
+		// `knobTurnedSincePress = true;` unconditionally, at the top of
+		// this function, with a comment saying "any detent at all". The
+		// comment described a check the code did not make. This function
+		// runs from loop() on every single iteration, so the flag was
+		// true before the operator had touched anything, and stayed true
+		// between the two presses of every double-click. The gesture
+		// fired and then refused to act on itself:
+		//
+		//   rotary: double-click ignored; the knob turned between the presses
+		//
+		// which is exactly right, given what it was told. The "no turns
+		// in between" test had never once passed on this cabinet, and
+		// nothing in the log said so until the press started printing
+		// its own decision.
+		//
+		// Before the position comparison, not after: a turn the detent
+		// gate swallowed still moved the encoder and still happened, and
+		// the operator still turned the thing. A bounce counts too, and
+		// that is fine -- a mechanical encoder only bounces when the
+		// knob actually moved.
+		knobTurnedSincePress = true;
 		// Serial.print("Console Index:");
 		// Serial.println(currentConsoleIndex);
 		// Serial.print("pos:");
