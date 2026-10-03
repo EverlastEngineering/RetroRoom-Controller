@@ -14,6 +14,8 @@
 #include <LightShow.h>
 #include <unity.h>
 
+#include <cstdio>
+
 using retroroom_core::LightShowConfig;
 using retroroom_core::LightShowState;
 using retroroom_core::Rgb;
@@ -454,6 +456,79 @@ static void test_the_frame_blends_over_what_was_there(void) {
 	TEST_ASSERT_GREATER_THAN_INT(0, warmer);
 }
 
+// ---- the pixel -> wave-step mapping ---------------------------------
+
+// The regression test for a real bug: the strip is walked backwards, so
+// an LED that read one past the end of the 256-entry sample table was
+// LED 0, and it sat on one colour for as long as the show ran. Found on
+// the bench as "the first LED is red no matter what".
+//
+// Walked over a spread of strip lengths rather than the 118 this cabinet
+// happens to have, and with a per-failure message, because the bad
+// value only appears at the LAST pixel of every length -- which is
+// exactly the kind of thing a single-length check would have missed the
+// first time somebody changed led.totalLeds.
+static void test_every_led_maps_inside_the_sample_table(void) {
+	for (int numLeds = 1; numLeds <= 600; numLeds += 7) {
+		for (int i = 0; i < numLeds; ++i) {
+			const int step = retroroom_core::waveStepFor(i, numLeds);
+			char msg[96];
+			snprintf(msg, sizeof(msg),
+			         "LED %d of %d maps to step %d, outside 0..255", i,
+			         numLeds, step);
+			TEST_ASSERT_TRUE_MESSAGE(step >= 0 && step <= 255, msg);
+		}
+	}
+}
+
+static void test_the_mapping_spans_the_whole_table(void) {
+	// Not just in range: the first LED must be step 0 and the last
+	// must be step 255, or the wave is not reaching the ends of the
+	// strip. A mapping that clamped to 0..254 would pass the range
+	// test and quietly waste the last fifth of the table.
+	for (int numLeds = 2; numLeds <= 512; ++numLeds) {
+		char msg[96];
+		snprintf(msg, sizeof(msg), "%d LEDs: first is step %d, not 0",
+		         numLeds, retroroom_core::waveStepFor(0, numLeds));
+		TEST_ASSERT_TRUE_MESSAGE(retroroom_core::waveStepFor(0, numLeds) == 0,
+		                         msg);
+		snprintf(msg, sizeof(msg), "%d LEDs: last is step %d, not 255",
+		         numLeds, retroroom_core::waveStepFor(numLeds - 1, numLeds));
+		TEST_ASSERT_TRUE_MESSAGE(
+		    retroroom_core::waveStepFor(numLeds - 1, numLeds) == 255, msg);
+	}
+}
+
+static void test_the_mapping_never_moves_backwards(void) {
+	// The wave runs along the strip, so the step must not go
+	// backwards as the LED number goes up. A wrap or a sign slip would
+	// still be "in range" and would still light every LED.
+	for (int numLeds = 2; numLeds <= 300; numLeds += 13) {
+		int prev = 0;
+		for (int i = 0; i < numLeds; ++i) {
+			const int step = retroroom_core::waveStepFor(i, numLeds);
+			char msg[96];
+			snprintf(msg, sizeof(msg),
+			         "%d LEDs: step went backwards at LED %d (%d after %d)",
+			         numLeds, i, step, prev);
+			TEST_ASSERT_TRUE_MESSAGE(step >= prev, msg);
+			prev = step;
+		}
+	}
+}
+
+static void test_the_mapping_survives_degenerate_strips(void) {
+	// 0 and negative lengths are the shell's problem to avoid, but the
+	// function is public and the arithmetic has a divide in it.
+	TEST_ASSERT_EQUAL_INT(0, retroroom_core::waveStepFor(0, 0));
+	TEST_ASSERT_EQUAL_INT(0, retroroom_core::waveStepFor(0, 1));
+	TEST_ASSERT_EQUAL_INT(0, retroroom_core::waveStepFor(0, -5));
+	TEST_ASSERT_EQUAL_INT(0, retroroom_core::waveStepFor(-1, 10));
+	// An LED index past the end clamps rather than reading past the
+	// table, which is the whole point.
+	TEST_ASSERT_EQUAL_INT(255, retroroom_core::waveStepFor(1000, 10));
+}
+
 int main(int argc, char** argv) {
 	(void)argc;
 	(void)argv;
@@ -480,5 +555,9 @@ int main(int argc, char** argv) {
 	RUN_TEST(test_selecting_resets_the_fade);
 	RUN_TEST(test_a_long_run_stays_inside_the_playlist);
 	RUN_TEST(test_the_frame_blends_over_what_was_there);
+	RUN_TEST(test_every_led_maps_inside_the_sample_table);
+	RUN_TEST(test_the_mapping_spans_the_whole_table);
+	RUN_TEST(test_the_mapping_never_moves_backwards);
+	RUN_TEST(test_the_mapping_survives_degenerate_strips);
 	return UNITY_END();
 }

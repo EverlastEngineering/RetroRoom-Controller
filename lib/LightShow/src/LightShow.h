@@ -141,6 +141,22 @@ void lightShowPrevPalette(LightShowState* s);
 // Jump straight to a playlist index, resetting the fade.
 void lightShowSelectPalette(LightShowState* s, int playlistIndex);
 
+// Which of the wave's 256 sampled steps paints LED `i` of a strip
+// `numLeds` long. 0 for the first LED, 255 for the last, inclusive at
+// both ends.
+//
+// Exposed rather than left as an expression inside the frame loop
+// because it is arithmetic that nothing else catches. Scaling by 256
+// instead of 255 puts the LAST LED's step at 256 -- one past the end
+// of the sample table -- and the strip is walked backwards, so that
+// over-read lands on LED 0. A pixel reading one past an array is the
+// same address whatever the frame is, so it presented as one LED
+// stuck on one colour "no matter what", with nothing to connect it to
+// an off-by-one. It was found on the bench, not in a test.
+//
+// Returns 0 for an empty or single-LED strip.
+int waveStepFor(int i, int numLeds);
+
 // Paint one frame, and advance the show to match.
 //
 // `s` is advanced in place. Painting a frame IS advancing the show --

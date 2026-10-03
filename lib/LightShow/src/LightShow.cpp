@@ -171,8 +171,23 @@ Rgb rampAt(const Rgb* ramp, int index, int brightness) {
 
 }  // namespace
 
-const char* lightShowPaletteName(int playlistIndex) {
-	if (playlistIndex < 0 || playlistIndex >= kPlaylistCount) {
+int waveStepFor(int i, int numLeds) {
+	if (numLeds <= 1 || i <= 0) {
+		return 0;
+	}
+	if (i >= numLeds) {
+		return 255;
+	}
+	// 255, not 256. The span has to be INCLUSIVE at both ends, and
+	// dividing by (numLeds - 1) means scaling by 256 lands the last
+	// pixel one past the end of the 256-entry sample table. One past
+	// the end of a stack array is a stable address, so the read
+	// returned the same three bytes every frame and one LED sat on one
+	// colour for as long as the show ran.
+	return (i * 255) / (numLeds - 1);
+}
+
+const char* lightShowPaletteName(int playlistIndex) {	if (playlistIndex < 0 || playlistIndex >= kPlaylistCount) {
 		return "?";
 	}
 	return kPaletteNames[playlistIndex];
@@ -316,7 +331,7 @@ void computeColorWaveFrame(LightShowState& s, const LightShowConfig& cfg,
 	}
 
 	for (int i = 0; i < numLeds; ++i) {
-		const int step = (i * 256) / (numLeds > 1 ? numLeds - 1 : 1);
+		const int step = waveStepFor(i, numLeds);
 		const Rgb c = wave[step];
 		// The strip runs the other way: the sketch walks the wave from
 		// the far end back to zero, so the motion runs the way the
