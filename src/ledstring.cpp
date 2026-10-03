@@ -875,6 +875,27 @@ const char* ledstring_modeName() {
 static retroroom_core::LightShowState lightShowState;
 uint32_t lightShowLastFrameMs = 0;
 
+// The frame buffer, owned and persistent.
+//
+// It was a local `Rgb wave[...]` per call, which read uninitialised
+// stack memory: the wave blends over the previous frame, so handing it
+// a fresh array is not a stylistic choice, it is a garbage smear. It
+// mostly looked right because the stack slot held the previous frame
+// anyway, and it came out as "random flickering" after a couple of
+// hours -- which is how long it takes for enough different code to have
+// run underneath that slot to change what is in it. The type owns its
+// storage, so there is no way left to get this wrong.
+//
+// Sized from the strip capacity, with the static_assert below so the
+// two cannot drift without the build noticing.
+static retroroom_core::LightShowFrameBuffer lightShowFrame;
+
+static_assert(retroroom_core::kLightShowMaxLeds >=
+                  retroroom_core::kLedStripCapacity,
+              "the light show's frame buffer is smaller than the strip "
+              "capacity in lib/ConsoleConfig; a strip longer than the "
+              "buffer would be silently painted short");
+
 // One global scale, same shape and same reason as the one in
 // pushFrame(). The show writes full-brightness colours and is dimmed
 // here, so `led.brightnessPct` and night mode still mean what they say.
@@ -902,19 +923,23 @@ retroroom_core::LightShowConfig lightShowConfig() {
 	return c;
 }
 
-void paintLightShow(uint32_t nowMs) {	// The core's Rgb is not FastLED's CRgb, and is deliberately not
+void paintLightShow(uint32_t nowMs) {
+	// The core's Rgb is not FastLED's CRgb, and is deliberately not
 	// made to be -- lib/LightShow has no dependency on FastLED and that
 	// is what lets it be tested on the host. Convert here, once per
 	// pixel, where the buffer meets the wire.
-	retroroom_core::Rgb wave[retroroom_core::kLedStripCapacity];
+	//
+	// `lightShowFrame` is file scope and owns its storage, so the
+	// trailing smear the core blends over is the real previous frame.
 	retroroom_core::computeColorWaveFrame(lightShowState, lightShowConfig(),
-	                                      ledFeel.totalLeds, nowMs, wave);
+	                                      ledFeel.totalLeds, nowMs,
+	                                      lightShowFrame);
 	const uint8_t scale = lightShowScale();
 	for (int i = 0; i < ledFeel.totalLeds; ++i) {
-		selectedLeds[i] = CRGB(
-			static_cast<uint8_t>(wave[i].r * scale / 255),
-			static_cast<uint8_t>(wave[i].g * scale / 255),
-			static_cast<uint8_t>(wave[i].b * scale / 255));
+		const retroroom_core::Rgb& p = lightShowFrame.pixels[i];
+		selectedLeds[i] = CRGB(static_cast<uint8_t>(p.r * scale / 255),
+							  static_cast<uint8_t>(p.g * scale / 255),
+							  static_cast<uint8_t>(p.b * scale / 255));
 	}
 	FastLED.show();
 }

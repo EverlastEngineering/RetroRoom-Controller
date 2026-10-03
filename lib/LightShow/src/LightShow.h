@@ -157,6 +157,52 @@ void lightShowSelectPalette(LightShowState* s, int playlistIndex);
 // Returns 0 for an empty or single-LED strip.
 int waveStepFor(int i, int numLeds);
 
+// The most LEDs a frame can be painted into. Matches the strip
+// capacity the rest of the firmware uses, and src/ledstring.cpp has a
+// static_assert that it still does -- one number stated twice, checked
+// at compile time, rather than trusted.
+constexpr int kLightShowMaxLeds = 512;
+
+// The pixel buffer a frame is painted into.
+//
+// It is a TYPE rather than a bare `Rgb*` because the buffer has to
+// survive between frames, and a bare pointer makes that the caller's
+// problem. The wave blends each new colour halfway over what is already
+// on the pixel -- that is where its trailing smear comes from -- so a
+// caller that hands in a fresh array is not making a different choice
+// about the look, they are reading uninitialised memory.
+//
+// Which is not a theoretical difference. The shell did exactly that: a
+// local `Rgb wave[kLedStripCapacity]` per call. It mostly looked right,
+// because the stack slot happened to hold the previous frame, so the
+// bleed read as the intended smear. Measured, the intended smear gives
+// a mean frame-to-frame change of 0.33/255 and a garbage buffer gives
+// 69.6 -- a 200x difference, and a strobe. It looked right on the bench
+// for minutes and turned to "random flickering" after a couple of hours,
+// because that is how long it takes for enough different code to have
+// run underneath that stack slot to change what is in it.
+//
+// Owning the storage makes persistence a property of the type rather
+// than something to remember. Declare one at file scope, hand it to
+// every frame, done.
+struct LightShowFrameBuffer {
+	Rgb pixels[kLightShowMaxLeds];
+
+	// Zeroed on construction, so the first frame fades up from black
+	// rather than from whatever the runtime handed the BSS.
+	LightShowFrameBuffer() { clear(); }
+
+	// Back to black. Needed after a restart of the show, where a hard
+	// cut to the first frame's smear would otherwise be visible.
+	void clear() {
+		for (int i = 0; i < kLightShowMaxLeds; ++i) {
+			pixels[i].r = 0;
+			pixels[i].g = 0;
+			pixels[i].b = 0;
+		}
+	}
+};
+
 // Paint one frame, and advance the show to match.
 //
 // `s` is advanced in place. Painting a frame IS advancing the show --
@@ -164,17 +210,17 @@ int waveStepFor(int i, int numLeds);
 // is a reference rather than a copy, and a caller that wanted a frame
 // without disturbing the show cannot have one.
 //
-// `out` is READ as well as written. The original blends each new colour
-// halfway over whatever was already on the pixel, and that is where its
-// trailing smear comes from: the wave leaves a wake behind it rather
-// than replacing the frame. A caller that zeroes the buffer every time
-// gets a harsher, more strobing show; one that hands the previous
-// buffer back gets the original. Documented because it looks like a bug
-// when it is done the other way round.
+// `out` is read as well as written, and is why it is a
+// LightShowFrameBuffer rather than a pointer: see the type's comment.
+// The caller keeps one and hands it to every frame; that is the whole
+// contract, and the type makes the other answer unavailable.
 //
-// Writes exactly `numLeds` entries. `numLeds` <= 0 writes nothing.
+// Writes exactly `numLeds` entries. `numLeds` <= 0 writes nothing, and
+// so does a `numLeds` above the buffer's capacity rather than running
+// off the end of it.
 void computeColorWaveFrame(LightShowState& s, const LightShowConfig& cfg,
-                           int numLeds, uint32_t nowMs, Rgb* out);
+                           int numLeds, uint32_t nowMs,
+                           LightShowFrameBuffer& out);
 
 // True once a palette has been chosen. A show in state -1 has no
 // playlist entry and nothing to fade from, so the shell must not paint

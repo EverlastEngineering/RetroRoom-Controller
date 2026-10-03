@@ -232,10 +232,19 @@ void lightShowPrevPalette(LightShowState* s) {
 }
 
 void computeColorWaveFrame(LightShowState& s, const LightShowConfig& cfg,
-                           int numLeds, uint32_t nowMs, Rgb* out) {
-	if (out == nullptr || numLeds <= 0 || kPlaylistCount == 0) {
+                           int numLeds, uint32_t nowMs,
+                           LightShowFrameBuffer& out) {
+	// Clamped rather than refused. A strip longer than the buffer is a
+	// config the firmware should have rejected, and refusing to paint
+	// leaves the strip showing the last frame, which is a worse thing
+	// to look at than a few missing pixels.
+	if (numLeds > kLightShowMaxLeds) {
+		numLeds = kLightShowMaxLeds;
+	}
+	if (numLeds <= 0 || kPlaylistCount == 0) {
 		return;
 	}
+	Rgb* pixels = out.pixels;
 	// `s` is advanced in place. Painting a frame IS advancing the show;
 	// there is no version of the wave that does not move it, and a
 	// signature suggesting otherwise would be a lie the caller could
@@ -336,7 +345,7 @@ void computeColorWaveFrame(LightShowState& s, const LightShowConfig& cfg,
 		// The strip runs the other way: the sketch walks the wave from
 		// the far end back to zero, so the motion runs the way the
 		// pixels are numbered.
-		Rgb& px = out[numLeds - 1 - i];
+		Rgb& px = pixels[numLeds - 1 - i];
 		px.r = static_cast<uint8_t>(blendChannel(px.r, c.r, 128));
 		px.g = static_cast<uint8_t>(blendChannel(px.g, c.g, 128));
 		px.b = static_cast<uint8_t>(blendChannel(px.b, c.b, 128));
