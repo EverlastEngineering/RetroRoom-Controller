@@ -778,10 +778,19 @@ void selectConsole(const Console& c) {
 }
 
 void advanceConsole() {
-	// Wrap-around console advance. Safe on an empty vector.
-	// Forward step: +1, mirror of advanceConsole()'s pre-refactor
-	// behavior (USR button on YD-RP2040 still advances forward on
-	// every press).
+	// Step forward one console, stopping at the end of the list. Safe
+	// on an empty vector.
+	//
+	// NOT wrap-around, whatever the older version of this comment said.
+	// It stopped wrapping when the browse did, and the docstring above
+	// this function and the OpenAPI summary for /next both kept claiming
+	// otherwise for several commits -- so an API test written against
+	// the documentation failed against a cabinet that was merely sitting
+	// on its last console. If that is what you are reading after a
+	// "why does /next do nothing" report, this is the answer.
+	//
+	// The USR button on the YD-RP2040 still advances forward on every
+	// press, and still stops at the end.
 	int n = HowManyConsoles();
 	if (n <= 0) {
 		Serial.println("advanceConsole: no consoles loaded");
@@ -825,9 +834,11 @@ void advanceConsole() {
 }
 
 void rewindConsole() {
-	// Wrap-around console rewind (counterpart of advanceConsole()).
-	// Exposed for the /prev HTTP endpoint and the "prev" WebSocket
-	// command so external scripts can drive the device in either
+	// Step back one console, stopping at the start of the list.
+	// Counterpart of advanceConsole(); see the note there about not
+	// wrapping. Exposed for the /prev HTTP endpoint and the "prev"
+	// WebSocket command so external scripts can drive the device in
+	// either
 	// direction without needing the physical button. Steps -1 against
 	// the same clamped policy advanceConsole() uses; the math lives in
 	// the functional core (stepWithin) so the policy stays unit-testable

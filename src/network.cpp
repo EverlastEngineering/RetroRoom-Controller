@@ -820,14 +820,20 @@ static void onLightsOn(AsyncWebServerRequest* req) {
 	// appear until something else happened to move the strip.
 	ledstring_repaint();
 	Serial.println("lights: night mode on");
-	req->send(200, "application/json", "OK\n");
+	// JSON, like every other answer in this family, and not a bare
+	// "OK". It used to be "OK\n" with a JSON content type, which is the
+	// worst of both: a client that parses the body fails, and a client
+	// that only checks for 200 is told nothing about what it changed.
+	// The e2e caught it the first time it ran, by refusing to parse a
+	// body that was not JSON.
+	req->send(200, "application/json", "{\"nightMode\":true}\n");
 }
 
 static void onLightsOff(AsyncWebServerRequest* req) {
 	setNightMode(false);
 	ledstring_repaint();
 	Serial.println("lights: night mode off");
-	req->send(200, "application/json", "OK\n");
+	req->send(200, "application/json", "{\"nightMode\":false}\n");
 }
 
 // The cyclical light show, ported from FastLED's colorwaves example.
@@ -878,6 +884,81 @@ static void onLightShowPrev(AsyncWebServerRequest* req) {
 	req->send(200, "application/json", out);
 }
 
+// One route for the whole /lights family, dispatching on the path.
+//
+// This exists because `server.on(path, ...)` does NOT match exactly, and
+// on this family that is not a detail. The library picks its match type
+// by inspecting the registered string, and a plain path with no
+// wildcard gets Type::BackwardCompatible, which is
+//
+//     (_value == path) || path.startsWith(_value + "/")
+//
+// (ESPAsyncWebServer's WebServer.cpp, AsyncURIMatcher::matches). So a
+// registered "/lights" also answers "/lights/show", and since handlers
+// are tried in registration order, whichever was registered first wins.
+//
+// That is not hypothetical. `GET /lights/show` returned the body of
+// `GET /lights`, and `/lights/on` and `/lights/off` had been doing the
+// same since night mode landed -- so night mode's entire web API had
+// never once worked, and nothing said so, because the response was a
+// 200 carrying perfectly valid JSON. The worst kind of failure: one
+// that looks like it worked.
+//
+// The library offers no way to opt out -- AsyncURIMatcher's Type is
+// private, so `on()` cannot be given an exact matcher, and the only
+// thing a caller controls is the registered string.
+//
+// So this is registered as a deliberate wildcard and does its own
+// dispatch. Which is better than registering the specific paths first
+// and hoping, for two reasons:
+//
+//   - it does not depend on registration order, so the next URL added
+//     here cannot be broken by being added in the "wrong" place, and
+//   - a path this does not recognise is a 404 rather than a silent
+//     fall-through to the state document. That fall-through is the
+//     whole bug; repeating it for a typo would be repeating the bug.
+//
+// The other twenty-odd routes in this file are left as they are. None
+// of them is a prefix of another -- BackwardCompatible needs a trailing
+// SLASH, which is why "/openapi" does not shadow "/openapi.yaml" and
+// "/setup" does not shadow "/setup.js" -- and the audit that says so is
+// worth repeating rather than rewriting working code for.
+//
+// If a second nested family ever appears, it gets its own dispatcher
+// and its own wildcard, the same way.
+static void onLights(AsyncWebServerRequest* req) {
+	const String path = req->url();
+	if (path == "/lights") {
+		return onLightsGet(req);
+	}
+	if (path == "/lights/on") {
+		return onLightsOn(req);
+	}
+	if (path == "/lights/off") {
+		return onLightsOff(req);
+	}
+	if (path == "/lights/show") {
+		return onLightShowOn(req);
+	}
+	if (path == "/lights/show/off") {
+		return onLightShowOff(req);
+	}
+	if (path == "/lights/show/next") {
+		return onLightShowNext(req);
+	}
+	if (path == "/lights/show/prev") {
+		return onLightShowPrev(req);
+	}
+	// A path under /lights that is not one of the above. Said plainly
+	// rather than answered with the state document, because "I typed a
+	// URL wrong and got a valid-looking answer" is what made this family
+	// broken for as long as it was.
+	String out = "{\"error\":\"no such /lights endpoint\",\"path\":\"";
+	out += path;
+	out += "\"}\n";
+	req->send(404, "application/json", out);
+}
+
 static void startStaServer() {
 	server.on("/", HTTP_GET, onRoot);
 	server.on("/script.js", HTTP_GET, onScriptJs);
@@ -910,13 +991,10 @@ static void startStaServer() {
 	// directions return the current index + name in the body.
 	server.on("/next", HTTP_GET, onConsoleNext);
 	server.on("/prev", HTTP_GET, onConsolePrev);
-	server.on("/lights", HTTP_GET, onLightsGet);
-	server.on("/lights/on", HTTP_GET, onLightsOn);
-	server.on("/lights/off", HTTP_GET, onLightsOff);
-	server.on("/lights/show", HTTP_GET, onLightShowOn);
-	server.on("/lights/show/off", HTTP_GET, onLightShowOff);
-	server.on("/lights/show/next", HTTP_GET, onLightShowNext);
-	server.on("/lights/show/prev", HTTP_GET, onLightShowPrev);
+	// The /lights family: one wildcard, seven paths, dispatched in
+	// onLights(). See the comment on that function for why it is not
+	// seven routes.
+	server.on("/lights*", HTTP_GET, onLights);
 
 	// /consoles.json GET: route registration. The handler itself
 	// (onConsolesJsonGet) lives in the STA-mode section above so

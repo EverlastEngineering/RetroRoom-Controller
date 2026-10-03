@@ -218,14 +218,23 @@ paths:
   /next:
     get:
       tags: [console]
-      summary: Advance to the next console (wrap-around)
+      summary: Advance to the next console (stops at the end)
       description: |
-        Increments `currentConsoleIndex` mod `HowManyConsoles()` and
-        returns the new index + name. Also broadcasts
-        `console:<name>:<index>` over the WebSocket push channel so
-        every connected browser sees the transition.
+        Steps `currentConsoleIndex` forward one and returns the new
+        index + name. Also broadcasts `console:<name>:<index>` over the
+        WebSocket push channel so every connected browser sees the
+        transition.
 
-        409 if no consoles are configured (no UB on the empty vector).
+        **At the last console this is a no-op.** The list has physical
+        ends, and turning past one reaches nothing, so the index, the
+        latch, the IR code and `selectedAtUptimeMs` are all left alone
+        and the same index comes back. It is a 200, not an error: the
+        request was understood, there was just nowhere to go. The
+        timestamp is left alone in particular, so a caller can tell a
+        real move from a no-op by watching it.
+
+        (It used to wrap. See
+        `todo/open/2026-09-29_console-browse-stops-at-ends.md`.)
       responses:
         "200":
           description: Advanced.
@@ -245,11 +254,15 @@ paths:
   /prev:
     get:
       tags: [console]
-      summary: Rewind to the previous console (wrap-around)
+      summary: Rewind to the previous console (stops at the start)
       description: |
-        Decrements `currentConsoleIndex` mod `HowManyConsoles()` and
-        returns the new index + name. Also broadcasts
-        `console:<name>:<index>` over the WebSocket push channel.
+        Steps `currentConsoleIndex` back one and returns the new index
+        + name. Also broadcasts `console:<name>:<index>` over the
+        WebSocket push channel.
+
+        **At the first console this is a no-op**, for the same reason
+        `/next` is one at the last: the ends are ends. 200 with the
+        same index back, and `selectedAtUptimeMs` untouched.
 
         409 if no consoles are configured.
       responses:
@@ -508,7 +521,14 @@ paths:
         The resting selection goes dark. The browse and the commit
         animations are unaffected, and nothing is written to flash.
       responses:
-        "200": { description: OK }
+        "200":
+          description: On
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nightMode: { type: boolean, example: true }
 
   /lights/off:
     get:
@@ -516,7 +536,14 @@ paths:
       summary: Night mode off
       description: Back to whatever `led.colors.selected` says.
       responses:
-        "200": { description: OK }
+        "200":
+          description: Off
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nightMode: { type: boolean, example: false }
 
     get:
       tags: [admin]
